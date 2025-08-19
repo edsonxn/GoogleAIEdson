@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Generador de Imágenes con Gemini AI</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Barra lateral izquierda colapsable -->
+  <div class="sidebar" id="sidebar">
+    <button id="menuToggleBtn" class="menu-btn" title="Menú">
+      <i class="fas fa-bars"></i>
+    </button>
+    
+    <!-- Contenido expandible de la barra lateral -->
+    <div class="sidebar-content">
+      <div class="sidebar-section">
+        <h4><i class="fas fa-palette"></i> Estilos</h4>
+      </div>
+      
+      <div class="sidebar-section">
+        <button id="createStyleFromSidebar" class="sidebar-btn create-btn">
+          <i class="fas fa-plus"></i>
+          <span>Crear Estilo</span>
+        </button>
+      </div>
+      
+      <div class="sidebar-section">
+        <button id="manageStylesFromSidebar" class="sidebar-btn manage-btn">
+          <i class="fas fa-cog"></i>
+          <span>Gestionar</span>
+        </button>
+      </div>
+      
+      <div class="sidebar-section">
+        <div class="sidebar-info">
+          <p><i class="fas fa-info-circle"></i> Estilos disponibles:</p>
+          <ul>
+            <li>Profesional</li>
+            <li>Comedia</li>
+            <li>Personalizados</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Panel lateral derecho para prompts -->
+  <div class="prompts-sidebar" id="promptsSidebar">
+    <div class="prompts-sidebar-header">
+      <h3><i class="fas fa-images"></i> Prompts de Imágenes</h3>
+      <button id="promptsSidebarToggle" class="prompts-toggle-btn" title="Mostrar panel de prompts">
+        <i class="fas fa-chevron-left"></i>
+      </button>
+    </div>
+    
+    <div class="prompts-sidebar-content" id="promptsSidebarContent">
+      <div class="prompts-empty-state" id="promptsEmptyState">
+        <i class="fas fa-image"></i>
+        <p>Los prompts aparecerán aquí conforme generes las secciones</p>
+      </div>
+      
+      <div class="prompts-list" id="promptsList">
+        <!-- Los prompts se añadirán dinámicamente aquí -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal para crear nuevo estilo -->
+  <div id="styleModal" class="style-modal">
+    <div class="style-modal-content">
+      <div class="style-modal-header">
+        <h3><i class="fas fa-palette"></i> Crear Nuevo Estilo de Guión</h3>
+        <button id="closeStyleModal" class="close-modal-btn">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <div class="style-modal-body">
+        <div class="form-group">
+          <label for="styleName">Nombre del Estilo:</label>
+          <input type="text" id="styleName" placeholder="Ej: Épico, Misterioso, Humorístico, etc." maxlength="30">
+        </div>
+        <div class="form-group">
+          <label for="styleDescription">Descripción del Estilo:</label>
+          <textarea id="styleDescription" rows="4" placeholder="Describe cómo debe ser el tono y estilo del guión. Ej: Tono épico y dramático con referencias heroicas, voz profunda y solemne..."></textarea>
+        </div>
+        <div class="form-group">
+          <label for="styleInstructions">Instrucciones Detalladas para la IA:</label>
+          <textarea id="styleInstructions" rows="6" placeholder="Instrucciones específicas para la IA sobre cómo generar este estilo. Ej: Usa un lenguaje formal, incluye metáforas épicas, evita groserías, incluye referencias a la mitología..."></textarea>
+        </div>
+      </div>
+      <div class="style-modal-footer">
+        <button id="cancelStyleBtn" class="cancel-btn">
+          <i class="fas fa-times"></i>
+          Cancelar
+        </button>
+        <button id="saveStyleBtn" class="save-btn">
+          <i class="fas fa-save"></i>
+          Guardar Estilo
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal para gestionar estilos -->
+  <div id="manageStylesModal" class="style-modal">
+    <div class="style-modal-content manage-styles-content">
+      <div class="style-modal-header">
+        <h3><i class="fas fa-cog"></i> Gestionar Estilos Personalizados</h3>
+        <button id="closeManageStylesModal" class="close-modal-btn">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <div class="style-modal-body">
+        <div class="styles-list-container">
+          <div id="stylesList" class="styles-list">
+            <!-- Los estilos se cargarán dinámicamente aquí -->
+          </div>
+          <div id="noStylesMessage" class="no-styles-message" style="display: none;">
+            <i class="fas fa-palette"></i>
+            <p>No tienes estilos personalizados aún</p>
+            <p>Crea tu primer estilo usando el botón "Crear Nuevo Estilo"</p>
+          </div>
+        </div>
+      </div>
+      <div class="style-modal-footer">
+        <button id="closeManageStylesBtn" class="cancel-btn">
+          <i class="fas fa-times"></i>
+          Cerrar
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal para editar estilo -->
+  <div id="editStyleModal" class="style-modal">
+    <div class="style-modal-content">
+      <div class="style-modal-header">
+        <h3><i class="fas fa-edit"></i> Editar Estilo de Guión</h3>
+        <button id="closeEditStyleModal" class="close-modal-btn">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <div class="style-modal-body">
+        <div class="form-group">
+          <label for="editStyleName">Nombre del Estilo:</label>
+          <input type="text" id="editStyleName" placeholder="Ej: Épico, Misterioso, Humorístico, etc." maxlength="30">
+        </div>
+        <div class="form-group">
+          <label for="editStyleDescription">Descripción del Estilo:</label>
+          <textarea id="editStyleDescription" rows="4" placeholder="Describe cómo debe ser el tono y estilo del guión..."></textarea>
+        </div>
+        <div class="form-group">
+          <label for="editStyleInstructions">Instrucciones Detalladas para la IA:</label>
+          <textarea id="editStyleInstructions" rows="6" placeholder="Instrucciones específicas para la IA sobre cómo generar este estilo..."></textarea>
+        </div>
+      </div>
+      <div class="style-modal-footer">
+        <button id="cancelEditStyleBtn" class="cancel-btn">
+          <i class="fas fa-times"></i>
+          Cancelar
+        </button>
+        <button id="saveEditStyleBtn" class="save-btn">
+          <i class="fas fa-save"></i>
+          Guardar Cambios
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="container">
+    <div class="header">
+      <div class="header-content">
+        <div class="header-title">
+          <h1><i class="fas fa-gamepad"></i> Crónicas del Gaming</h1>
+          <p class="subtitle">Generador de guiones para YouTube con IA</p>
+        </div>
+        <div class="header-actions">
+          <button id="showPromptsPanel" class="prompts-panel-btn" title="Mostrar panel de prompts">
+            <i class="fas fa-images"></i>
+            <span>Prompts</span>
+          </button>
+        </div>
+      </div>
+    </div>
+    
+    <div class="main-form">
+      <!-- Campos principales (topic y folder) -->
+      <div class="primary-fields">
+        <div class="field-group">
+          <label for="folderName" class="field-label">
+            <i class="fas fa-folder"></i>
+            Carpeta:
+          </label>
+          <input type="text" id="folderName" class="field-input" placeholder="Ej: lore_de_los_kokiri" />
+        </div>
+        
+        <div class="field-group topic-group">
+          <label for="prompt" class="field-label">
+            <i class="fas fa-edit"></i>
+            Tema del Guión:
+          </label>
+          <textarea id="prompt" class="topic-textarea" rows="3" placeholder="Describe tu guión... Ej: 'Lore de Saria en Zelda Ocarina of Time'"></textarea>
+        </div>
+      </div>
+
+      <!-- Grid de configuraciones -->
+      <div class="config-grid">
+        <!-- Columna 1: Configuración básica -->
+        <div class="config-column">
+          <h3 class="column-title"><i class="fas fa-cog"></i> Configuración</h3>
+          
+          <div class="field-group">
+            <label for="sectionsSelect" class="field-label">
+              <i class="fas fa-list-ol"></i> Secciones:
+            </label>
+            <select id="sectionsSelect" class="field-select">
+              <option value="1">1 Sección</option>
+              <option value="2">2 Secciones</option>
+              <option value="3" selected>3 Secciones</option>
+              <option value="4">4 Secciones</option>
+              <option value="5">5 Secciones</option>
+            </select>
+          </div>
+
+          <div class="field-group">
+            <label for="styleSelect" class="field-label">
+              <i class="fas fa-palette"></i> Estilo:
+            </label>
+            <select id="styleSelect" class="field-select">
+              <option value="professional" selected>Profesional</option>
+              <option value="comedy">Cómico</option>
+            </select>
+          </div>
+
+          <div class="field-group">
+            <label for="imagesSelect" class="field-label">
+              <i class="fas fa-images"></i> Imágenes:
+            </label>
+            <select id="imagesSelect" class="field-select">
+              <option value="5" selected>5 Imágenes</option>
+              <option value="6">6 Imágenes</option>
+              <option value="7">7 Imágenes</option>
+              <option value="8">8 Imágenes</option>
+              <option value="9">9 Imágenes</option>
+              <option value="10">10 Imágenes</option>
+            </select>
+          </div>
+
+          <div class="field-group">
+            <label for="modelSelect" class="field-label">
+              <i class="fas fa-robot"></i> Modelo:
+            </label>
+            <select id="modelSelect" class="field-select">
+              <option value="imagen4">Imagen 4.0</option>
+              <option value="gemini2" selected>Gemini 2.0</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Columna 2: Audio y opciones -->
+        <div class="config-column">
+          <h3 class="column-title"><i class="fas fa-volume-up"></i> Audio</h3>
+          
+          <div class="field-group">
+            <label for="voiceSelect" class="field-label">
+              <i class="fas fa-microphone-alt"></i> Voz:
+            </label>
+            <select id="voiceSelect" class="field-select">
+              <option value="Zephyr">Zephyr</option>
+              <option value="Puck">Puck</option>
+              <option value="Charon">Charon</option>
+              <option value="Kore">Kore</option>
+              <option value="Fenrir">Fenrir</option>
+              <option value="Leda">Leda</option>
+              <option value="Orus" selected>Orus</option>
+              <option value="Aoede">Aoede</option>
+              <option value="Callirrhoe">Callirrhoe</option>
+              <option value="Enceladus">Enceladus</option>
+              <option value="Iapetus">Iapetus</option>
+              <option value="Umbriel">Umbriel</option>
+              <option value="Algeba">Algeba</option>
+              <option value="Despina">Despina</option>
+              <option value="Erinome">Erinome</option>
+              <option value="Algenib">Algenib</option>
+              <option value="Rasalgethi">Rasalgethi</option>
+              <option value="Laomedeia">Laomedeia</option>
+              <option value="Achernar">Achernar</option>
+              <option value="Alnilam">Alnilam</option>
+              <option value="Schedar">Schedar</option>
+              <option value="Gacrux">Gacrux</option>
+              <option value="Pulcherrima">Pulcherrima</option>
+              <option value="Achird">Achird</option>
+              <option value="Zubenelgenubi">Zubenelgenubi</option>
+              <option value="Vindematrix">Vindematrix</option>
+              <option value="Sadachbia">Sadachbia</option>
+              <option value="Sadaltager">Sadaltager</option>
+              <option value="Sulafat">Sulafat</option>
+              <option value="Autonoe">Autonoe</option>
+            </select>
+          </div>
+
+          <div class="field-group">
+            <label for="narrationStyle" class="field-label">
+              <i class="fas fa-theater-masks"></i> Estilo:
+            </label>
+            <input type="text" id="narrationStyle" class="field-input" placeholder="Ej: épico y dramático" />
+          </div>
+
+          <div class="checkbox-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="skipImages" class="checkbox-input" checked>
+              <span class="checkbox-custom"></span>
+              <i class="fas fa-ban"></i>
+              Solo guión (omitir imágenes)
+            </label>
+          </div>
+
+          <div class="checkbox-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="autoGenerate" class="checkbox-input">
+              <span class="checkbox-custom"></span>
+              <i class="fas fa-magic"></i>
+              Generación automática
+            </label>
+          </div>
+
+          <div class="checkbox-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="autoGenerateAudio" class="checkbox-input">
+              <span class="checkbox-custom"></span>
+              <i class="fas fa-volume-up"></i>
+              Incluir audio automático (Google)
+            </label>
+          </div>
+
+          <div class="checkbox-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="autoGenerateApplioAudio" class="checkbox-input">
+              <span class="checkbox-custom"></span>
+              <i class="fas fa-microphone"></i>
+              Incluir audio Applio
+            </label>
+          </div>
+        </div>
+
+        <!-- Columna 3: Instrucciones adicionales -->
+        <div class="config-column">
+          <h3 class="column-title"><i class="fas fa-paint-brush"></i> Personalización</h3>
+          
+          <div class="field-group">
+            <label for="promptModifier" class="field-label">
+              <i class="fas fa-magic"></i> Instrucciones para Imágenes:
+            </label>
+            <textarea id="promptModifier" class="field-textarea" rows="4" placeholder="Ej: A Saria ponle cabello verde, armadura dorada..."></textarea>
+          </div>
+
+          <div class="info-box">
+            <i class="fas fa-info-circle"></i>
+            <div class="info-text">
+              <p><strong>Profesional:</strong> Tono educativo y serio</p>
+              <p><strong>Cómico:</strong> Humor negro y sarcasmo</p>
+              <p><strong>Gen. Automática:</strong> Genera todas las secciones</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Botones de acción -->
+      <div class="action-buttons">
+        <button id="generateBtn" class="btn btn-primary">
+          <i class="fas fa-video"></i>
+          <span>Generar Sección 1</span>
+        </button>
+
+        <button id="continueBtn" class="btn btn-secondary" style="display: none;">
+          <i class="fas fa-forward"></i>
+          <span>Continuar Sección 2</span>
+        </button>
+
+        <button id="generateAudioBtn" class="btn btn-audio" style="display: none;">
+          <i class="fas fa-microphone"></i>
+          <span>Generar Audio</span>
+        </button>
+      </div>
+    </div>
+
+    <div id="output"></div>
+
+    <!-- Carrusel de Imágenes -->
+    <div id="carousel-container" style="display: none;">
+      <div class="carousel-wrapper">
+        <div class="carousel-header">
+          <h3><i class="fas fa-film"></i> Secuencia Visual - <span id="carousel-section-title">Sección 1</span></h3>
+          <div class="carousel-counter">
+            <span id="current-image">1</span> / <span id="total-images">5</span>
+          </div>
+        </div>
+        
+        <div class="carousel">
+          <button class="carousel-btn carousel-prev" id="prevBtn">
+            <i class="fas fa-chevron-left"></i>
+          </button>
+          
+          <div class="carousel-track-container">
+            <div class="carousel-track" id="carouselTrack">
+              <!-- Las imágenes se insertarán aquí dinámicamente -->
+            </div>
+          </div>
+          
+          <button class="carousel-btn carousel-next" id="nextBtn">
+            <i class="fas fa-chevron-right"></i>
+          </button>
+        </div>
+        
+        <div class="carousel-indicators" id="carouselIndicators">
+          <!-- Los indicadores se insertarán aquí dinámicamente -->
+        </div>
+      </div>
+    </div>
+
+    <div id="script-section" style="display: none;">
+      <div class="script-container">
+        <div class="script-header">
+          <h3><i class="fas fa-file-alt"></i> Guión Generado - <span id="section-title">Sección 1</span></h3>
+          <div class="script-navigation">
+            <div class="section-nav-buttons">
+              <button id="prevSectionBtn" class="nav-section-btn" title="Sección anterior" disabled>
+                <i class="fas fa-chevron-left"></i>
+                <span>Anterior</span>
+              </button>
+              <div class="progress-indicator">
+                <span id="current-section">1</span> / <span id="total-sections">3</span>
+              </div>
+              <button id="nextSectionBtn" class="nav-section-btn" title="Sección siguiente" disabled>
+                <span>Siguiente</span>
+                <i class="fas fa-chevron-right"></i>
+              </button>
+            </div>
+          </div>
+          <div class="audio-controls" id="audio-controls" style="display: none;">
+            <div class="audio-player">
+              <button id="playBtn" class="audio-btn">
+                <i class="fas fa-play"></i>
+                <span>Escuchar Narración</span>
+              </button>
+              <button id="pauseBtn" class="audio-btn" style="display: none;">
+                <i class="fas fa-pause"></i>
+                <span>Pausar</span>
+              </button>
+              
+              <div class="audio-timeline">
+                <div class="time-display">
+                  <span id="currentTime">0:00</span>
+                  <span class="time-separator">/</span>
+                  <span id="totalTime">0:00</span>
+                </div>
+                
+                <div class="progress-container">
+                  <div class="progress-bar" id="progressBar">
+                    <div class="progress-fill" id="progressFill"></div>
+                    <div class="progress-handle" id="progressHandle"></div>
+                  </div>
+                </div>
+                
+                <div class="volume-control">
+                  <i class="fas fa-volume-up"></i>
+                  <input type="range" id="volumeSlider" min="0" max="100" value="80" class="volume-slider">
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div id="script-content"></div>
+        <audio id="scriptAudio" preload="auto"></audio>
+      </div>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>

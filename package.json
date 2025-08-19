@@ -1,0 +1,35 @@
+{
+  "name": "cronicas-del-gaming",
+  "version": "1.0.0",
+  "description": "Generador automático de contenido para videos de gaming con IA",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node index.js",
+    "test": "echo \"No tests specified\" && exit 0"
+  },
+  "keywords": [
+    "gaming",
+    "ai",
+    "content-generation",
+    "tts",
+    "image-generation",
+    "google-ai",
+    "applio"
+  ],
+  "author": "Edson",
+  "license": "MIT",
+  "dependencies": {
+    "@google-cloud/vertexai": "^1.10.0",
+    "@google/genai": "^1.14.0",
+    "@google/generative-ai": "^0.10.0",
+    "axios": "^1.11.0",
+    "body-parser": "^2.2.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.0.0",
+    "express": "^5.1.0",
+    "node-fetch": "^3.3.2",
+    "wav": "^1.0.2"
+  }
+}
