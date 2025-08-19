@@ -1,17 +1,17 @@
-# 🎮 Crónicas del Gaming - Generador de Contenido con IA
+# 🤖 AI Script Generator - Generador de Guiones con IA
 
-Un generador automático de contenido para videos de gaming que utiliza inteligencia artificial para crear guiones, imágenes y audio de alta calidad.
+Un generador automático de guiones que utiliza inteligencia artificial para crear contenido, imágenes y audio de alta calidad para cualquier tema o nicho.
 
 ## 🚀 Características
 
 ### 📝 Generación de Contenido
-- **Guiones automáticos**: Genera guiones detallados sobre temas de gaming
+- **Guiones automáticos**: Genera guiones detallados sobre cualquier tema
 - **Generación por secciones**: Divide el contenido en secciones manejables
-- **Estilos personalizables**: Épico, informativo, casual, y más
+- **Estilos personalizables**: Profesional, casual, humorístico, educativo y más
 - **Navegación entre secciones**: Navega fácilmente entre las secciones generadas
 
 ### 🎨 Generación de Imágenes
-- **Imágenes temáticas**: Genera imágenes relacionadas con el contenido
+- **Imágenes temáticas**: Genera imágenes relacionadas con cualquier contenido
 - **Múltiples modelos**: Soporte para diferentes modelos de IA
 - **Regeneración individual**: Regenera imágenes específicas si no te gustan
 

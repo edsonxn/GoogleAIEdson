@@ -1,7 +1,7 @@
 {
-  "name": "cronicas-del-gaming",
+  "name": "ai-script-generator",
   "version": "1.0.0",
-  "description": "Generador automático de contenido para videos de gaming con IA",
+  "description": "Generador automático de guiones con IA - Crea contenido, imágenes y audio para cualquier tema",
   "main": "index.js",
   "type": "module",
   "scripts": {
@@ -10,15 +10,18 @@
     "test": "echo \"No tests specified\" && exit 0"
   },
   "keywords": [
-    "gaming",
+    "script-generator",
+    "content-generator",
     "ai",
-    "content-generation",
+    "gemini",
     "tts",
-    "image-generation",
-    "google-ai",
-    "applio"
+    "applio",
+    "automation",
+    "youtube",
+    "content-creation",
+    "text-to-speech"
   ],
-  "author": "Edson",
+  "author": "Edson Jair Iniguez",
   "license": "MIT",
   "dependencies": {
     "@google-cloud/vertexai": "^1.10.0",
