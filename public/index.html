@@ -36,6 +36,13 @@
       </div>
       
       <div class="sidebar-section">
+        <button id="extractTextBtn" class="sidebar-btn extract-btn">
+          <i class="fas fa-file-text"></i>
+          <span>Extraer Texto</span>
+        </button>
+      </div>
+      
+      <div class="sidebar-section">
         <div class="sidebar-info">
           <p><i class="fas fa-info-circle"></i> Estilos disponibles:</p>
           <ul>
@@ -476,6 +483,126 @@
         </div>
         <div id="script-content"></div>
         <audio id="scriptAudio" preload="auto"></audio>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal para extraer texto de audio/video -->
+  <div id="extractTextModal" class="modal" style="display: none;">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2><i class="fas fa-file-text"></i> Extraer Texto de Audio/Video</h2>
+        <span class="close" id="closeExtractModal">&times;</span>
+      </div>
+      <div class="modal-body">
+        <div id="extractDropzone" class="dropzone">
+          <div id="extractDropzoneText" class="dropzone-text">
+            <i class="fas fa-cloud-upload-alt"></i>
+            <p>Arrastra tu archivo MP4/MP3 aquí o haz click para seleccionar</p>
+            <small>Formatos soportados: MP4, MP3, WAV, M4A</small>
+          </div>
+          <input type="file" id="extractFileInput" accept=".mp4,.mp3,.wav,.m4a" style="display: none;">
+        </div>
+        
+        <div id="extractFileName" class="file-name" style="display: none;"></div>
+        
+        <!-- Selector de pista de audio para MP4 -->
+        <div id="extractAudioTrackContainer" style="display: none; margin: 1rem 0;">
+          <label for="extractAudioTrackSelect" style="margin-right: 0.5rem; color: var(--text-secondary);">Pista de audio:</label>
+          <select id="extractAudioTrackSelect" class="form-select">
+            <option>Selecciona una pista...</option>
+          </select>
+        </div>
+        
+        <!-- Configuraciones de transcripción -->
+        <div class="transcription-config" style="margin: 1rem 0; padding: 1rem; background: rgba(0, 0, 0, 0.2); border-radius: 8px;">
+          <h4 style="margin: 0 0 1rem 0; color: #00ff7f;">⚙️ Configuración de Transcripción</h4>
+          
+          <!-- Selector de método -->
+          <div class="config-group" style="margin-bottom: 1rem;">
+            <label style="display: block; margin-bottom: 0.5rem; color: #e2e8f0; font-weight: 500;">
+              <i class="fas fa-cogs"></i> Método de transcripción:
+            </label>
+            <select id="transcriptionMethod" class="form-select" style="width: 100%;">
+              <option value="api">🌐 OpenAI API (en la nube)</option>
+              <option value="local">🚀 Whisper Local (GPU)</option>
+            </select>
+            <small style="color: #94a3b8; margin-top: 0.25rem; display: block;">
+              API: Rápido pero requiere internet | Local: Privado y no consume créditos
+            </small>
+          </div>
+          
+          <!-- Configuraciones para método local -->
+          <div id="localConfig" style="display: none;">
+            <div class="config-group" style="margin-bottom: 1rem;">
+              <label style="display: block; margin-bottom: 0.5rem; color: #e2e8f0; font-weight: 500;">
+                <i class="fas fa-brain"></i> Modelo de Whisper:
+              </label>
+              <select id="whisperModel" class="form-select" style="width: 100%;">
+                <option value="tiny">Tiny (~39MB) - Muy rápido, calidad básica</option>
+                <option value="base">Base (~74MB) - Rápido, calidad media</option>
+                <option value="small">Small (~244MB) - Balanceado</option>
+                <option value="medium" selected>Medium (~769MB) - Buena calidad</option>
+                <option value="large-v3">Large-v3 (~1.5GB) - Mejor calidad</option>
+              </select>
+            </div>
+            
+            <div class="config-group" style="margin-bottom: 1rem;">
+              <label style="display: block; margin-bottom: 0.5rem; color: #e2e8f0; font-weight: 500;">
+                <i class="fas fa-language"></i> Idioma (opcional):
+              </label>
+              <select id="audioLanguage" class="form-select" style="width: 100%;">
+                <option value="">🔍 Auto-detectar</option>
+                <option value="es">🇪🇸 Español</option>
+                <option value="en">🇺🇸 Inglés</option>
+                <option value="fr">🇫🇷 Francés</option>
+                <option value="de">🇩🇪 Alemán</option>
+                <option value="it">🇮🇹 Italiano</option>
+                <option value="pt">🇧🇷 Portugués</option>
+                <option value="ja">🇯🇵 Japonés</option>
+                <option value="ko">🇰🇷 Coreano</option>
+                <option value="zh">🇨🇳 Chino</option>
+              </select>
+              <small style="color: #94a3b8; margin-top: 0.25rem; display: block;">
+                Especificar el idioma puede mejorar la precisión
+              </small>
+            </div>
+            
+            <!-- Estado del modelo local -->
+            <div id="localModelStatus" class="model-status" style="padding: 0.5rem; border-radius: 4px; margin-bottom: 1rem;">
+              <i class="fas fa-circle-notch fa-spin"></i> Verificando estado del modelo...
+            </div>
+          </div>
+        </div>
+        
+        <div class="button-group" style="margin: 1rem 0;">
+          <button id="extractTranscribeBtn" class="primary-btn" disabled>
+            <i class="fas fa-microphone"></i>
+            Transcribir Audio
+          </button>
+        </div>
+        
+        <div class="progress-container" style="margin: 1rem 0;">
+          <progress id="extractProgressBar" value="0" max="100" style="width: 100%; height: 8px;"></progress>
+          <div id="extractProgressText" style="text-align: center; margin-top: 0.5rem; color: var(--text-secondary);"></div>
+        </div>
+        
+        <div id="extractOutput" class="output-text" style="margin-top: 1rem; min-height: 100px; max-height: 300px; overflow-y: auto;"></div>
+        
+        <div class="button-group" id="extractResultActions" style="display: none; margin-top: 1rem;">
+          <button id="copyExtractedText" class="secondary-btn">
+            <i class="fas fa-copy"></i>
+            Copiar Texto
+          </button>
+          <button id="saveExtractedText" class="secondary-btn">
+            <i class="fas fa-download"></i>
+            Guardar TXT
+          </button>
+          <button id="useAsPrompt" class="primary-btn">
+            <i class="fas fa-arrow-right"></i>
+            Usar como Tema
+          </button>
+        </div>
       </div>
     </div>
   </div>

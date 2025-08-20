@@ -1,6 +1,25 @@
 // Función simple para verificar que el script se carga
 console.log('🚀 Script.js cargado correctamente');
 
+// Variables globales para el extractor de texto
+let selectedFile = null;
+let extractedText = '';
+
+// Inicializar funcionalidad de extracción de texto tan pronto como sea posible
+document.addEventListener('DOMContentLoaded', function() {
+  console.log('🌐 DOM cargado - iniciando extractor de texto...');
+  initializeTextExtractor();
+});
+
+// También intentar inicializar después de que todo se cargue
+setTimeout(() => {
+  console.log('⏰ Timeout - verificando si el extractor necesita inicialización...');
+  if (!window.extractorInitialized) {
+    console.log('🔄 Inicializando extractor de texto desde timeout...');
+    initializeTextExtractor();
+  }
+}, 1000);
+
 // Verificar que elementos existen al cargar
 window.addEventListener('load', function() {
   console.log('🌐 Ventana cargada completamente');
@@ -11,7 +30,9 @@ window.addEventListener('load', function() {
     'manageStylesBtn': document.getElementById('manageStylesBtn'),
     'styleSelect': document.getElementById('styleSelect'),
     'styleModal': document.getElementById('styleModal'),
-    'manageStylesModal': document.getElementById('manageStylesModal')
+    'manageStylesModal': document.getElementById('manageStylesModal'),
+    'extractTextBtn': document.getElementById('extractTextBtn'),
+    'extractTextModal': document.getElementById('extractTextModal')
   };
   
   console.log('🔍 Verificación de elementos:', elements);
@@ -24,6 +45,12 @@ window.addEventListener('load', function() {
       console.log(`✅ Elemento encontrado: ${key}`);
     }
   });
+  
+  // Intentar inicializar el extractor de texto nuevamente si no se hizo antes
+  if (document.getElementById('extractTextBtn') && !window.extractorInitialized) {
+    console.log('🔄 Inicializando extractor de texto desde window.load...');
+    initializeTextExtractor();
+  }
 });
 
 const generateBtn = document.getElementById("generateBtn");
@@ -3273,3 +3300,758 @@ document.addEventListener('DOMContentLoaded', function() {
     console.log('✅ Event listeners de audio configurados - selección exclusiva activada');
   }
 });
+
+// ========================================
+// FUNCIONALIDAD DE EXTRACCIÓN DE TEXTO
+// ========================================
+
+// Función para mostrar notificaciones
+function showNotification(message, type = 'info') {
+  console.log(`📢 Notificación [${type.toUpperCase()}]:`, message);
+  
+  // Crear elemento de notificación
+  const notification = document.createElement('div');
+  notification.style.cssText = `
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    padding: 12px 20px;
+    border-radius: 8px;
+    color: white;
+    font-weight: 500;
+    z-index: 10001;
+    max-width: 400px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    animation: slideInRight 0.3s ease;
+  `;
+  
+  // Estilos según el tipo
+  switch (type) {
+    case 'error':
+      notification.style.background = 'linear-gradient(135deg, #ef4444, #dc2626)';
+      break;
+    case 'warning':
+      notification.style.background = 'linear-gradient(135deg, #f59e0b, #d97706)';
+      break;
+    case 'success':
+      notification.style.background = 'linear-gradient(135deg, #10b981, #059669)';
+      break;
+    default:
+      notification.style.background = 'linear-gradient(135deg, #3b82f6, #2563eb)';
+  }
+  
+  notification.textContent = message;
+  document.body.appendChild(notification);
+  
+  // Remover después de 4 segundos
+  setTimeout(() => {
+    notification.style.animation = 'slideOutRight 0.3s ease';
+    setTimeout(() => {
+      if (notification.parentNode) {
+        notification.parentNode.removeChild(notification);
+      }
+    }, 300);
+  }, 4000);
+}
+
+function initializeTextExtractor() {
+  if (window.extractorInitialized) {
+    console.log('⚠️ Extractor ya inicializado, omitiendo...');
+    return;
+  }
+  
+  console.log('🎤 Inicializando extractor de texto...');
+  
+  // Elementos del DOM
+  const extractTextBtn = document.getElementById('extractTextBtn');
+  const extractTextModal = document.getElementById('extractTextModal');
+  const closeExtractModal = document.getElementById('closeExtractModal');
+  
+  console.log('🔍 Verificando elementos:', {
+    extractTextBtn: !!extractTextBtn,
+    extractTextModal: !!extractTextModal,
+    closeExtractModal: !!closeExtractModal
+  });
+  
+  if (!extractTextBtn) {
+    console.error('❌ Botón extractTextBtn no encontrado');
+    return;
+  }
+  
+  if (!extractTextModal) {
+    console.error('❌ Modal extractTextModal no encontrado');
+    return;
+  }
+  
+  console.log('✅ Elementos principales encontrados, configurando eventos...');
+  
+  // Verificar todos los elementos necesarios
+  const elements = {
+    extractDropzone: document.getElementById('extractDropzone'),
+    extractFileInput: document.getElementById('extractFileInput'),
+    extractFileName: document.getElementById('extractFileName'),
+    extractAudioTrackContainer: document.getElementById('extractAudioTrackContainer'),
+    extractAudioTrackSelect: document.getElementById('extractAudioTrackSelect'),
+    extractTranscribeBtn: document.getElementById('extractTranscribeBtn'),
+    extractProgressBar: document.getElementById('extractProgressBar'),
+    extractProgressText: document.getElementById('extractProgressText'),
+    extractOutput: document.getElementById('extractOutput'),
+    extractResultActions: document.getElementById('extractResultActions'),
+    copyExtractedText: document.getElementById('copyExtractedText'),
+    saveExtractedText: document.getElementById('saveExtractedText'),
+    useAsPrompt: document.getElementById('useAsPrompt'),
+    
+    // Nuevos elementos para configuración
+    transcriptionMethod: document.getElementById('transcriptionMethod'),
+    localConfig: document.getElementById('localConfig'),
+    whisperModel: document.getElementById('whisperModel'),
+    audioLanguage: document.getElementById('audioLanguage'),
+    localModelStatus: document.getElementById('localModelStatus')
+  };
+  
+  console.log('🔍 Verificación detallada de elementos:', elements);
+  
+  // Verificar cada elemento
+  Object.keys(elements).forEach(key => {
+    if (!elements[key]) {
+      console.error(`❌ Elemento faltante: ${key}`);
+    } else {
+      console.log(`✅ Elemento encontrado: ${key}`);
+    }
+  });
+  
+  const extractDropzone = elements.extractDropzone;
+  const extractFileInput = elements.extractFileInput;
+  const extractFileName = elements.extractFileName;
+  const extractAudioTrackContainer = elements.extractAudioTrackContainer;
+  const extractAudioTrackSelect = elements.extractAudioTrackSelect;
+  const extractTranscribeBtn = elements.extractTranscribeBtn;
+  const extractProgressBar = elements.extractProgressBar;
+  const extractProgressText = elements.extractProgressText;
+  const extractOutput = elements.extractOutput;
+  const extractResultActions = elements.extractResultActions;
+  const copyExtractedText = elements.copyExtractedText;
+  const saveExtractedText = elements.saveExtractedText;
+  const useAsPrompt = elements.useAsPrompt;
+  
+  // Abrir modal
+  extractTextBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    console.log('🔧 Click en botón extraer texto detectado');
+    extractTextModal.style.display = 'flex';
+    console.log('📂 Modal de extracción abierto');
+  });
+  
+  // Cerrar modal
+  if (closeExtractModal) {
+    closeExtractModal.addEventListener('click', () => {
+      extractTextModal.style.display = 'none';
+      resetExtractForm();
+    });
+  }
+  
+  // Cerrar modal al hacer click fuera
+  if (extractTextModal) {
+    extractTextModal.addEventListener('click', (e) => {
+      if (e.target === extractTextModal) {
+        extractTextModal.style.display = 'none';
+        resetExtractForm();
+      }
+    });
+  }
+  
+  // Drag & Drop
+  if (extractDropzone) {
+    console.log('🎯 Configurando drag & drop en dropzone...');
+    showNotification('🎯 Drag & Drop configurado correctamente', 'success');
+    
+    extractDropzone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      extractDropzone.classList.add('dragover');
+      console.log('📥 Archivo siendo arrastrado sobre la zona...');
+      showNotification('📥 Archivo detectado - suelta aquí', 'info');
+    });
+    
+    extractDropzone.addEventListener('dragleave', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      extractDropzone.classList.remove('dragover');
+      console.log('📤 Archivo salió de la zona de arrastre...');
+    });
+    
+    extractDropzone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      extractDropzone.classList.remove('dragover');
+      console.log('🎯 Archivo soltado en la zona!');
+      showNotification('🎯 Archivo recibido - procesando...', 'success');
+      
+      const files = e.dataTransfer.files;
+      console.log('📁 Archivos detectados:', files.length);
+      
+      if (files.length > 0) {
+        console.log('📄 Procesando archivo:', files[0].name, files[0].type);
+        handleFileSelection(files[0]);
+      } else {
+        console.warn('⚠️ No se detectaron archivos en el drop');
+        showNotification('⚠️ No se detectaron archivos', 'warning');
+      }
+    });
+    
+    // Click para seleccionar archivo
+    extractDropzone.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      console.log('🖱️ Click en dropzone detectado');
+      showNotification('🖱️ Abriendo selector de archivos...', 'info');
+      if (extractFileInput) {
+        extractFileInput.click();
+        console.log('📂 Abriendo selector de archivos...');
+      } else {
+        console.error('❌ Input de archivo no encontrado');
+        showNotification('❌ Error: Input de archivo no encontrado', 'error');
+      }
+    });
+  } else {
+    console.error('❌ Dropzone no encontrado');
+    showNotification('❌ Error: Zona de arrastre no encontrada', 'error');
+  }
+  
+  if (extractFileInput) {
+    console.log('📁 Configurando input de archivo...');
+    extractFileInput.addEventListener('change', (e) => {
+      console.log('📄 Archivo seleccionado via input:', e.target.files.length);
+      showNotification('📄 Archivo seleccionado - procesando...', 'info');
+      if (e.target.files.length > 0) {
+        console.log('📋 Procesando archivo seleccionado:', e.target.files[0].name);
+        handleFileSelection(e.target.files[0]);
+      }
+    });
+  } else {
+    console.error('❌ Input de archivo no encontrado');
+    showNotification('❌ Error: Input de archivo no encontrado', 'error');
+  }
+  
+  // Botón transcribir
+  if (extractTranscribeBtn) {
+    extractTranscribeBtn.addEventListener('click', () => {
+      startTranscription();
+    });
+  }
+  
+  // Botones de acciones
+  if (copyExtractedText) {
+    copyExtractedText.addEventListener('click', () => {
+      navigator.clipboard.writeText(extractedText).then(() => {
+        showNotification('✅ Texto copiado al portapapeles');
+      });
+    });
+  }
+  
+  if (saveExtractedText) {
+    saveExtractedText.addEventListener('click', () => {
+      downloadAsText(extractedText, 'transcripcion.txt');
+    });
+  }
+  
+  if (useAsPrompt) {
+    useAsPrompt.addEventListener('click', () => {
+      const promptInput = document.getElementById('prompt');
+      if (promptInput) {
+        promptInput.value = extractedText;
+        extractTextModal.style.display = 'none';
+        resetExtractForm();
+        showNotification('✅ Texto insertado como tema principal');
+        promptInput.focus();
+      }
+    });
+  }
+  
+  // === NUEVOS EVENT LISTENERS PARA CONFIGURACIÓN ===
+  
+  // Cambio de método de transcripción
+  const transcriptionMethod = elements.transcriptionMethod;
+  const localConfig = elements.localConfig;
+  
+  if (transcriptionMethod) {
+    transcriptionMethod.addEventListener('change', (e) => {
+      const method = e.target.value;
+      console.log(`🔧 Método de transcripción cambiado a: ${method}`);
+      
+      if (method === 'local') {
+        localConfig.style.display = 'block';
+        checkLocalModelStatus();
+        showNotification('🚀 Modo local activado - usando GPU', 'info');
+      } else {
+        localConfig.style.display = 'none';
+        showNotification('🌐 Modo API activado - usando OpenAI', 'info');
+      }
+    });
+  }
+  
+  // Verificar estado inicial al abrir modal
+  extractTextBtn.addEventListener('click', () => {
+    if (transcriptionMethod && transcriptionMethod.value === 'local') {
+      localConfig.style.display = 'block';
+      checkLocalModelStatus();
+    }
+  });
+  
+  console.log('✅ Extractor de texto inicializado correctamente');
+  window.extractorInitialized = true;
+}
+
+// === FUNCIONES PARA WHISPER LOCAL ===
+
+async function checkLocalModelStatus() {
+  const localModelStatus = document.getElementById('localModelStatus');
+  if (!localModelStatus) return;
+  
+  try {
+    localModelStatus.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i> Verificando estado del modelo...';
+    localModelStatus.style.background = 'rgba(59, 130, 246, 0.15)';
+    localModelStatus.style.color = '#93c5fd';
+    
+    const response = await fetch('/whisper-local-info');
+    const info = await response.json();
+    
+    if (info.error) {
+      throw new Error(info.error);
+    }
+    
+    if (info.gpu_available) {
+      localModelStatus.innerHTML = `
+        <i class="fas fa-check-circle"></i> 
+        ✅ GPU: ${info.gpu_name} | 
+        Modelo ${info.is_loaded ? 'cargado' : 'disponible'}: ${info.model_size || 'ninguno'}
+      `;
+      localModelStatus.style.background = 'rgba(16, 185, 129, 0.15)';
+      localModelStatus.style.color = '#00ff7f';
+    } else {
+      localModelStatus.innerHTML = '<i class="fas fa-desktop"></i> ⚠️ CPU disponible (sin GPU)';
+      localModelStatus.style.background = 'rgba(245, 158, 11, 0.15)';
+      localModelStatus.style.color = '#fbbf24';
+    }
+    
+  } catch (error) {
+    console.error('Error verificando estado local:', error);
+    localModelStatus.innerHTML = '<i class="fas fa-exclamation-triangle"></i> ❌ Error verificando modelo local';
+    localModelStatus.style.background = 'rgba(239, 68, 68, 0.15)';
+    localModelStatus.style.color = '#fca5a5';
+  }
+}
+
+async function handleFileSelection(file) {
+  console.log('📁 === INICIANDO PROCESAMIENTO DE ARCHIVO ===');
+  console.log('📄 Archivo seleccionado:', file.name);
+  console.log('📊 Tamaño:', (file.size / 1024 / 1024).toFixed(2), 'MB');
+  console.log('🏷️ Tipo MIME:', file.type);
+  
+  // Verificar tamaño del archivo
+  const fileSizeMB = file.size / 1024 / 1024;
+  if (fileSizeMB > 4000) { // 4GB
+    showNotification('⚠️ Archivo muy grande (>4GB). Esto puede tomar mucho tiempo.', 'warning');
+  } else if (fileSizeMB > 1000) { // 1GB
+    showNotification('📊 Archivo grande detectado. La subida puede tardar unos minutos...', 'info');
+  }
+  
+  // Validar tipo de archivo
+  const validTypes = ['audio/mp3', 'audio/wav', 'audio/mpeg', 'audio/m4a', 'video/mp4'];
+  const validExtensions = ['.mp3', '.wav', '.m4a', '.mp4'];
+  
+  const isValidType = validTypes.includes(file.type) || 
+                     validExtensions.some(ext => file.name.toLowerCase().endsWith(ext));
+  
+  console.log('✅ Validación de tipo:', {
+    mimeTypeValid: validTypes.includes(file.type),
+    extensionValid: validExtensions.some(ext => file.name.toLowerCase().endsWith(ext)),
+    overallValid: isValidType
+  });
+  
+  if (!isValidType) {
+    console.error('❌ Formato de archivo no soportado');
+    showNotification('❌ Formato de archivo no soportado. Use MP3, WAV, M4A o MP4', 'error');
+    return;
+  }
+  
+  selectedFile = file;
+  console.log('💾 Archivo almacenado en selectedFile');
+  
+  // Mostrar nombre del archivo
+  const extractFileName = document.getElementById('extractFileName');
+  if (extractFileName) {
+    extractFileName.textContent = `📁 ${file.name}`;
+    extractFileName.style.display = 'block';
+    console.log('📝 Nombre de archivo mostrado');
+    showNotification(`✅ Archivo cargado: ${file.name}`, 'success');
+  } else {
+    console.error('❌ Elemento extractFileName no encontrado');
+    showNotification('❌ Error: No se pudo mostrar el nombre del archivo', 'error');
+  }
+  
+  // Si es MP4, obtener pistas de audio
+  if (file.name.toLowerCase().endsWith('.mp4')) {
+    console.log('🎬 Archivo MP4 detectado, cargando pistas de audio...');
+    try {
+      await loadAudioTracks(file);
+    } catch (error) {
+      console.error('❌ Error cargando pistas de audio:', error);
+      showNotification('⚠️ Error cargando pistas, usando configuración por defecto', 'warning');
+      
+      // Si falla cargar las pistas, habilitar transcripción directamente
+      const extractTranscribeBtn = document.getElementById('extractTranscribeBtn');
+      if (extractTranscribeBtn) {
+        extractTranscribeBtn.disabled = false;
+        console.log('✅ Botón habilitado como fallback');
+        showNotification('✅ Listo para transcribir', 'success');
+      }
+    }
+  } else {
+    console.log('🎵 Archivo de audio detectado, preparando para transcripción...');
+    // Para archivos de audio, subir archivo y preparar para transcripción
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      
+      console.log('📤 Subiendo archivo de audio...');
+      showNotification('📤 Subiendo archivo...', 'info');
+      
+      const uploadResponse = await fetch('/upload-audio', {
+        method: 'POST',
+        body: formData
+      });
+      
+      if (uploadResponse.ok) {
+        const uploadData = await uploadResponse.json();
+        selectedFile.serverPath = uploadData.filePath;
+        console.log('✅ Archivo subido correctamente:', uploadData.filePath);
+        showNotification('✅ Archivo subido correctamente', 'success');
+      } else {
+        const errorData = await uploadResponse.json();
+        console.error('❌ Error subiendo archivo:', errorData);
+        showNotification(`❌ Error subiendo archivo: ${errorData.error}`, 'error');
+        return; // Salir si hay error
+      }
+    } catch (error) {
+      console.error('⚠️ Error pre-subiendo archivo de audio:', error);
+      showNotification(`❌ Error de conexión: ${error.message}`, 'error');
+      return; // Salir si hay error
+    }
+    
+    // Ocultar selector de pistas
+    const extractAudioTrackContainer = document.getElementById('extractAudioTrackContainer');
+    const extractTranscribeBtn = document.getElementById('extractTranscribeBtn');
+    
+    console.log('🎛️ Configurando interfaz para archivo de audio...');
+    console.log('🔍 Elementos encontrados:', {
+      extractAudioTrackContainer: !!extractAudioTrackContainer,
+      extractTranscribeBtn: !!extractTranscribeBtn
+    });
+    
+    if (extractAudioTrackContainer) {
+      extractAudioTrackContainer.style.display = 'none';
+      console.log('✅ Selector de pistas ocultado');
+    } else {
+      console.error('❌ extractAudioTrackContainer no encontrado');
+    }
+    
+    if (extractTranscribeBtn) {
+      extractTranscribeBtn.disabled = false;
+      extractTranscribeBtn.style.opacity = '1';
+      extractTranscribeBtn.style.transform = 'scale(1.02)';
+      setTimeout(() => {
+        if (extractTranscribeBtn) {
+          extractTranscribeBtn.style.transform = 'scale(1)';
+        }
+      }, 200);
+      console.log('✅ Botón de transcripción habilitado');
+      showNotification('✅ Listo para transcribir - haz click en "Transcribir Audio"', 'success');
+    } else {
+      console.error('❌ extractTranscribeBtn no encontrado');
+      showNotification('❌ Error: Botón de transcripción no encontrado', 'error');
+    }
+  }
+  
+  console.log('📁 === PROCESAMIENTO DE ARCHIVO COMPLETADO ===');
+  
+  // Forzar actualización visual
+  setTimeout(() => {
+    const extractFileName = document.getElementById('extractFileName');
+    const extractTranscribeBtn = document.getElementById('extractTranscribeBtn');
+    
+    if (extractFileName && extractFileName.style.display === 'none') {
+      console.log('🔄 Forzando visualización del nombre del archivo...');
+      extractFileName.style.display = 'block';
+      extractFileName.style.visibility = 'visible';
+    }
+    
+    if (extractTranscribeBtn && extractTranscribeBtn.disabled) {
+      console.log('🔄 Forzando habilitación del botón...');
+      extractTranscribeBtn.disabled = false;
+    }
+  }, 100);
+}
+
+async function loadAudioTracks(file) {
+  console.log('🎵 Cargando pistas de audio del MP4...');
+  
+  try {
+    // Primero subir el archivo
+    const formData = new FormData();
+    formData.append('file', file);
+    
+    const uploadResponse = await fetch('/upload-audio', {
+      method: 'POST',
+      body: formData
+    });
+    
+    if (!uploadResponse.ok) {
+      throw new Error('Error subiendo archivo');
+    }
+    
+    const uploadData = await uploadResponse.json();
+    selectedFile.serverPath = uploadData.filePath; // Guardar la ruta del servidor
+    
+    // Luego obtener las pistas de audio
+    const response = await fetch('/get-audio-tracks', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ filePath: uploadData.filePath })
+    });
+    
+    if (!response.ok) {
+      throw new Error('Error obteniendo pistas de audio');
+    }
+    
+    const data = await response.json();
+    const tracks = data.tracks;
+    
+    const extractAudioTrackSelect = document.getElementById('extractAudioTrackSelect');
+    const extractAudioTrackContainer = document.getElementById('extractAudioTrackContainer');
+    
+    // Limpiar opciones anteriores
+    extractAudioTrackSelect.innerHTML = '<option value="">Selecciona una pista...</option>';
+    
+    // Agregar opciones de pistas
+    tracks.forEach((track, index) => {
+      const option = document.createElement('option');
+      option.value = index;
+      option.textContent = `${track.title} (${track.codec}, ${track.channels} canales)`;
+      extractAudioTrackSelect.appendChild(option);
+    });
+    
+    extractAudioTrackContainer.style.display = 'block';
+    
+    // Asegurar estilos de color para el contenedor
+    extractAudioTrackContainer.style.color = '#e2e8f0';
+    extractAudioTrackSelect.style.color = '#ffffff';
+    
+    // Aplicar estilos a todos los elementos del contenedor
+    const containerElements = extractAudioTrackContainer.querySelectorAll('*');
+    containerElements.forEach(element => {
+      element.style.color = '#e2e8f0';
+    });
+    
+    // Habilitar transcripción cuando se seleccione una pista
+    extractAudioTrackSelect.addEventListener('change', () => {
+      document.getElementById('extractTranscribeBtn').disabled = !extractAudioTrackSelect.value;
+    });
+    
+  } catch (error) {
+    console.error('❌ Error cargando pistas:', error);
+    showNotification('⚠️ No se pudieron cargar las pistas de audio. Se usará la pista por defecto.', 'warning');
+    document.getElementById('extractAudioTrackContainer').style.display = 'none';
+    document.getElementById('extractTranscribeBtn').disabled = false;
+  }
+}
+
+async function startTranscription() {
+  if (!selectedFile) {
+    showNotification('❌ No hay archivo seleccionado', 'error');
+    return;
+  }
+  
+  console.log('🎤 Iniciando transcripción...');
+  
+  const extractTranscribeBtn = document.getElementById('extractTranscribeBtn');
+  const extractProgressBar = document.getElementById('extractProgressBar');
+  const extractProgressText = document.getElementById('extractProgressText');
+  const extractOutput = document.getElementById('extractOutput');
+  const extractResultActions = document.getElementById('extractResultActions');
+  const transcriptionMethod = document.getElementById('transcriptionMethod');
+  
+  // Obtener configuraciones
+  const method = transcriptionMethod ? transcriptionMethod.value : 'api';
+  const modelSize = document.getElementById('whisperModel')?.value || 'medium';
+  const language = document.getElementById('audioLanguage')?.value || '';
+  
+  console.log(`🔧 Método: ${method} | Modelo: ${modelSize} | Idioma: ${language || 'auto'}`);
+  
+  // Deshabilitar botón y mostrar progreso
+  extractTranscribeBtn.disabled = true;
+  extractTranscribeBtn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Transcribiendo (${method})...`;
+  extractProgressBar.style.display = 'block';
+  extractProgressText.style.display = 'block';
+  extractProgressText.textContent = 'Preparando archivo...';
+  extractOutput.textContent = '';
+  extractResultActions.style.display = 'none';
+  
+  try {
+    let filePath = selectedFile.serverPath;
+    
+    // Si no tenemos la ruta del servidor, subir el archivo primero
+    if (!filePath) {
+      extractProgressText.textContent = 'Subiendo archivo...';
+      
+      const formData = new FormData();
+      formData.append('file', selectedFile);
+      
+      const uploadResponse = await fetch('/upload-audio', {
+        method: 'POST',
+        body: formData
+      });
+      
+      if (!uploadResponse.ok) {
+        throw new Error('Error subiendo archivo');
+      }
+      
+      const uploadData = await uploadResponse.json();
+      filePath = uploadData.filePath;
+    }
+    
+    // Obtener pista de audio seleccionada (si es MP4)
+    let audioTrackIndex = null;
+    const extractAudioTrackSelect = document.getElementById('extractAudioTrackSelect');
+    if (extractAudioTrackSelect.style.display !== 'none' && extractAudioTrackSelect.value) {
+      audioTrackIndex = parseInt(extractAudioTrackSelect.value);
+    }
+    
+    // Determinar endpoint según el método
+    const endpoint = method === 'local' ? '/transcribe-audio-local' : '/transcribe-audio';
+    const bodyData = { 
+      filePath: filePath,
+      audioTrackIndex: audioTrackIndex
+    };
+    
+    // Agregar configuraciones adicionales para método local
+    if (method === 'local') {
+      bodyData.modelSize = modelSize;
+      if (language) {
+        bodyData.language = language;
+      }
+      extractProgressText.textContent = `Transcribiendo con GPU (${modelSize})...`;
+    } else {
+      extractProgressText.textContent = 'Transcribiendo con OpenAI API...';
+    }
+    
+    console.log(`📡 Enviando a: ${endpoint}`, bodyData);
+    
+    // Llamar a la API de transcripción
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(bodyData)
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'Error en la transcripción');
+    }
+    
+    const data = await response.json();
+    extractedText = data.transcript;
+    
+    // Mostrar resultado con información adicional según el método
+    extractProgressBar.value = 100;
+    
+    if (method === 'local' && data.stats) {
+      extractProgressText.textContent = `✅ Transcripción completada (${data.stats.processing_speed.toFixed(1)}x tiempo real)`;
+      
+      // Mostrar información adicional en consola
+      console.log(`📊 Estadísticas de transcripción local:`, {
+        modelo: data.model_info,
+        estadísticas: data.stats,
+        idioma: data.language,
+        duración: data.duration
+      });
+      
+      showNotification(`✅ Transcripción local completada - ${data.stats.processing_speed.toFixed(1)}x velocidad`, 'success');
+    } else {
+      extractProgressText.textContent = '✅ Transcripción completada';
+      showNotification('✅ Transcripción completada exitosamente');
+    }
+    
+    extractProgressText.style.color = '#00ff7f';
+    extractProgressText.style.fontWeight = '600';
+    extractProgressText.style.background = 'rgba(16, 185, 129, 0.15)';
+    extractProgressText.style.padding = '0.5rem';
+    extractProgressText.style.borderRadius = '6px';
+    extractProgressText.style.border = '1px solid rgba(16, 185, 129, 0.4)';
+    extractOutput.textContent = extractedText;
+    extractOutput.style.display = 'block';
+    extractOutput.style.color = '#ffffff';
+    extractResultActions.style.display = 'flex';
+    
+    console.log(`✅ Transcripción completada (${method})`);
+    
+  } catch (error) {
+    console.error('❌ Error en transcripción:', error);
+    extractProgressText.textContent = `❌ Error en la transcripción (${method})`;
+    extractProgressText.style.color = '#fca5a5';
+    extractProgressText.style.fontWeight = '600';
+    extractProgressText.style.background = 'rgba(239, 68, 68, 0.15)';
+    extractProgressText.style.padding = '0.5rem';
+    extractProgressText.style.borderRadius = '6px';
+    extractProgressText.style.border = '1px solid rgba(239, 68, 68, 0.4)';
+    showNotification(`❌ Error: ${error.message}`, 'error');
+  } finally {
+    // Rehabilitar botón
+    extractTranscribeBtn.disabled = false;
+    extractTranscribeBtn.innerHTML = '<i class="fas fa-microphone"></i> Transcribir Audio';
+  }
+}
+
+function resetExtractForm() {
+  selectedFile = null;
+  extractedText = '';
+  
+  const extractFileName = document.getElementById('extractFileName');
+  const extractAudioTrackContainer = document.getElementById('extractAudioTrackContainer');
+  const extractTranscribeBtn = document.getElementById('extractTranscribeBtn');
+  const extractProgressBar = document.getElementById('extractProgressBar');
+  const extractProgressText = document.getElementById('extractProgressText');
+  const extractOutput = document.getElementById('extractOutput');
+  const extractResultActions = document.getElementById('extractResultActions');
+  const extractFileInput = document.getElementById('extractFileInput');
+  
+  extractFileName.style.display = 'none';
+  extractAudioTrackContainer.style.display = 'none';
+  extractTranscribeBtn.disabled = true;
+  extractProgressBar.style.display = 'none';
+  extractProgressText.style.display = 'none';
+  extractOutput.style.display = 'none';
+  extractResultActions.style.display = 'none';
+  extractFileInput.value = '';
+  
+  console.log('🔄 Formulario de extracción reiniciado');
+}
+
+function downloadAsText(text, filename) {
+  const blob = new Blob([text], { type: 'text/plain' });
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  window.URL.revokeObjectURL(url);
+  
+  showNotification('✅ Archivo descargado exitosamente');
+}

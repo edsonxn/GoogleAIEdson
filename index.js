@@ -8,6 +8,8 @@ import fs from 'fs';
 import path from 'path';
 import fetch from 'node-fetch';
 import ApplioClient from "./applio-client.js";
+import { transcribeAudio, getAudioTracks } from "./transcriber.js";
+import multer from 'multer';
 
 const app = express();
 const PORT = 3000;
@@ -18,6 +20,40 @@ const applioClient = new ApplioClient();
 app.use(cors());
 app.use(bodyParser.json());
 app.use(express.static('public')); // Servir HTML y assets
+
+// Configurar multer para subida de archivos
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    const tempDir = './temp';
+    if (!fs.existsSync(tempDir)) {
+      fs.mkdirSync(tempDir, { recursive: true });
+    }
+    cb(null, tempDir);
+  },
+  filename: function (req, file, cb) {
+    cb(null, Date.now() + '_' + file.originalname);
+  }
+});
+
+const upload = multer({ 
+  storage: storage,
+  limits: {
+    fileSize: 5 * 1024 * 1024 * 1024 // 5GB máximo para videos grandes
+  },
+  fileFilter: function (req, file, cb) {
+    const allowedTypes = ['audio/mp3', 'audio/wav', 'audio/mpeg', 'audio/m4a', 'video/mp4'];
+    const allowedExtensions = ['.mp3', '.wav', '.m4a', '.mp4'];
+    
+    const isValidType = allowedTypes.includes(file.mimetype) || 
+                       allowedExtensions.some(ext => file.originalname.toLowerCase().endsWith(ext));
+    
+    if (isValidType) {
+      cb(null, true);
+    } else {
+      cb(new Error('Formato de archivo no soportado'));
+    }
+  }
+});
 
 const ai = new GoogleGenAI({
   apiKey: process.env.GOOGLE_API_KEY,
@@ -182,7 +218,7 @@ async function generateStoryAudio(script, voiceName = 'Orus', sectionDir, topic,
     
     // Intentar con configuración más simple
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-pro-preview-tts",
+      model: "gemini-2.5-flash-preview-tts",
       contents: [{ 
         parts: [{ 
           text: `Narra el siguiente guión ${narrationTone}:
@@ -359,6 +395,7 @@ INSTRUCCIONES GENERALES:
 - Si es sobre historia de la industria, enfócate en hechos históricos y datos
 - Adapta tu estilo narrativo al tipo de contenido solicitado
 - APLICA ESTRICTAMENTE el estilo personalizado especificado arriba
+- NO REPITAS IDEAS, SI ES NECESARIO SALTE UN POCO DEL TEMA PARA EXPLORAR NUEVAS PERSPECTIVAS, PUEDES EXPLORAR CURIOSIDADES TAMBIEN, EASTER EGGS, ETC.
 
 ESTRUCTURA REQUERIDA PARA LA SECCIÓN 1:
 - Exactamente 3 párrafos detallados
@@ -667,7 +704,7 @@ app.post('/generate', async (req, res) => {
     }
 
     const scriptResponse = await ai.models.generateContent({
-      model: "models/gemini-2.5-flash",
+      model: "models/gemini-2.5-pro",
       contents: conversation.history,
       config: {
         systemInstruction: systemInstruction,
@@ -720,7 +757,7 @@ Generado automáticamente por el sistema de creación de contenido
       // Generar prompts para mostrar al usuario aunque no se generen imágenes
       console.log(`🎨 Generando prompts para secuencia de ${numImages} imágenes (solo texto)...`);
       const promptsResponse = await ai.models.generateContent({
-        model: "models/gemini-2.5-flash",
+        model: "models/gemini-2.5-pro",
         contents: `Basándote en este guión de la sección ${section} sobre "${topic}": "${cleanScript}", crea EXACTAMENTE ${numImages} prompts detallados para generar una SECUENCIA de ${numImages} imágenes que ilustren visualmente el contenido del guión en orden cronológico.
 
         IMPORTANTE: Debes crear EXACTAMENTE ${numImages} prompts, ni más ni menos.
@@ -873,7 +910,7 @@ Generado automáticamente por el sistema de creación de contenido
     // Paso 2: Crear prompts para imágenes secuenciales basadas en el guión
     console.log(`🎨 Generando prompts para secuencia de ${numImages} imágenes...`);
     const promptsResponse = await ai.models.generateContent({
-      model: "models/gemini-2.5-flash",
+      model: "models/gemini-2.5-pro",
       contents: `Basándote en este guión de la sección ${section} sobre "${topic}" ": "${cleanScript}", crea EXACTAMENTE ${numImages} prompts detallados para generar una SECUENCIA de ${numImages} imágenes que ilustren visualmente el contenido del guión en orden cronológico.
 
       IMPORTANTE: Debes crear EXACTAMENTE ${numImages} prompts, ni más ni menos.
@@ -1359,6 +1396,386 @@ app.post('/generate-section-audio', async (req, res) => {
   } catch (error) {
     console.error('❌ Error general:', error);
     res.status(500).json({ error: 'Error procesando solicitud' });
+  }
+});
+
+// Ruta para subir archivo para transcripción
+app.post('/upload-audio', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No se recibió ningún archivo' });
+    }
+
+    console.log(`📁 Archivo subido: ${req.file.filename}`);
+    res.json({ 
+      success: true, 
+      filePath: req.file.path,
+      originalName: req.file.originalname 
+    });
+    
+  } catch (error) {
+    console.error('❌ Error subiendo archivo:', error);
+    res.status(500).json({ error: 'Error subiendo archivo: ' + error.message });
+  }
+});
+
+// Ruta para obtener pistas de audio de un archivo
+app.post('/get-audio-tracks', async (req, res) => {
+  try {
+    const { filePath } = req.body;
+    
+    if (!filePath) {
+      return res.status(400).json({ error: 'Ruta del archivo requerida' });
+    }
+
+    console.log(`🎵 Obteniendo pistas de audio de: ${filePath}`);
+    const tracks = await getAudioTracks(filePath);
+    
+    res.json({ tracks });
+  } catch (error) {
+    console.error('❌ Error obteniendo pistas de audio:', error);
+    res.status(500).json({ error: 'Error obteniendo pistas de audio: ' + error.message });
+  }
+});
+
+// Ruta para transcribir audio/video con Whisper LOCAL
+app.post('/transcribe-audio-local', async (req, res) => {
+  try {
+    const { filePath, audioTrackIndex, modelSize = 'medium', language } = req.body;
+    
+    if (!filePath) {
+      return res.status(400).json({ error: 'Ruta del archivo requerida' });
+    }
+
+    console.log(`🎤 Iniciando transcripción LOCAL de: ${filePath}`);
+    console.log(`🔧 Modelo: ${modelSize} | Idioma: ${language || 'auto-detectar'}`);
+    if (audioTrackIndex !== undefined) {
+      console.log(`📡 Usando pista de audio: ${audioTrackIndex}`);
+    }
+
+    // Importar dinámicamente el módulo local de Python
+    const { spawn } = await import('child_process');
+    
+    // Crear script Python temporal para la transcripción
+    const pythonScript = `
+# -*- coding: utf-8 -*-
+import sys
+import json
+import os
+import subprocess
+import tempfile
+import shutil
+from pathlib import Path
+
+# Configurar codificación UTF-8 para Windows
+if sys.platform == 'win32':
+    import codecs
+    sys.stdout = codecs.getwriter('utf-8')(sys.stdout.detach())
+    sys.stderr = codecs.getwriter('utf-8')(sys.stderr.detach())
+
+sys.path.append('${process.cwd().replace(/\\/g, '/')}')
+
+from whisper_local import whisper_local
+
+def extract_audio_from_mp4(input_path, output_path, track_index=None):
+    """Extrae audio de MP4 usando FFmpeg"""
+    try:
+        cmd = ['ffmpeg', '-y', '-i', input_path]
+        
+        if track_index is not None:
+            cmd.extend(['-map', f'0:a:{track_index}'])
+        else:
+            cmd.extend(['-map', '0:a:0'])  # Primera pista de audio por defecto
+        
+        cmd.extend(['-acodec', 'libmp3lame', '-ab', '192k', output_path])
+        
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        
+        if result.returncode != 0:
+            print(f"Error FFmpeg: {result.stderr}")
+            return False
+        
+        return True
+        
+    except Exception as e:
+        print(f"Error extrayendo audio: {e}")
+        return False
+
+def main():
+    file_path = r'${filePath}'
+    audio_track_index = ${audioTrackIndex || 'None'}
+    model_size = '${modelSize}'
+    language = ${language ? `'${language}'` : 'None'}
+    
+    temp_audio_file = None
+    
+    try:
+        # Verificar que el archivo existe
+        if not os.path.exists(file_path):
+            raise Exception(f"Archivo no encontrado: {file_path}")
+        
+        # Determinar archivo de audio a procesar
+        if file_path.lower().endswith('.mp4'):
+            # Extraer audio de MP4
+            temp_audio_file = tempfile.mktemp(suffix='.mp3')
+            print(f"Extrayendo audio de MP4 a: {temp_audio_file}")
+            
+            if not extract_audio_from_mp4(file_path, temp_audio_file, audio_track_index):
+                raise Exception("Error extrayendo audio del MP4")
+            
+            audio_file = temp_audio_file
+        else:
+            # Usar archivo de audio directamente
+            audio_file = file_path
+        
+        # Cargar modelo si no está cargado
+        if not whisper_local.is_loaded or whisper_local.model_size != model_size:
+            print(f"Cargando modelo {model_size}...")
+            if not whisper_local.load_model(model_size):
+                raise Exception(f"No se pudo cargar el modelo {model_size}")
+        
+        # Transcribir
+        print(f"Transcribiendo archivo: {os.path.basename(audio_file)}")
+        result = whisper_local.transcribe_audio(audio_file, language)
+        
+        if result['success']:
+            print(json.dumps({
+                'success': True,
+                'transcript': result['transcript'],
+                'language': result['language'],
+                'duration': result['duration'],
+                'model_info': result['model_info'],
+                'stats': result['stats']
+            }, ensure_ascii=False))
+        else:
+            print(json.dumps({
+                'success': False,
+                'error': result['error']
+            }, ensure_ascii=False))
+            
+    except Exception as e:
+        print(json.dumps({
+            'success': False,
+            'error': str(e)
+        }, ensure_ascii=False))
+    
+    finally:
+        # Limpiar archivo temporal de audio si se creó
+        if temp_audio_file and os.path.exists(temp_audio_file):
+            try:
+                os.unlink(temp_audio_file)
+                print(f"Archivo temporal de audio eliminado: {temp_audio_file}")
+            except:
+                pass
+
+if __name__ == '__main__':
+    main()
+`;
+
+    // Escribir script temporal
+    const tempScriptPath = path.join(process.cwd(), 'temp', `transcribe_${Date.now()}.py`);
+    fs.mkdirSync(path.dirname(tempScriptPath), { recursive: true });
+    fs.writeFileSync(tempScriptPath, pythonScript);
+
+    // Ejecutar transcripción
+    const pythonProcess = spawn('python', [tempScriptPath], {
+      cwd: process.cwd(),
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: { 
+        ...process.env, 
+        PYTHONIOENCODING: 'utf-8',
+        PYTHONUTF8: '1'
+      }
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    pythonProcess.stdout.on('data', (data) => {
+      stdout += data.toString();
+    });
+
+    pythonProcess.stderr.on('data', (data) => {
+      stderr += data.toString();
+    });
+
+    pythonProcess.on('close', (code) => {
+      // Limpiar script temporal
+      try {
+        fs.unlinkSync(tempScriptPath);
+      } catch (e) {
+        console.warn('No se pudo eliminar script temporal:', e.message);
+      }
+
+      // Limpiar archivo de audio temporal
+      try {
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+          console.log(`🗑️ Archivo temporal eliminado: ${filePath}`);
+        }
+      } catch (cleanupError) {
+        console.warn('⚠️ No se pudo eliminar archivo temporal:', cleanupError.message);
+      }
+
+      if (code !== 0) {
+        console.error('❌ Error en transcripción local:', stderr);
+        return res.status(500).json({ 
+          error: 'Error en transcripción local: ' + stderr,
+          stdout: stdout 
+        });
+      }
+
+      try {
+        // Buscar la última línea que sea JSON válido
+        const lines = stdout.trim().split('\n');
+        let result = null;
+        
+        for (let i = lines.length - 1; i >= 0; i--) {
+          try {
+            result = JSON.parse(lines[i]);
+            break;
+          } catch (e) {
+            continue;
+          }
+        }
+
+        if (!result) {
+          throw new Error('No se pudo parsear el resultado');
+        }
+
+        if (result.success) {
+          console.log(`✅ Transcripción LOCAL completada. Caracteres: ${result.transcript.length}`);
+          console.log(`📊 Velocidad: ${result.stats.processing_speed.toFixed(1)}x tiempo real`);
+          console.log(`🌍 Idioma: ${result.language}`);
+          
+          res.json({
+            transcript: result.transcript,
+            language: result.language,
+            duration: result.duration,
+            model_info: result.model_info,
+            stats: result.stats,
+            method: 'local'
+          });
+        } else {
+          throw new Error(result.error);
+        }
+
+      } catch (parseError) {
+        console.error('❌ Error parseando resultado:', parseError);
+        console.log('Raw stdout:', stdout);
+        res.status(500).json({ 
+          error: 'Error parseando resultado de transcripción',
+          stdout: stdout,
+          stderr: stderr 
+        });
+      }
+    });
+
+    pythonProcess.on('error', (error) => {
+      console.error('❌ Error ejecutando Python:', error);
+      res.status(500).json({ error: 'Error ejecutando transcripción local: ' + error.message });
+    });
+    
+  } catch (error) {
+    console.error('❌ Error en transcripción local:', error);
+    res.status(500).json({ error: 'Error en transcripción local: ' + error.message });
+  }
+});
+
+// Ruta para obtener información del modelo local
+app.get('/whisper-local-info', async (req, res) => {
+  try {
+    const { spawn } = await import('child_process');
+    
+    const pythonScript = `
+import sys
+import json
+sys.path.append('${process.cwd().replace(/\\/g, '/')}')
+
+from whisper_local import whisper_local
+
+try:
+    info = whisper_local.get_model_info()
+    print(json.dumps(info))
+except Exception as e:
+    print(json.dumps({'error': str(e)}))
+`;
+
+    const tempScriptPath = path.join(process.cwd(), 'temp', `info_${Date.now()}.py`);
+    fs.mkdirSync(path.dirname(tempScriptPath), { recursive: true });
+    fs.writeFileSync(tempScriptPath, pythonScript);
+
+    const pythonProcess = spawn('python', [tempScriptPath], {
+      env: { 
+        ...process.env, 
+        PYTHONIOENCODING: 'utf-8',
+        PYTHONUTF8: '1'
+      }
+    });
+    let stdout = '';
+
+    pythonProcess.stdout.on('data', (data) => {
+      stdout += data.toString();
+    });
+
+    pythonProcess.on('close', (code) => {
+      try {
+        fs.unlinkSync(tempScriptPath);
+      } catch (e) {}
+
+      try {
+        const result = JSON.parse(stdout.trim());
+        res.json(result);
+      } catch (error) {
+        res.status(500).json({ error: 'Error obteniendo información del modelo' });
+      }
+    });
+
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Ruta para transcribir audio/video
+app.post('/transcribe-audio', async (req, res) => {
+  try {
+    const { filePath, audioTrackIndex } = req.body;
+    
+    if (!filePath) {
+      return res.status(400).json({ error: 'Ruta del archivo requerida' });
+    }
+
+    console.log(`🎤 Iniciando transcripción de: ${filePath}`);
+    if (audioTrackIndex !== undefined) {
+      console.log(`📡 Usando pista de audio: ${audioTrackIndex}`);
+    }
+
+    const transcript = await transcribeAudio({
+      filePath,
+      audioTrackIndex,
+      onUploadProgress: (percent) => {
+        // Aquí podrías implementar WebSockets para progreso en tiempo real si quisieras
+        console.log(`📊 Progreso de transcripción: ${percent}%`);
+      }
+    });
+
+    console.log(`✅ Transcripción completada. Caracteres: ${transcript.length}`);
+    
+    // Limpiar archivo temporal después de la transcripción
+    try {
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+        console.log(`🗑️ Archivo temporal eliminado: ${filePath}`);
+      }
+    } catch (cleanupError) {
+      console.warn('⚠️ No se pudo eliminar archivo temporal:', cleanupError.message);
+    }
+    
+    res.json({ transcript });
+    
+  } catch (error) {
+    console.error('❌ Error transcribiendo audio:', error);
+    res.status(500).json({ error: 'Error transcribiendo audio: ' + error.message });
   }
 });
 

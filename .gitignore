@@ -46,6 +46,11 @@ wheels/
 public/outputs/*
 !public/outputs/.gitkeep
 
+# Modelos de Whisper (muy grandes, se descargan automáticamente)
+whisper_models/
+*.bin
+*.onnx
+
 # Archivos de configuración del IDE
 .vscode/
 .idea/
