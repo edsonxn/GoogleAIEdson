@@ -1779,6 +1779,91 @@ app.post('/transcribe-audio', async (req, res) => {
   }
 });
 
+// Endpoint para generar títulos, descripción y etiquetas para YouTube
+app.post('/generate-youtube-metadata', async (req, res) => {
+  try {
+    const { topic, allSections } = req.body;
+
+    if (!topic || !allSections || allSections.length === 0) {
+      return res.status(400).json({ error: 'Tema y secciones requeridos' });
+    }
+
+    console.log(`🎬 Generando metadata de YouTube para: ${topic}`);
+    console.log(`📝 Número de secciones: ${allSections.length}`);
+
+    // Combinar todas las secciones en un resumen
+    const fullScript = allSections.join('\n\n--- SECCIÓN ---\n\n');
+
+    const prompt = `
+Basándote en el siguiente tema y guión completo de un video de gaming, genera metadata optimizada para YouTube:
+
+**TEMA:** ${topic}
+
+**GUIÓN COMPLETO:**
+${fullScript}
+
+Por favor genera:
+
+1. **10 TÍTULOS CLICKBAIT** (cada uno en una línea, numerados):
+   - Usa palabras que generen curiosidad como "QUE PASA CUANDO", "POR QUE", "HICE ESTO Y PASO ESTO", "NO VAS A CREER", "ESTO CAMBIÓ TODO"
+   - Que sean polémicos pero relacionados al contenido
+   - Máximo 60 caracteres cada uno
+   - Incluye emojis relevantes
+
+2. **DESCRIPCIÓN PARA VIDEO** (optimizada para SEO):
+   - Entre 150-300 palabras
+   - Incluye palabras clave relevantes del gaming
+   - Menciona el contenido principal del video
+   - Incluye call-to-action para suscribirse
+   - Formato atractivo con emojis
+
+3. **25 ETIQUETAS** (separadas por comas):
+   - Palabras clave relacionadas al tema
+   - Tags de gaming populares
+   - Términos de búsqueda relevantes
+   - Sin espacios en tags compuestos (usar guiones o camelCase)
+
+Formato de respuesta:
+**TÍTULOS CLICKBAIT:**
+1. [título]
+2. [título]
+...
+
+**DESCRIPCIÓN:**
+[descripción completa]
+
+**ETIQUETAS:**
+tag1, tag2, tag3, ...
+    `;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-2.0-flash-exp",
+      contents: [{
+        role: "user",
+        parts: [{ text: prompt }]
+      }]
+    });
+
+    const responseText = response.text;
+
+    console.log(`✅ Metadata de YouTube generada exitosamente`);
+    
+    res.json({
+      success: true,
+      metadata: responseText,
+      topic: topic,
+      sectionsCount: allSections.length
+    });
+
+  } catch (error) {
+    console.error('❌ Error generando metadata de YouTube:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Error generando metadata de YouTube: ' + error.message 
+    });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`);
 });

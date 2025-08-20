@@ -418,7 +418,7 @@ function showAudioGenerationStage(section) {
 }
 
 // Función para mostrar completación de generación automática
-function showAutoGenerationComplete() {
+async function showAutoGenerationComplete() {
   generateBtn.innerHTML = `
     <i class="fas fa-check-circle"></i>
     <span>Generación Automática Completada</span>
@@ -439,10 +439,14 @@ function showAutoGenerationComplete() {
       <i class="fas fa-trophy"></i>
       <h3>¡Generación Automática Completada!</h3>
       <p>Se han generado exitosamente ${totalSections} secciones con guión, imágenes y audio.</p>
+      <p>Generando metadata para YouTube...</p>
     </div>
   `;
   
   output.insertBefore(successMessage, output.firstChild);
+  
+  // Generar metadata de YouTube
+  await generateYouTubeMetadata();
   
   setTimeout(() => {
     generateBtn.innerHTML = `
@@ -4055,3 +4059,227 @@ function downloadAsText(text, filename) {
   
   showNotification('✅ Archivo descargado exitosamente');
 }
+
+// Función para generar metadata de YouTube
+async function generateYouTubeMetadata() {
+  try {
+    console.log("🎬 Iniciando generación de metadata de YouTube...");
+    
+    const topic = promptInput.value.trim();
+    
+    if (!topic || allSections.length === 0) {
+      console.error("❌ No hay tema o secciones para generar metadata");
+      return;
+    }
+
+    // Mostrar indicador de carga
+    const loadingIndicator = document.createElement('div');
+    loadingIndicator.className = 'youtube-metadata-loading';
+    loadingIndicator.innerHTML = `
+      <div class="loading-content">
+        <i class="fas fa-spinner fa-spin"></i>
+        <h3>Generando Metadata para YouTube...</h3>
+        <p>Creando títulos clickbait, descripción SEO y etiquetas...</p>
+      </div>
+    `;
+    
+    output.appendChild(loadingIndicator);
+
+    const response = await fetch('/generate-youtube-metadata', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        topic: topic,
+        allSections: allSections
+      })
+    });
+
+    const data = await response.json();
+
+    // Remover indicador de carga
+    loadingIndicator.remove();
+
+    if (data.success) {
+      console.log("✅ Metadata de YouTube generada exitosamente");
+      showYouTubeMetadataResults(data.metadata, topic);
+    } else {
+      console.error("❌ Error generando metadata:", data.error);
+      showError("Error generando metadata de YouTube: " + data.error);
+    }
+
+  } catch (error) {
+    console.error("❌ Error en generateYouTubeMetadata:", error);
+    showError("Error generando metadata de YouTube: " + error.message);
+    
+    // Remover indicador de carga si existe
+    const loadingIndicator = output.querySelector('.youtube-metadata-loading');
+    if (loadingIndicator) {
+      loadingIndicator.remove();
+    }
+  }
+}
+
+// Función para mostrar los resultados de metadata de YouTube
+function showYouTubeMetadataResults(metadata, topic) {
+  console.log("📺 Mostrando resultados de metadata de YouTube");
+
+  const metadataContainer = document.createElement('div');
+  metadataContainer.className = 'youtube-metadata-container';
+  
+  // Procesar el texto de metadata para separar secciones
+  const sections = parseMetadata(metadata);
+  
+  metadataContainer.innerHTML = `
+    <div class="youtube-metadata-header">
+      <h2><i class="fas fa-youtube"></i> Metadata para YouTube</h2>
+      <p class="metadata-topic">Tema: <strong>${topic}</strong></p>
+    </div>
+    
+    <div class="metadata-section">
+      <h3><i class="fas fa-fire"></i> Títulos Clickbait</h3>
+      <div class="titles-list">
+        ${sections.titles.map(title => `
+          <div class="title-item">
+            <span class="title-text">${title}</span>
+            <button class="copy-btn" onclick="copyToClipboard('${title.replace(/'/g, "\\'")}')">
+              <i class="fas fa-copy"></i>
+            </button>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+    
+    <div class="metadata-section">
+      <h3><i class="fas fa-file-text"></i> Descripción SEO</h3>
+      <div class="description-container">
+        <textarea class="description-text" readonly>${sections.description}</textarea>
+        <button class="copy-btn-large" onclick="copyToClipboard(\`${sections.description.replace(/`/g, '\\`').replace(/\$/g, '\\$')}\`)">
+          <i class="fas fa-copy"></i> Copiar Descripción
+        </button>
+      </div>
+    </div>
+    
+    <div class="metadata-section">
+      <h3><i class="fas fa-tags"></i> Etiquetas (25)</h3>
+      <div class="tags-container">
+        <div class="tags-display">
+          ${sections.tags.map(tag => `<span class="tag-item">${tag}</span>`).join('')}
+        </div>
+        <button class="copy-btn-large" onclick="copyToClipboard('${sections.tagsString.replace(/'/g, "\\'")}')">
+          <i class="fas fa-copy"></i> Copiar Etiquetas
+        </button>
+      </div>
+    </div>
+    
+    <div class="metadata-actions">
+      <button class="btn btn-primary" onclick="downloadYouTubeMetadata('${topic}', \`${metadata.replace(/`/g, '\\`').replace(/\$/g, '\\$')}\`)">
+        <i class="fas fa-download"></i> Descargar Metadata
+      </button>
+    </div>
+  `;
+  
+  output.appendChild(metadataContainer);
+  
+  // Scroll suave hacia el nuevo contenido
+  setTimeout(() => {
+    metadataContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, 100);
+}
+
+// Función para parsear la metadata y extraer secciones
+function parseMetadata(metadata) {
+  const lines = metadata.split('\n');
+  let currentSection = '';
+  let titles = [];
+  let description = '';
+  let tags = [];
+  
+  for (let line of lines) {
+    line = line.trim();
+    
+    if (line.includes('TÍTULOS CLICKBAIT') || line.includes('TITULOS CLICKBAIT')) {
+      currentSection = 'titles';
+      continue;
+    } else if (line.includes('DESCRIPCIÓN')) {
+      currentSection = 'description';
+      continue;
+    } else if (line.includes('ETIQUETAS')) {
+      currentSection = 'tags';
+      continue;
+    }
+    
+    if (currentSection === 'titles' && line && !line.startsWith('**')) {
+      // Remover numeración al inicio (1., 2., etc.)
+      const cleanTitle = line.replace(/^\d+\.\s*/, '');
+      if (cleanTitle) {
+        titles.push(cleanTitle);
+      }
+    } else if (currentSection === 'description' && line && !line.startsWith('**')) {
+      description += line + '\n';
+    } else if (currentSection === 'tags' && line && !line.startsWith('**')) {
+      // Separar por comas y limpiar
+      const lineTags = line.split(',').map(tag => tag.trim()).filter(tag => tag);
+      tags.push(...lineTags);
+    }
+  }
+  
+  const tagsString = tags.join(', ');
+  
+  return {
+    titles: titles.slice(0, 10), // Máximo 10 títulos
+    description: description.trim(),
+    tags: tags.slice(0, 25), // Máximo 25 etiquetas
+    tagsString: tagsString
+  };
+}
+
+// Función para copiar al portapapeles
+function copyToClipboard(text) {
+  navigator.clipboard.writeText(text).then(() => {
+    // Mostrar confirmación visual
+    const event = new CustomEvent('showToast', {
+      detail: { message: 'Copiado al portapapeles', type: 'success' }
+    });
+    document.dispatchEvent(event);
+  }).catch(err => {
+    console.error('Error copiando al portapapeles:', err);
+    // Fallback para navegadores más antiguos
+    const textArea = document.createElement('textarea');
+    textArea.value = text;
+    document.body.appendChild(textArea);
+    textArea.select();
+    document.execCommand('copy');
+    document.body.removeChild(textArea);
+  });
+}
+
+// Función para descargar metadata de YouTube
+function downloadYouTubeMetadata(topic, metadata) {
+  const filename = `youtube_metadata_${topic.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}.txt`;
+  downloadAsText(metadata, filename);
+}
+
+// Event listener para mostrar toasts
+document.addEventListener('showToast', function(event) {
+  const { message, type = 'info' } = event.detail;
+  
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type}`;
+  toast.innerHTML = `
+    <i class="fas fa-check-circle"></i>
+    <span>${message}</span>
+  `;
+  
+  document.body.appendChild(toast);
+  
+  // Mostrar toast
+  setTimeout(() => toast.classList.add('show'), 100);
+  
+  // Ocultar toast después de 3 segundos
+  setTimeout(() => {
+    toast.classList.remove('show');
+    setTimeout(() => document.body.removeChild(toast), 300);
+  }, 3000);
+});

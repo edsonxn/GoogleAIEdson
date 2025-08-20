@@ -4647,3 +4647,338 @@ body.prompts-panel-active .container {
 #extractTextModal .modal-body .status-info {
   color: #93c5fd !important;
 }
+
+/* ============================================================================
+   ESTILOS PARA METADATA DE YOUTUBE
+   ============================================================================ */
+
+.youtube-metadata-loading {
+  background: linear-gradient(145deg, rgba(26, 26, 46, 0.95), rgba(16, 33, 62, 0.98));
+  border: 1px solid rgba(255, 0, 0, 0.3);
+  border-radius: 15px;
+  padding: 30px;
+  margin: 20px 0;
+  text-align: center;
+  box-shadow: 
+    0 10px 30px rgba(0, 0, 0, 0.4),
+    0 0 20px rgba(255, 0, 0, 0.1);
+}
+
+.youtube-metadata-loading .loading-content {
+  color: #e2e8f0;
+}
+
+.youtube-metadata-loading h3 {
+  color: #ff0000;
+  margin: 10px 0;
+  font-size: 1.5em;
+}
+
+.youtube-metadata-loading i {
+  color: #ff0000;
+  font-size: 2em;
+  margin-bottom: 15px;
+}
+
+.youtube-metadata-container {
+  background: linear-gradient(145deg, rgba(26, 26, 46, 0.95), rgba(16, 33, 62, 0.98));
+  border: 1px solid rgba(255, 0, 0, 0.3);
+  border-radius: 15px;
+  padding: 25px;
+  margin: 20px 0;
+  box-shadow: 
+    0 15px 35px rgba(0, 0, 0, 0.4),
+    0 0 25px rgba(255, 0, 0, 0.1);
+}
+
+.youtube-metadata-header {
+  text-align: center;
+  margin-bottom: 30px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid rgba(255, 0, 0, 0.2);
+}
+
+.youtube-metadata-header h2 {
+  color: #ff0000;
+  font-size: 2.2em;
+  margin-bottom: 10px;
+  text-shadow: 0 0 10px rgba(255, 0, 0, 0.3);
+}
+
+.youtube-metadata-header i {
+  margin-right: 10px;
+}
+
+.metadata-topic {
+  color: #e2e8f0;
+  font-size: 1.1em;
+  opacity: 0.9;
+}
+
+.metadata-topic strong {
+  color: #00ff7f;
+}
+
+.metadata-section {
+  margin-bottom: 30px;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.metadata-section h3 {
+  color: #00ff7f;
+  font-size: 1.4em;
+  margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.metadata-section h3 i {
+  font-size: 1.2em;
+}
+
+/* Estilos para títulos clickbait */
+.titles-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.title-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 15px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  transition: all 0.3s ease;
+}
+
+.title-item:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(0, 255, 127, 0.3);
+}
+
+.title-text {
+  color: #e2e8f0;
+  font-size: 1em;
+  line-height: 1.4;
+  flex: 1;
+}
+
+.copy-btn {
+  background: linear-gradient(145deg, #00ff7f, #00cc66);
+  border: none;
+  border-radius: 6px;
+  padding: 8px 12px;
+  color: #0a0e27;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  font-size: 0.9em;
+}
+
+.copy-btn:hover {
+  background: linear-gradient(145deg, #00cc66, #00aa55);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 255, 127, 0.3);
+}
+
+/* Estilos para descripción */
+.description-container {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.description-text {
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  padding: 15px;
+  color: #e2e8f0;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.95em;
+  line-height: 1.6;
+  resize: vertical;
+  min-height: 120px;
+  max-height: 300px;
+}
+
+.description-text:focus {
+  outline: none;
+  border-color: rgba(0, 255, 127, 0.5);
+  box-shadow: 0 0 10px rgba(0, 255, 127, 0.2);
+}
+
+/* Estilos para etiquetas */
+.tags-container {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.tags-display {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tag-item {
+  background: linear-gradient(145deg, rgba(0, 191, 255, 0.2), rgba(0, 150, 255, 0.3));
+  border: 1px solid rgba(0, 191, 255, 0.4);
+  border-radius: 20px;
+  padding: 6px 12px;
+  color: #00bfff;
+  font-size: 0.85em;
+  font-weight: 500;
+  transition: all 0.3s ease;
+}
+
+.tag-item:hover {
+  background: linear-gradient(145deg, rgba(0, 191, 255, 0.3), rgba(0, 150, 255, 0.4));
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 191, 255, 0.3);
+}
+
+/* Botones grandes para copiar */
+.copy-btn-large {
+  background: linear-gradient(145deg, #3b82f6, #2563eb);
+  border: none;
+  border-radius: 8px;
+  padding: 12px 20px;
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  font-size: 1em;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  align-self: flex-start;
+}
+
+.copy-btn-large:hover {
+  background: linear-gradient(145deg, #2563eb, #1d4ed8);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(59, 130, 246, 0.4);
+}
+
+/* Acciones de metadata */
+.metadata-actions {
+  text-align: center;
+  margin-top: 30px;
+  padding-top: 20px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.metadata-actions .btn {
+  background: linear-gradient(145deg, #ff0000, #cc0000);
+  border: none;
+  border-radius: 10px;
+  padding: 15px 30px;
+  color: white;
+  font-weight: 600;
+  font-size: 1.1em;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.metadata-actions .btn:hover {
+  background: linear-gradient(145deg, #cc0000, #aa0000);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(255, 0, 0, 0.4);
+}
+
+/* Toast notifications */
+.toast {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  background: linear-gradient(145deg, rgba(0, 255, 127, 0.95), rgba(0, 200, 100, 0.95));
+  color: #0a0e27;
+  padding: 15px 20px;
+  border-radius: 10px;
+  border: 1px solid rgba(0, 255, 127, 0.3);
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+  transform: translateX(100%);
+  opacity: 0;
+  transition: all 0.3s ease;
+}
+
+.toast.show {
+  transform: translateX(0);
+  opacity: 1;
+}
+
+.toast.toast-success {
+  background: linear-gradient(145deg, rgba(0, 255, 127, 0.95), rgba(0, 200, 100, 0.95));
+}
+
+.toast.toast-error {
+  background: linear-gradient(145deg, rgba(255, 82, 82, 0.95), rgba(220, 38, 38, 0.95));
+  color: white;
+}
+
+.toast.toast-info {
+  background: linear-gradient(145deg, rgba(59, 130, 246, 0.95), rgba(37, 99, 235, 0.95));
+  color: white;
+}
+
+/* Responsividad para metadata de YouTube */
+@media (max-width: 768px) {
+  .youtube-metadata-container {
+    padding: 20px 15px;
+    margin: 15px 0;
+  }
+  
+  .youtube-metadata-header h2 {
+    font-size: 1.8em;
+  }
+  
+  .metadata-section {
+    padding: 15px;
+  }
+  
+  .metadata-section h3 {
+    font-size: 1.2em;
+  }
+  
+  .title-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  
+  .copy-btn {
+    align-self: flex-end;
+  }
+  
+  .tags-display {
+    gap: 6px;
+  }
+  
+  .tag-item {
+    font-size: 0.8em;
+    padding: 5px 10px;
+  }
+  
+  .copy-btn-large {
+    width: 100%;
+    justify-content: center;
+  }
+}
