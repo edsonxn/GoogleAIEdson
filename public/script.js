@@ -4066,6 +4066,7 @@ async function generateYouTubeMetadata() {
     console.log("🎬 Iniciando generación de metadata de YouTube...");
     
     const topic = promptInput.value.trim();
+    const folderName = document.getElementById("folderName")?.value?.trim() || '';
     
     if (!topic || allSections.length === 0) {
       console.error("❌ No hay tema o secciones para generar metadata");
@@ -4092,7 +4093,8 @@ async function generateYouTubeMetadata() {
       },
       body: JSON.stringify({
         topic: topic,
-        allSections: allSections
+        allSections: allSections,
+        folderName: folderName
       })
     });
 
@@ -4173,6 +4175,32 @@ function showYouTubeMetadataResults(metadata, topic) {
       </div>
     </div>
     
+    <div class="metadata-section">
+      <h3><i class="fas fa-image"></i> Prompts para Miniaturas (5)</h3>
+      <div class="thumbnails-container">
+        <p class="thumbnails-description">
+          <i class="fas fa-info-circle"></i> 
+          Usa estos prompts para generar miniaturas llamativas en herramientas de IA como DALL-E, Midjourney o Stable Diffusion
+        </p>
+        <div class="thumbnails-list">
+          ${sections.thumbnailPrompts.map((prompt, index) => `
+            <div class="thumbnail-item">
+              <div class="thumbnail-number">${index + 1}</div>
+              <div class="thumbnail-content">
+                <span class="thumbnail-text">${prompt}</span>
+                <button class="copy-btn" onclick="copyToClipboard('${prompt.replace(/'/g, "\\'")}')">
+                  <i class="fas fa-copy"></i>
+                </button>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+        <button class="copy-btn-large" onclick="copyAllThumbnailPrompts(${JSON.stringify(sections.thumbnailPrompts).replace(/"/g, '&quot;')})">
+          <i class="fas fa-copy"></i> Copiar Todos los Prompts
+        </button>
+      </div>
+    </div>
+    
     <div class="metadata-actions">
       <button class="btn btn-primary" onclick="downloadYouTubeMetadata('${topic}', \`${metadata.replace(/`/g, '\\`').replace(/\$/g, '\\$')}\`)">
         <i class="fas fa-download"></i> Descargar Metadata
@@ -4195,6 +4223,7 @@ function parseMetadata(metadata) {
   let titles = [];
   let description = '';
   let tags = [];
+  let thumbnailPrompts = [];
   
   for (let line of lines) {
     line = line.trim();
@@ -4207,6 +4236,9 @@ function parseMetadata(metadata) {
       continue;
     } else if (line.includes('ETIQUETAS')) {
       currentSection = 'tags';
+      continue;
+    } else if (line.includes('PROMPTS PARA MINIATURAS') || line.includes('MINIATURA')) {
+      currentSection = 'thumbnails';
       continue;
     }
     
@@ -4222,6 +4254,12 @@ function parseMetadata(metadata) {
       // Separar por comas y limpiar
       const lineTags = line.split(',').map(tag => tag.trim()).filter(tag => tag);
       tags.push(...lineTags);
+    } else if (currentSection === 'thumbnails' && line && !line.startsWith('**')) {
+      // Remover numeración al inicio (1., 2., etc.)
+      const cleanPrompt = line.replace(/^\d+\.\s*/, '');
+      if (cleanPrompt) {
+        thumbnailPrompts.push(cleanPrompt);
+      }
     }
   }
   
@@ -4231,7 +4269,8 @@ function parseMetadata(metadata) {
     titles: titles.slice(0, 10), // Máximo 10 títulos
     description: description.trim(),
     tags: tags.slice(0, 25), // Máximo 25 etiquetas
-    tagsString: tagsString
+    tagsString: tagsString,
+    thumbnailPrompts: thumbnailPrompts.slice(0, 5) // Máximo 5 prompts
   };
 }
 
@@ -4253,6 +4292,12 @@ function copyToClipboard(text) {
     document.execCommand('copy');
     document.body.removeChild(textArea);
   });
+}
+
+// Función para copiar todos los prompts de miniaturas
+function copyAllThumbnailPrompts(prompts) {
+  const allPrompts = prompts.map((prompt, index) => `${index + 1}. ${prompt}`).join('\n\n');
+  copyToClipboard(allPrompts);
 }
 
 // Función para descargar metadata de YouTube

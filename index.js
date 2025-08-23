@@ -704,7 +704,7 @@ app.post('/generate', async (req, res) => {
     }
 
     const scriptResponse = await ai.models.generateContent({
-      model: "models/gemini-2.5-pro",
+      model: "models/gemini-2.5-flash",
       contents: conversation.history,
       config: {
         systemInstruction: systemInstruction,
@@ -757,7 +757,7 @@ Generado automáticamente por el sistema de creación de contenido
       // Generar prompts para mostrar al usuario aunque no se generen imágenes
       console.log(`🎨 Generando prompts para secuencia de ${numImages} imágenes (solo texto)...`);
       const promptsResponse = await ai.models.generateContent({
-        model: "models/gemini-2.5-pro",
+        model: "models/gemini-2.5-flash",
         contents: `Basándote en este guión de la sección ${section} sobre "${topic}": "${cleanScript}", crea EXACTAMENTE ${numImages} prompts detallados para generar una SECUENCIA de ${numImages} imágenes que ilustren visualmente el contenido del guión en orden cronológico.
 
         IMPORTANTE: Debes crear EXACTAMENTE ${numImages} prompts, ni más ni menos.
@@ -910,7 +910,7 @@ Generado automáticamente por el sistema de creación de contenido
     // Paso 2: Crear prompts para imágenes secuenciales basadas en el guión
     console.log(`🎨 Generando prompts para secuencia de ${numImages} imágenes...`);
     const promptsResponse = await ai.models.generateContent({
-      model: "models/gemini-2.5-pro",
+      model: "models/gemini-2.5-flash",
       contents: `Basándote en este guión de la sección ${section} sobre "${topic}" ": "${cleanScript}", crea EXACTAMENTE ${numImages} prompts detallados para generar una SECUENCIA de ${numImages} imágenes que ilustren visualmente el contenido del guión en orden cronológico.
 
       IMPORTANTE: Debes crear EXACTAMENTE ${numImages} prompts, ni más ni menos.
@@ -1782,7 +1782,7 @@ app.post('/transcribe-audio', async (req, res) => {
 // Endpoint para generar títulos, descripción y etiquetas para YouTube
 app.post('/generate-youtube-metadata', async (req, res) => {
   try {
-    const { topic, allSections } = req.body;
+    const { topic, allSections, folderName } = req.body;
 
     if (!topic || !allSections || allSections.length === 0) {
       return res.status(400).json({ error: 'Tema y secciones requeridos' });
@@ -1807,8 +1807,7 @@ Por favor genera:
 1. **10 TÍTULOS CLICKBAIT** (cada uno en una línea, numerados):
    - Usa palabras que generen curiosidad como "QUE PASA CUANDO", "POR QUE", "HICE ESTO Y PASO ESTO", "NO VAS A CREER", "ESTO CAMBIÓ TODO"
    - Que sean polémicos pero relacionados al contenido
-   - Máximo 60 caracteres cada uno
-   - Incluye emojis relevantes
+   - maximo 15 palabras, minimo 10.
 
 2. **DESCRIPCIÓN PARA VIDEO** (optimizada para SEO):
    - Entre 150-300 palabras
@@ -1823,6 +1822,26 @@ Por favor genera:
    - Términos de búsqueda relevantes
    - Sin espacios en tags compuestos (usar guiones o camelCase)
 
+4. **5 PROMPTS PARA MINIATURAS DE YOUTUBE** (cada uno en una línea, numerados):
+   - Descripciones muy detalladas para generar imágenes de miniaturas de YouTube en formato 16:9
+   - IMPORTANTE: El texto que se muestre debe de tener 2 colores, letras llamativas y brillosas con efecto luminoso,
+   la frase menos importante de color blanco, la frase importante color amarillo, todo con contorno negro,
+   letras brillosas con resplandor
+   - el texto debe estar del lado izquierdo de la miniatura.
+   - Especificar claramente "miniatura de YouTube 16:9" en cada prompt
+   - Incluye frases clickbait polemicas de máximo 5 palabras para añadir como texto superpuesto
+   - Estilo visual llamativo y atractivo para gaming con colores vibrantes
+   - Elementos que generen curiosidad: expresiones faciales, efectos, contrastes
+   - Formato: "Miniatura de YouTube 16:9 mostrando [descripción visual detallada] con texto superpuesto '[frase clickbait]'"
+    
+   ejemplo:
+    Miniatura de YouTube 16:9 mostrando a Link niño mirando con horror a Dead Hand 
+    emergiendo del suelo en el Fondo del Pozo, con el Lente de la Verdad resaltando 
+    detalles grotescos. El rostro de Link debe expresar puro terror y confusión. 
+    El fondo debe ser oscuro y tenebroso. El texto superpuesto debe ser: "MATÓ A SU PADRE?"
+    el texto Mato debe ser de color blanco y el texto "A SU PADRE?" debe ser de color amarillo, con contorno negro y efecto de resplandor.
+
+
 Formato de respuesta:
 **TÍTULOS CLICKBAIT:**
 1. [título]
@@ -1834,6 +1853,14 @@ Formato de respuesta:
 
 **ETIQUETAS:**
 tag1, tag2, tag3, ...
+
+**PROMPTS PARA MINIATURAS:**
+1. [prompt para miniatura]
+2. [prompt para miniatura]
+3. [prompt para miniatura]
+4. [prompt para miniatura]
+5. [prompt para miniatura]
+5. [prompt para miniatura]
     `;
 
     const response = await ai.models.generateContent({
@@ -1847,6 +1874,50 @@ tag1, tag2, tag3, ...
     const responseText = response.text;
 
     console.log(`✅ Metadata de YouTube generada exitosamente`);
+    
+    // Guardar los metadatos en archivo
+    try {
+      // Usar el mismo sistema que las secciones para determinar el nombre de carpeta
+      const safeFolderName = folderName && folderName.trim() 
+        ? createSafeFolderName(folderName.trim())
+        : createSafeFolderName(topic);
+        
+      const outputsDir = path.join('./public/outputs');
+      const projectDir = path.join(outputsDir, safeFolderName);
+      
+      // Crear carpetas si no existen
+      if (!fs.existsSync(outputsDir)) {
+        fs.mkdirSync(outputsDir, { recursive: true });
+      }
+      if (!fs.existsSync(projectDir)) {
+        fs.mkdirSync(projectDir, { recursive: true });
+      }
+      
+      // Guardar en la misma carpeta donde están las secciones del guión
+      const metadataFileName = `${safeFolderName}_metadata_youtube.txt`;
+      const metadataFilePath = path.join(projectDir, metadataFileName);
+      
+      const metadataContent = `METADATA DE YOUTUBE
+===============================
+Tema: ${topic}
+Número de secciones: ${allSections.length}
+${folderName ? `Nombre del proyecto: ${folderName}` : ''}
+Fecha de generación: ${new Date().toLocaleString()}
+
+CONTENIDO DE METADATA:
+${responseText}
+
+===============================
+Generado automáticamente por el sistema de creación de contenido
+`;
+      
+      fs.writeFileSync(metadataFilePath, metadataContent, 'utf8');
+      console.log(`💾 Metadata de YouTube guardada en la carpeta del proyecto: ${metadataFilePath}`);
+      
+    } catch (saveError) {
+      console.error('❌ Error guardando archivo de metadata:', saveError);
+      // No detener el proceso por este error, solo registrarlo
+    }
     
     res.json({
       success: true,

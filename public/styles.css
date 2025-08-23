@@ -4982,3 +4982,106 @@ body.prompts-panel-active .container {
     justify-content: center;
   }
 }
+
+/* Estilos específicos para prompts de miniaturas */
+.thumbnails-container {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.thumbnails-description {
+  background: rgba(0, 191, 255, 0.1);
+  border: 1px solid rgba(0, 191, 255, 0.3);
+  border-radius: 8px;
+  padding: 12px 15px;
+  color: #00bfff;
+  font-size: 0.9em;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.thumbnails-description i {
+  color: #00bfff;
+  font-size: 1.1em;
+}
+
+.thumbnails-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.thumbnail-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 15px;
+  padding: 15px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  transition: all 0.3s ease;
+}
+
+.thumbnail-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(0, 255, 127, 0.3);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.thumbnail-number {
+  background: linear-gradient(145deg, #00ff7f, #00cc66);
+  color: #0a0e27;
+  border-radius: 50%;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 0.9em;
+  flex-shrink: 0;
+  box-shadow: 0 2px 8px rgba(0, 255, 127, 0.3);
+}
+
+.thumbnail-content {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  width: 100%;
+  gap: 15px;
+}
+
+.thumbnail-text {
+  color: #e2e8f0;
+  font-size: 0.95em;
+  line-height: 1.5;
+  flex: 1;
+}
+
+/* Responsividad para miniaturas */
+@media (max-width: 768px) {
+  .thumbnail-item {
+    flex-direction: column;
+    gap: 12px;
+    padding: 12px;
+  }
+  
+  .thumbnail-content {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  
+  .copy-btn {
+    align-self: flex-end;
+    margin-top: 5px;
+  }
+  
+  .thumbnail-number {
+    align-self: center;
+  }
+}
