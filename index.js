@@ -88,6 +88,69 @@ function cleanOldConversations() {
   }
 }
 
+// Estilos predeterminados de miniatura
+const defaultThumbnailStyles = {
+  'default': {
+    name: 'Amarillo y Blanco (Predeterminado)',
+    description: 'Estilo clásico con texto amarillo y blanco',
+    primaryColor: 'amarillo',
+    secondaryColor: 'blanco',
+    instructions: 'El texto que se muestre debe de tener 2 colores, letras llamativas y brillosas con efecto luminoso, la frase menos importante de color blanco, la frase importante color amarillo, todo con contorno negro, letras brillosas con resplandor'
+  },
+  'gaming_red': {
+    name: 'Rojo Gaming',
+    description: 'Estilo gaming agresivo con rojos brillantes',
+    primaryColor: 'rojo brillante',
+    secondaryColor: 'blanco',
+    instructions: 'El texto debe tener un estilo gaming agresivo con la frase principal en rojo brillante intenso y la secundaria en blanco, ambas con contorno negro grueso y efecto de resplandor rojo'
+  },
+  'neon_blue': {
+    name: 'Azul Neón',
+    description: 'Estilo futurista con azul neón y efectos cyberpunk',
+    primaryColor: 'azul neón',
+    secondaryColor: 'cyan claro',
+    instructions: 'El texto debe tener un estilo futurista cyberpunk con la frase principal en azul neón brillante y la secundaria en cyan claro, con contorno oscuro y efectos de resplandor azul neón'
+  },
+  'retro_purple': {
+    name: 'Púrpura Retro',
+    description: 'Estilo retro gaming con púrpura y rosa',
+    primaryColor: 'púrpura brillante',
+    secondaryColor: 'rosa',
+    instructions: 'El texto debe tener un estilo retro gaming de los 80s con la frase principal en púrpura brillante y la secundaria en rosa, con contorno negro y efectos de resplandor púrpura'
+  }
+};
+
+// Función para obtener instrucciones de estilo de miniatura
+function getThumbnailStyleInstructions(styleId) {
+  console.log(`🔍 DEBUG - getThumbnailStyleInstructions recibió:`, styleId);
+  console.log(`🔍 DEBUG - tipo de styleId:`, typeof styleId);
+  
+  // Si es un estilo personalizado (enviado desde el frontend)
+  if (typeof styleId === 'object' && styleId) {
+    console.log(`✅ DEBUG - Usando estilo personalizado:`, styleId.name);
+    
+    // Construir instrucciones completas usando los colores específicos
+    const primaryColor = styleId.primaryColor || 'amarillo';
+    const secondaryColor = styleId.secondaryColor || 'blanco';
+    const customInstructions = styleId.instructions || '';
+    
+    const fullInstructions = `El texto debe tener la frase principal en color ${primaryColor} brillante y la frase secundaria en color ${secondaryColor}, ambas con contorno negro grueso, letras brillosas con efecto luminoso y resplandor. Estilo visual: ${customInstructions}`;
+    
+    console.log(`🎨 DEBUG - Instrucciones construidas:`, fullInstructions);
+    return fullInstructions;
+  }
+  
+  // Si es un estilo predeterminado
+  if (typeof styleId === 'string' && defaultThumbnailStyles[styleId]) {
+    console.log(`✅ DEBUG - Usando estilo predeterminado:`, styleId);
+    return defaultThumbnailStyles[styleId].instructions;
+  }
+  
+  // Fallback al estilo predeterminado
+  console.log(`⚠️ DEBUG - Usando fallback al estilo default`);
+  return defaultThumbnailStyles.default.instructions;
+}
+
 // Limpiar conversaciones antiguas cada hora
 setInterval(cleanOldConversations, 60 * 60 * 1000);
 
@@ -1782,7 +1845,7 @@ app.post('/transcribe-audio', async (req, res) => {
 // Endpoint para generar títulos, descripción y etiquetas para YouTube
 app.post('/generate-youtube-metadata', async (req, res) => {
   try {
-    const { topic, allSections, folderName } = req.body;
+    const { topic, allSections, folderName, thumbnailStyle } = req.body;
 
     if (!topic || !allSections || allSections.length === 0) {
       return res.status(400).json({ error: 'Tema y secciones requeridos' });
@@ -1790,9 +1853,16 @@ app.post('/generate-youtube-metadata', async (req, res) => {
 
     console.log(`🎬 Generando metadata de YouTube para: ${topic}`);
     console.log(`📝 Número de secciones: ${allSections.length}`);
+    console.log(`🖼️ Estilo de miniatura: ${thumbnailStyle || 'default'}`);
 
     // Combinar todas las secciones en un resumen
     const fullScript = allSections.join('\n\n--- SECCIÓN ---\n\n');
+
+    // Obtener instrucciones de estilo de miniatura
+    const thumbnailInstructions = getThumbnailStyleInstructions(thumbnailStyle || 'default');
+    
+    console.log(`🎨 DEBUG - thumbnailStyle recibido:`, thumbnailStyle);
+    console.log(`📝 DEBUG - thumbnailInstructions generadas:`, thumbnailInstructions);
 
     const prompt = `
 Basándote en el siguiente tema y guión completo de un video de gaming, genera metadata optimizada para YouTube:
@@ -1823,23 +1893,34 @@ Por favor genera:
    - Sin espacios en tags compuestos (usar guiones o camelCase)
 
 4. **5 PROMPTS PARA MINIATURAS DE YOUTUBE** (cada uno en una línea, numerados):
-   - Descripciones muy detalladas para generar imágenes de miniaturas de YouTube en formato 16:9
-   - IMPORTANTE: El texto que se muestre debe de tener 2 colores, letras llamativas y brillosas con efecto luminoso,
-   la frase menos importante de color blanco, la frase importante color amarillo, todo con contorno negro,
-   letras brillosas con resplandor
-   - el texto debe estar del lado izquierdo de la miniatura.
-   - Especificar claramente "miniatura de YouTube 16:9" en cada prompt
-   - Incluye frases clickbait polemicas de máximo 5 palabras para añadir como texto superpuesto
-   - Estilo visual llamativo y atractivo para gaming con colores vibrantes
-   - Elementos que generen curiosidad: expresiones faciales, efectos, contrastes
-   - Formato: "Miniatura de YouTube 16:9 mostrando [descripción visual detallada] con texto superpuesto '[frase clickbait]'"
-    
-   ejemplo:
-    Miniatura de YouTube 16:9 mostrando a Link niño mirando con horror a Dead Hand 
-    emergiendo del suelo en el Fondo del Pozo, con el Lente de la Verdad resaltando 
-    detalles grotescos. El rostro de Link debe expresar puro terror y confusión. 
-    El fondo debe ser oscuro y tenebroso. El texto superpuesto debe ser: "MATÓ A SU PADRE?"
-    el texto Mato debe ser de color blanco y el texto "A SU PADRE?" debe ser de color amarillo, con contorno negro y efecto de resplandor.
+   
+   FORMATO OBLIGATORIO - DEBES SEGUIR ESTA ESTRUCTURA EXACTA PARA CADA UNO DE LOS 5 PROMPTS:
+   
+   "Miniatura de YouTube 16:9 mostrando [descripción visual muy detallada del contenido relacionado al tema, mínimo 15 palabras] con texto superpuesto '[frase clickbait específica relacionada al contenido]' con el texto aplicando el siguiente estilo: ${thumbnailInstructions}"
+   
+   REGLAS ESTRICTAS - NO GENERAR PROMPTS CORTOS O INCOMPLETOS:
+   - CADA prompt debe tener mínimo 25 palabras de descripción visual
+   - CADA prompt debe incluir una frase clickbait específica entre comillas
+   - CADA prompt debe terminar con la frase completa del estilo
+   - NO generar prompts como "el texto con contorno negro" - ESO ESTÁ PROHIBIDO
+   - TODOS los prompts deben seguir el formato completo
+   
+   EJEMPLO DE FORMATO CORRECTO (SEGUIR EXACTAMENTE ESTA ESTRUCTURA):
+   1. Miniatura de YouTube 16:9 mostrando a Link adulto con expresión de shock mirando directamente a la cámara mientras sostiene la Master Sword brillante, con el Castillo de Hyrule destruido de fondo y llamas rojas. El rostro de Link debe mostrar sorpresa extrema con ojos muy abiertos con texto superpuesto "¡ZELDA ESTÁ MUERTA!" con el texto aplicando el siguiente estilo: ${thumbnailInstructions}
+
+REGLAS ESTRICTAS:
+- EXACTAMENTE 5 prompts numerados del 1 al 5
+- Cada prompt debe incluir la frase completa del estilo al final
+- NO hacer referencias a estilos anteriores
+- Descripción visual específica y detallada en cada uno
+IMPORTANTE: 
+- Genera EXACTAMENTE 5 prompts completos, numerados del 1 al 5
+- Cada prompt debe ser una oración completa y detallada (mínimo 25 palabras)
+- SIEMPRE incluye la frase completa del estilo al final de cada prompt
+- NO usar "aplicando el estilo especificado anteriormente" NUNCA
+- NO generar prompts cortos como "el texto con contorno negro" - ESTO ESTÁ PROHIBIDO
+- VERIFICA que cada prompt tenga: descripción visual + frase clickbait + estilo completo
+- Si un prompt sale corto, reescríbelo completo
 
 
 Formato de respuesta:
@@ -1855,12 +1936,11 @@ Formato de respuesta:
 tag1, tag2, tag3, ...
 
 **PROMPTS PARA MINIATURAS:**
-1. [prompt para miniatura]
-2. [prompt para miniatura]
-3. [prompt para miniatura]
-4. [prompt para miniatura]
-5. [prompt para miniatura]
-5. [prompt para miniatura]
+1. [prompt completo para miniatura]
+2. [prompt completo para miniatura]  
+3. [prompt completo para miniatura]
+4. [prompt completo para miniatura]
+5. [prompt completo para miniatura]
     `;
 
     const response = await ai.models.generateContent({
@@ -1872,6 +1952,108 @@ tag1, tag2, tag3, ...
     });
 
     const responseText = response.text;
+
+    // Validar que los prompts de miniatura no estén incompletos
+    const thumbnailSection = responseText.match(/\*\*PROMPTS PARA MINIATURAS:\*\*([\s\S]*?)(?=\n\n|$)/);
+    if (thumbnailSection) {
+      const thumbnailPrompts = thumbnailSection[1].trim().split('\n').filter(line => line.trim());
+      
+      // Verificar prompts incompletos
+      const incompletePrompts = thumbnailPrompts.filter(prompt => {
+        const cleanPrompt = prompt.replace(/^\d+\.\s*/, '').trim();
+        return cleanPrompt.length < 50 || 
+               cleanPrompt.includes('el texto con contorno negro y muy brillante el texto') ||
+               !cleanPrompt.includes('con el texto aplicando el siguiente estilo:');
+      });
+      
+      if (incompletePrompts.length > 0) {
+        console.log(`⚠️ Detectados ${incompletePrompts.length} prompts incompletos, regenerando...`);
+        console.log('Prompts problemáticos:', incompletePrompts);
+        
+        // Regenerar solo la sección de prompts
+        const regeneratePrompt = `
+Genera EXACTAMENTE 5 prompts completos para miniaturas de YouTube sobre: ${topic}
+
+FORMATO OBLIGATORIO para cada prompt:
+"Miniatura de YouTube 16:9 mostrando [descripción visual muy detallada, mínimo 20 palabras] con texto superpuesto '[frase clickbait específica]' con el texto aplicando el siguiente estilo: ${thumbnailInstructions}"
+
+REGLAS ESTRICTAS:
+- Cada prompt debe tener mínimo 30 palabras
+- NUNCA generar "el texto con contorno negro y muy brillante el texto"
+- TODOS deben incluir la frase completa del estilo al final
+- Numerar del 1 al 5
+
+1. [prompt completo]
+2. [prompt completo]
+3. [prompt completo]
+4. [prompt completo]
+5. [prompt completo]
+        `;
+        
+        const regenerateResponse = await ai.models.generateContent({
+          model: "gemini-2.0-flash-exp",
+          contents: [{
+            role: "user",
+            parts: [{ text: regeneratePrompt }]
+          }]
+        });
+        
+        // Reemplazar la sección de prompts en la respuesta original
+        const newThumbnailPrompts = regenerateResponse.text.trim();
+        const updatedResponse = responseText.replace(
+          /(\*\*PROMPTS PARA MINIATURAS:\*\*)([\s\S]*?)(?=\n\n|$)/,
+          `$1\n${newThumbnailPrompts}`
+        );
+        
+        console.log(`✅ Prompts regenerados exitosamente`);
+        
+        // Guardar los metadatos en archivo con los prompts corregidos
+        try {
+          const safeFolderName = folderName && folderName.trim() 
+            ? createSafeFolderName(folderName.trim())
+            : createSafeFolderName(topic);
+            
+          const outputsDir = path.join('./public/outputs');
+          const projectDir = path.join(outputsDir, safeFolderName);
+          
+          if (!fs.existsSync(outputsDir)) {
+            fs.mkdirSync(outputsDir, { recursive: true });
+          }
+          if (!fs.existsSync(projectDir)) {
+            fs.mkdirSync(projectDir, { recursive: true });
+          }
+          
+          const metadataFileName = `${safeFolderName}_metadata_youtube.txt`;
+          const metadataFilePath = path.join(projectDir, metadataFileName);
+          
+          const metadataContent = `METADATA DE YOUTUBE
+===============================
+Tema: ${topic}
+Número de secciones: ${allSections.length}
+${folderName ? `Nombre del proyecto: ${folderName}` : ''}
+Fecha de generación: ${new Date().toLocaleString()}
+
+CONTENIDO DE METADATA:
+${updatedResponse}
+
+===============================
+Generado automáticamente por el sistema de creación de contenido
+`;
+          
+          fs.writeFileSync(metadataFilePath, metadataContent, 'utf8');
+          console.log(`💾 Metadata de YouTube guardada (con prompts corregidos): ${metadataFilePath}`);
+          
+        } catch (saveError) {
+          console.error('❌ Error guardando archivo de metadata:', saveError);
+        }
+        
+        return res.json({ 
+          success: true, 
+          metadata: updatedResponse,
+          message: 'Metadata generada exitosamente (con prompts corregidos)' 
+        });
+      }
+    }
 
     console.log(`✅ Metadata de YouTube generada exitosamente`);
     

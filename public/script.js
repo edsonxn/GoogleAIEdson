@@ -1,6 +1,32 @@
 // Función simple para verificar que el script se carga
 console.log('🚀 Script.js cargado correctamente');
 
+// DEBUG: Verificar elementos de miniatura al cargar
+setTimeout(() => {
+  console.log('🔍 DEBUG: Verificando elementos de miniatura...');
+  const createBtn = document.getElementById('createThumbnailStyleFromSidebar');
+  const manageBtn = document.getElementById('manageThumbnailStylesFromSidebar');
+  
+  console.log('createThumbnailStyleFromSidebar:', createBtn);
+  console.log('manageThumbnailStylesFromSidebar:', manageBtn);
+  
+  if (createBtn) {
+    console.log('✅ Botón crear miniatura encontrado, agregando click manual...');
+    createBtn.onclick = function() {
+      console.log('🖼️ Click en crear miniatura detectado');
+      openThumbnailStyleModal();
+    };
+  }
+  
+  if (manageBtn) {
+    console.log('✅ Botón gestionar miniatura encontrado, agregando click manual...');
+    manageBtn.onclick = function() {
+      console.log('🔧 Click en gestionar miniatura detectado');
+      openManageThumbnailStylesModal();
+    };
+  }
+}, 2000);
+
 // Variables globales para el extractor de texto
 let selectedFile = null;
 let extractedText = '';
@@ -70,6 +96,42 @@ let totalSections = 3;
 let allSections = []; // Almacenar todas las secciones generadas (solo texto del guión)
 let imagePrompts = []; // Almacenar los prompts de las imágenes
 let isAutoGenerating = false; // Bandera para la generación automática
+
+// Variables globales para estilos de miniatura
+let customThumbnailStyles = [];
+let currentEditingThumbnailStyleId = null;
+
+// Estilos predeterminados de miniatura
+const defaultThumbnailStyles = {
+  'default': {
+    name: 'Amarillo y Blanco (Predeterminado)',
+    description: 'Estilo clásico con texto amarillo y blanco',
+    primaryColor: 'amarillo',
+    secondaryColor: 'blanco',
+    instructions: 'El texto que se muestre debe de tener 2 colores, letras llamativas y brillosas con efecto luminoso, la frase menos importante de color blanco, la frase importante color amarillo, todo con contorno negro, letras brillosas con resplandor'
+  },
+  'gaming_red': {
+    name: 'Rojo Gaming',
+    description: 'Estilo gaming agresivo con rojos brillantes',
+    primaryColor: 'rojo brillante',
+    secondaryColor: 'blanco',
+    instructions: 'El texto debe tener un estilo gaming agresivo con la frase principal en rojo brillante intenso y la secundaria en blanco, ambas con contorno negro grueso y efecto de resplandor rojo'
+  },
+  'neon_blue': {
+    name: 'Azul Neón',
+    description: 'Estilo futurista con azul neón y efectos cyberpunk',
+    primaryColor: 'azul neón',
+    secondaryColor: 'cyan claro',
+    instructions: 'El texto debe tener un estilo futurista cyberpunk con la frase principal en azul neón brillante y la secundaria en cyan claro, con contorno oscuro y efectos de resplandor azul neón'
+  },
+  'retro_purple': {
+    name: 'Púrpura Retro',
+    description: 'Estilo retro gaming con púrpura y rosa',
+    primaryColor: 'púrpura brillante',
+    secondaryColor: 'rosa',
+    instructions: 'El texto debe tener un estilo retro gaming de los 80s con la frase principal en púrpura brillante y la secundaria en rosa, con contorno negro y efectos de resplandor púrpura'
+  }
+};
 
 // Función para la generación automática completa
 async function runAutoGeneration() {
@@ -1966,6 +2028,10 @@ document.addEventListener('DOMContentLoaded', function() {
   console.log('🎨 A punto de inicializar estilos...');
   initCustomStyles();
   
+  // Inicializar sistema de estilos de miniatura
+  console.log('🖼️ A punto de inicializar estilos de miniatura...');
+  initThumbnailStyles();
+  
   // Configurar eventos de botones manualmente como backup
   setTimeout(() => {
     console.log('🔧 Configurando eventos de botones manualmente...');
@@ -1992,6 +2058,57 @@ document.addEventListener('DOMContentLoaded', function() {
     } else {
       console.error('❌ Botón gestionar estilos no encontrado');
     }
+    
+    // Configurar eventos de botones de miniatura
+    const createThumbnailBtn = document.getElementById('createThumbnailStyleFromSidebar');
+    const manageThumbnailBtn = document.getElementById('manageThumbnailStylesFromSidebar');
+    
+    if (createThumbnailBtn) {
+      createThumbnailBtn.addEventListener('click', function() {
+        console.log('🖼️ Botón crear estilo de miniatura clickeado');
+        openThumbnailStyleModal();
+      });
+      console.log('✅ Event listener del botón crear miniatura configurado');
+    } else {
+      console.error('❌ Botón crear estilo de miniatura no encontrado');
+    }
+    
+    if (manageThumbnailBtn) {
+      manageThumbnailBtn.addEventListener('click', function() {
+        console.log('🔧 Botón gestionar estilos de miniatura clickeado desde backup manual');
+        try {
+          openManageThumbnailStylesModal();
+        } catch (error) {
+          console.error('❌ Error ejecutando openManageThumbnailStylesModal:', error);
+        }
+      });
+      console.log('✅ Event listener del botón gestionar miniatura configurado (backup manual)');
+      
+      // También agregar onclick como backup adicional
+      manageThumbnailBtn.onclick = function() {
+        console.log('🔄 Onclick backup del botón gestionar activado');
+        try {
+          openManageThumbnailStylesModal();
+        } catch (error) {
+          console.error('❌ Error en onclick backup:', error);
+        }
+      };
+    } else {
+      console.error('❌ Botón gestionar estilos de miniatura no encontrado');
+    }
+    
+    // Configurar eventos de botones de modal como backup
+    setTimeout(() => {
+      console.log('🔄 Configurando eventos de modal como backup...');
+      const saveBtn = document.getElementById('saveThumbnailStyleBtn');
+      if (saveBtn && !saveBtn.onclick) {
+        saveBtn.onclick = function() {
+          console.log('🔄 Backup directo del botón guardar activado');
+          saveThumbnailStyle();
+        };
+        console.log('✅ Backup de botón guardar configurado');
+      }
+    }, 1000);
   }, 500);
   
   // Verificar el selector después de la inicialización
@@ -4094,7 +4211,8 @@ async function generateYouTubeMetadata() {
       body: JSON.stringify({
         topic: topic,
         allSections: allSections,
-        folderName: folderName
+        folderName: folderName,
+        thumbnailStyle: getThumbnailStyleData()
       })
     });
 
@@ -4328,3 +4446,573 @@ document.addEventListener('showToast', function(event) {
     setTimeout(() => document.body.removeChild(toast), 300);
   }, 3000);
 });
+
+// ==========================================
+// SISTEMA DE ESTILOS DE MINIATURAS
+// ==========================================
+
+// Función para inicializar sistema de estilos de miniatura
+function initThumbnailStyles() {
+  console.log('🖼️ Inicializando sistema de estilos de miniatura...');
+  
+  try {
+    loadThumbnailStyles();
+    updateThumbnailStyleSelector();
+    
+    setTimeout(() => {
+      setupThumbnailStyleModalEvents();
+      setupManageThumbnailStylesEvents(); // Reactivado y arreglado
+      setupEditThumbnailStyleEvents();
+      console.log('✅ Sistema de estilos de miniatura inicializado correctamente');
+    }, 100);
+  } catch (error) {
+    console.error('❌ Error inicializando estilos de miniatura:', error);
+  }
+}
+
+// Función para cargar estilos de miniatura desde localStorage
+function loadThumbnailStyles() {
+  try {
+    const savedStyles = localStorage.getItem('customThumbnailStyles');
+    if (savedStyles) {
+      customThumbnailStyles = JSON.parse(savedStyles);
+      console.log('🖼️ Estilos de miniatura cargados:', customThumbnailStyles);
+    } else {
+      customThumbnailStyles = [];
+      console.log('🖼️ No hay estilos de miniatura guardados');
+    }
+  } catch (error) {
+    console.error('❌ Error cargando estilos de miniatura:', error);
+    customThumbnailStyles = [];
+  }
+}
+
+// Función para guardar estilos de miniatura en localStorage
+function saveThumbnailStyles() {
+  try {
+    localStorage.setItem('customThumbnailStyles', JSON.stringify(customThumbnailStyles));
+    console.log('💾 Estilos de miniatura guardados exitosamente');
+  } catch (error) {
+    console.error('❌ Error guardando estilos de miniatura:', error);
+  }
+}
+
+// Función para actualizar el selector de estilos de miniatura
+function updateThumbnailStyleSelector() {
+  const thumbnailStyleSelect = document.getElementById('thumbnailStyleSelect');
+  if (!thumbnailStyleSelect) {
+    console.error('❌ Selector de estilos de miniatura no encontrado');
+    return;
+  }
+
+  // Limpiar opciones existentes
+  thumbnailStyleSelect.innerHTML = '';
+
+  // Agregar estilos predeterminados
+  Object.keys(defaultThumbnailStyles).forEach(key => {
+    const style = defaultThumbnailStyles[key];
+    const option = document.createElement('option');
+    option.value = key;
+    option.textContent = style.name;
+    thumbnailStyleSelect.appendChild(option);
+  });
+
+  // Agregar estilos personalizados
+  customThumbnailStyles.forEach(style => {
+    const option = document.createElement('option');
+    option.value = `custom_${style.id}`;
+    option.textContent = `${style.name} (Personalizado)`;
+    thumbnailStyleSelect.appendChild(option);
+  });
+
+  console.log('🖼️ Selector de estilos de miniatura actualizado');
+}
+
+// Función para obtener instrucciones de estilo de miniatura
+function getThumbnailStyleInstructions(styleId) {
+  if (styleId.startsWith('custom_')) {
+    const customId = styleId.replace('custom_', '');
+    const customStyle = customThumbnailStyles.find(style => style.id === customId);
+    if (customStyle) {
+      return customStyle.instructions;
+    }
+  } else if (defaultThumbnailStyles[styleId]) {
+    return defaultThumbnailStyles[styleId].instructions;
+  }
+  
+  // Fallback al estilo predeterminado
+  return defaultThumbnailStyles.default.instructions;
+}
+
+// Función para configurar eventos del modal de crear estilo de miniatura
+function setupThumbnailStyleModalEvents() {
+  console.log('🔧 Configurando eventos del modal de crear estilo de miniatura...');
+  
+  try {
+    const thumbnailStyleModal = document.getElementById('thumbnailStyleModal');
+    const closeModalBtn = document.getElementById('closeThumbnailStyleModal');
+    const cancelBtn = document.getElementById('cancelThumbnailStyleBtn');
+    const saveBtn = document.getElementById('saveThumbnailStyleBtn');
+    
+    // Botones de la sidebar
+    const createFromSidebarBtn = document.getElementById('createThumbnailStyleFromSidebar');
+    
+    console.log('🔍 Elementos encontrados:', {
+      thumbnailStyleModal: !!thumbnailStyleModal,
+      closeModalBtn: !!closeModalBtn,
+      cancelBtn: !!cancelBtn,
+      saveBtn: !!saveBtn,
+      createFromSidebarBtn: !!createFromSidebarBtn
+    });
+    
+    if (!thumbnailStyleModal || !closeModalBtn || !cancelBtn || !saveBtn) {
+      console.error('❌ Algunos elementos del modal de miniatura no fueron encontrados');
+      return;
+    }
+    
+    // Función para cerrar modal
+    function closeModal() {
+      console.log('🔒 Cerrando modal de crear miniatura...');
+      thumbnailStyleModal.style.display = 'none';
+      document.body.style.overflow = 'auto';
+      // Solo limpiar si se cierra sin guardar exitosamente
+    }
+    
+    // Eventos de cerrar
+    closeModalBtn.addEventListener('click', closeModal);
+    cancelBtn.addEventListener('click', closeModal);
+    
+    // Evento de guardar (sin duplicados)
+    if (saveBtn) {
+      // Quitar event listeners previos
+      saveBtn.removeEventListener('click', saveThumbnailStyle);
+      saveBtn.onclick = null;
+      
+      // Agregar nuevo event listener
+      saveBtn.addEventListener('click', saveThumbnailStyle);
+      console.log('✅ Event listener del botón guardar configurado');
+    } else {
+      console.error('❌ Botón guardar no encontrado');
+    }
+    
+    // Evento para abrir desde sidebar
+    if (createFromSidebarBtn) {
+      createFromSidebarBtn.addEventListener('click', () => {
+        console.log('🖼️ Abriendo modal desde sidebar...');
+        openThumbnailStyleModal();
+      });
+      console.log('✅ Event listener configurado para botón crear desde sidebar');
+    } else {
+      console.error('❌ Botón crear desde sidebar no encontrado');
+    }
+    
+    // Cerrar al hacer clic fuera del modal
+    thumbnailStyleModal.addEventListener('click', (e) => {
+      if (e.target === thumbnailStyleModal) {
+        closeModal();
+      }
+    });
+    
+    console.log('✅ Eventos del modal de miniatura configurados correctamente');
+  } catch (error) {
+    console.error('❌ Error configurando eventos del modal de miniatura:', error);
+  }
+}
+
+// Función para abrir modal de crear estilo de miniatura
+function openThumbnailStyleModal() {
+  console.log('🖼️ Abriendo modal de crear estilo de miniatura...');
+  
+  try {
+    const thumbnailStyleModal = document.getElementById('thumbnailStyleModal');
+    if (thumbnailStyleModal) {
+      // Solo limpiar si está cerrado para evitar interferir mientras se escribe
+      if (thumbnailStyleModal.style.display !== 'flex') {
+        clearThumbnailModalForm();
+      }
+      
+      thumbnailStyleModal.style.display = 'flex';
+      document.body.style.overflow = 'hidden';
+      console.log('✅ Modal de crear estilo de miniatura abierto');
+      
+      // Enfocar el primer campo
+      setTimeout(() => {
+        const nameField = document.getElementById('thumbnailStyleName');
+        if (nameField) {
+          nameField.focus();
+        }
+      }, 100);
+    } else {
+      console.error('❌ Modal de crear estilo de miniatura no encontrado');
+    }
+  } catch (error) {
+    console.error('❌ Error abriendo modal de crear miniatura:', error);
+  }
+}
+
+// Función para limpiar formulario del modal
+function clearThumbnailModalForm() {
+  document.getElementById('thumbnailStyleName').value = '';
+  document.getElementById('thumbnailStyleDescription').value = '';
+  document.getElementById('thumbnailPrimaryColor').value = '';
+  document.getElementById('thumbnailSecondaryColor').value = '';
+  document.getElementById('thumbnailInstructions').value = '';
+}
+
+// Función para guardar nuevo estilo de miniatura
+function saveThumbnailStyle() {
+  console.log('🖼️ Intentando guardar estilo de miniatura...');
+  
+  try {
+    const name = document.getElementById('thumbnailStyleName').value.trim();
+    const description = document.getElementById('thumbnailStyleDescription').value.trim();
+    const primaryColor = document.getElementById('thumbnailPrimaryColor').value.trim();
+    const secondaryColor = document.getElementById('thumbnailSecondaryColor').value.trim();
+    const instructions = document.getElementById('thumbnailInstructions').value.trim();
+    
+    console.log('📝 Valores del formulario:', {
+      name, description, primaryColor, secondaryColor, instructions
+    });
+    
+    if (!name || !description || !primaryColor || !secondaryColor || !instructions) {
+      console.warn('⚠️ Campos incompletos');
+      alert('Por favor, completa todos los campos');
+      return;
+    }
+    
+    const newStyle = {
+      id: Date.now().toString(),
+      name: name,
+      description: description,
+      primaryColor: primaryColor,
+      secondaryColor: secondaryColor,
+      instructions: instructions,
+      createdAt: new Date().toISOString()
+    };
+    
+    console.log('💾 Guardando nuevo estilo:', newStyle);
+    
+    customThumbnailStyles.push(newStyle);
+    saveThumbnailStyles();
+    updateThumbnailStyleSelector();
+    
+    console.log('✅ Estilo agregado al array, cerrando modal...');
+    
+    // Cerrar modal
+    const modal = document.getElementById('thumbnailStyleModal');
+    if (modal) {
+      modal.style.display = 'none';
+      document.body.style.overflow = 'auto';
+      clearThumbnailModalForm();
+      console.log('✅ Modal cerrado');
+    } else {
+      console.error('❌ Modal no encontrado');
+    }
+    
+    console.log('✅ Estilo de miniatura guardado:', newStyle);
+    
+    // Mostrar mensaje de éxito
+    try {
+      showNotification('✅ Estilo de miniatura creado exitosamente', 'success');
+      console.log('✅ Notificación mostrada');
+    } catch (notifError) {
+      console.error('❌ Error mostrando notificación:', notifError);
+    }
+    
+  } catch (error) {
+    console.error('❌ Error en saveThumbnailStyle:', error);
+    alert('Error guardando el estilo: ' + error.message);
+  }
+}
+
+// Función para configurar eventos del modal de gestionar estilos
+function setupManageThumbnailStylesEvents() {
+  console.log('🔧 Configurando eventos del modal de gestionar estilos de miniatura...');
+  
+  try {
+    const manageThumbnailStylesModal = document.getElementById('manageThumbnailStylesModal');
+    const closeManageBtn = document.getElementById('closeManageThumbnailStylesModal');
+    const closeManageFooterBtn = document.getElementById('closeManageThumbnailStylesBtn');
+    
+    console.log('🔍 Elementos de gestión encontrados:', {
+      manageThumbnailStylesModal: !!manageThumbnailStylesModal,
+      closeManageBtn: !!closeManageBtn,
+      closeManageFooterBtn: !!closeManageFooterBtn
+    });
+    
+    // Función para cerrar el modal
+    function closeManageModal() {
+      console.log('� Cerrando modal de gestionar miniaturas...');
+      if (manageThumbnailStylesModal) {
+        manageThumbnailStylesModal.style.display = 'none';
+        document.body.style.overflow = 'auto';
+        console.log('✅ Modal de gestión cerrado');
+      }
+    }
+    
+    // NO configurar el botón de abrir aquí (se hace manualmente)
+    // Solo configurar los botones de cerrar
+    
+    if (closeManageBtn) {
+      closeManageBtn.addEventListener('click', closeManageModal);
+      console.log('✅ Botón X de cerrar configurado');
+    } else {
+      console.error('❌ Botón X de cerrar no encontrado');
+    }
+    
+    if (closeManageFooterBtn) {
+      closeManageFooterBtn.addEventListener('click', closeManageModal);
+      console.log('✅ Botón Cerrar del footer configurado');
+    } else {
+      console.error('❌ Botón Cerrar del footer no encontrado');
+    }
+    
+    if (manageThumbnailStylesModal) {
+      manageThumbnailStylesModal.addEventListener('click', (e) => {
+        if (e.target === manageThumbnailStylesModal) {
+          closeManageModal();
+        }
+      });
+      console.log('✅ Evento de clic fuera del modal configurado');
+    }
+    
+    console.log('✅ Eventos de gestión de miniatura configurados correctamente');
+  } catch (error) {
+    console.error('❌ Error configurando eventos de gestión de miniatura:', error);
+  }
+}
+
+// Función para abrir modal de gestionar estilos de miniatura
+function openManageThumbnailStylesModal() {
+  console.log('🔧 Abriendo modal de gestionar estilos de miniatura...');
+  
+  try {
+    const manageThumbnailStylesModal = document.getElementById('manageThumbnailStylesModal');
+    if (manageThumbnailStylesModal) {
+      console.log('✅ Modal de gestión encontrado, cargando lista...');
+      loadThumbnailStylesList();
+      manageThumbnailStylesModal.style.display = 'flex';
+      document.body.style.overflow = 'hidden';
+      console.log('✅ Modal de gestión abierto');
+    } else {
+      console.error('❌ Modal de gestión no encontrado');
+    }
+  } catch (error) {
+    console.error('❌ Error abriendo modal de gestión:', error);
+  }
+}
+
+// Función para cargar lista de estilos de miniatura
+function loadThumbnailStylesList() {
+  console.log('📋 Cargando lista de estilos de miniatura...');
+  console.log('📊 Estilos disponibles:', customThumbnailStyles);
+  
+  try {
+    const thumbnailStylesList = document.getElementById('thumbnailStylesList');
+    const noThumbnailStylesMessage = document.getElementById('noThumbnailStylesMessage');
+    
+    console.log('🔍 Elementos encontrados:', {
+      thumbnailStylesList: !!thumbnailStylesList,
+      noThumbnailStylesMessage: !!noThumbnailStylesMessage
+    });
+    
+    if (!thumbnailStylesList || !noThumbnailStylesMessage) {
+      console.error('❌ Elementos de lista no encontrados');
+      return;
+    }
+    
+    thumbnailStylesList.innerHTML = '';
+    
+    if (customThumbnailStyles.length === 0) {
+      console.log('📝 No hay estilos personalizados, mostrando mensaje');
+      noThumbnailStylesMessage.style.display = 'block';
+      thumbnailStylesList.style.display = 'none';
+    } else {
+      console.log(`📝 Mostrando ${customThumbnailStyles.length} estilos personalizados`);
+      noThumbnailStylesMessage.style.display = 'none';
+      thumbnailStylesList.style.display = 'block';
+    
+    customThumbnailStyles.forEach(style => {
+      const styleItem = document.createElement('div');
+      styleItem.className = 'thumbnail-style-item';
+      styleItem.innerHTML = `
+        <div class="thumbnail-style-header">
+          <div class="thumbnail-style-info">
+            <h4 class="thumbnail-style-name">${style.name}</h4>
+            <p class="thumbnail-style-description">${style.description}</p>
+            <div class="style-colors">
+              <span class="color-info">Principal: ${style.primaryColor}</span>
+              <span class="color-info">Secundario: ${style.secondaryColor}</span>
+            </div>
+          </div>
+          <div class="thumbnail-style-actions">
+            <button class="edit-style-btn" data-style-id="${style.id}">
+              <i class="fas fa-edit"></i>
+              Editar
+            </button>
+            <button class="delete-style-btn" data-style-id="${style.id}">
+              <i class="fas fa-trash"></i>
+              Eliminar
+            </button>
+          </div>
+        </div>
+      `;
+      thumbnailStylesList.appendChild(styleItem);
+    });
+    
+    // Agregar eventos a los botones
+    thumbnailStylesList.querySelectorAll('.edit-style-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const styleId = e.target.closest('.edit-style-btn').dataset.styleId;
+        editThumbnailStyle(styleId);
+      });
+    });
+    
+    thumbnailStylesList.querySelectorAll('.delete-style-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const styleId = e.target.closest('.delete-style-btn').dataset.styleId;
+        deleteThumbnailStyle(styleId);
+      });
+    });
+    }
+    
+    console.log('✅ Lista de estilos cargada correctamente');
+  } catch (error) {
+    console.error('❌ Error cargando lista de estilos:', error);
+  }
+}
+
+// Función para eliminar estilo de miniatura
+function deleteThumbnailStyle(styleId) {
+  if (confirm('¿Estás seguro de que quieres eliminar este estilo de miniatura?')) {
+    customThumbnailStyles = customThumbnailStyles.filter(style => style.id !== styleId);
+    saveThumbnailStyles();
+    updateThumbnailStyleSelector();
+    loadThumbnailStylesList();
+    showNotification('✅ Estilo de miniatura eliminado', 'success');
+  }
+}
+
+// Función para editar estilo de miniatura
+function editThumbnailStyle(styleId) {
+  const style = customThumbnailStyles.find(s => s.id === styleId);
+  if (!style) return;
+  
+  currentEditingThumbnailStyleId = styleId;
+  
+  // Llenar formulario de edición
+  document.getElementById('editThumbnailStyleName').value = style.name;
+  document.getElementById('editThumbnailStyleDescription').value = style.description;
+  document.getElementById('editThumbnailPrimaryColor').value = style.primaryColor;
+  document.getElementById('editThumbnailSecondaryColor').value = style.secondaryColor;
+  document.getElementById('editThumbnailInstructions').value = style.instructions;
+  
+  // Cerrar modal de gestionar y abrir modal de editar
+  document.getElementById('manageThumbnailStylesModal').style.display = 'none';
+  document.getElementById('editThumbnailStyleModal').style.display = 'flex';
+}
+
+// Función para configurar eventos del modal de editar
+function setupEditThumbnailStyleEvents() {
+  const editModal = document.getElementById('editThumbnailStyleModal');
+  const closeBtn = document.getElementById('closeEditThumbnailStyleModal');
+  const cancelBtn = document.getElementById('cancelEditThumbnailStyleBtn');
+  const saveBtn = document.getElementById('saveEditThumbnailStyleBtn');
+  
+  if (closeBtn) {
+    closeBtn.addEventListener('click', () => {
+      editModal.style.display = 'none';
+      document.body.style.overflow = 'auto';
+    });
+  }
+  
+  if (cancelBtn) {
+    cancelBtn.addEventListener('click', () => {
+      editModal.style.display = 'none';
+      document.body.style.overflow = 'auto';
+    });
+  }
+  
+  if (saveBtn) {
+    saveBtn.addEventListener('click', saveEditThumbnailStyle);
+  }
+  
+  if (editModal) {
+    editModal.addEventListener('click', (e) => {
+      if (e.target === editModal) {
+        editModal.style.display = 'none';
+        document.body.style.overflow = 'auto';
+      }
+    });
+  }
+}
+
+// Función para guardar cambios en estilo editado
+function saveEditThumbnailStyle() {
+  if (!currentEditingThumbnailStyleId) return;
+  
+  const name = document.getElementById('editThumbnailStyleName').value.trim();
+  const description = document.getElementById('editThumbnailStyleDescription').value.trim();
+  const primaryColor = document.getElementById('editThumbnailPrimaryColor').value.trim();
+  const secondaryColor = document.getElementById('editThumbnailSecondaryColor').value.trim();
+  const instructions = document.getElementById('editThumbnailInstructions').value.trim();
+  
+  if (!name || !description || !primaryColor || !secondaryColor || !instructions) {
+    alert('Por favor, completa todos los campos');
+    return;
+  }
+  
+  const styleIndex = customThumbnailStyles.findIndex(s => s.id === currentEditingThumbnailStyleId);
+  if (styleIndex !== -1) {
+    customThumbnailStyles[styleIndex] = {
+      ...customThumbnailStyles[styleIndex],
+      name,
+      description,
+      primaryColor,
+      secondaryColor,
+      instructions
+    };
+    
+    saveThumbnailStyles();
+    updateThumbnailStyleSelector();
+    
+    document.getElementById('editThumbnailStyleModal').style.display = 'none';
+    document.body.style.overflow = 'auto';
+    
+    showNotification('✅ Estilo de miniatura actualizado', 'success');
+    currentEditingThumbnailStyleId = null;
+  }
+}
+
+// Función para obtener datos del estilo de miniatura seleccionado
+function getThumbnailStyleData() {
+  const thumbnailStyleSelect = document.getElementById('thumbnailStyleSelect');
+  if (!thumbnailStyleSelect) {
+    console.log('🔍 DEBUG - thumbnailStyleSelect no encontrado, usando default');
+    return 'default';
+  }
+  
+  const selectedValue = thumbnailStyleSelect.value;
+  console.log('🔍 DEBUG - selectedValue del selector:', selectedValue);
+  
+  // Si es un estilo personalizado
+  if (selectedValue.startsWith('custom_')) {
+    const customId = selectedValue.replace('custom_', '');
+    const customStyle = customThumbnailStyles.find(style => style.id === customId);
+    if (customStyle) {
+      const result = {
+        instructions: customStyle.instructions,
+        primaryColor: customStyle.primaryColor,
+        secondaryColor: customStyle.secondaryColor,
+        type: 'custom',
+        name: customStyle.name
+      };
+      console.log('🔍 DEBUG - Enviando estilo personalizado completo:', result);
+      return result;
+    }
+  }
+  
+  // Estilo predeterminado
+  console.log('🔍 DEBUG - Enviando estilo predeterminado:', selectedValue);
+  return selectedValue;
+}

@@ -43,6 +43,24 @@
       </div>
       
       <div class="sidebar-section">
+        <h4><i class="fas fa-image"></i> Miniaturas</h4>
+      </div>
+      
+      <div class="sidebar-section">
+        <button id="createThumbnailStyleFromSidebar" class="sidebar-btn create-btn">
+          <i class="fas fa-plus"></i>
+          <span>Crear Estilo Miniatura</span>
+        </button>
+      </div>
+      
+      <div class="sidebar-section">
+        <button id="manageThumbnailStylesFromSidebar" class="sidebar-btn manage-btn">
+          <i class="fas fa-cog"></i>
+          <span>Gestionar Miniaturas</span>
+        </button>
+      </div>
+      
+      <div class="sidebar-section">
         <div class="sidebar-info">
           <p><i class="fas fa-info-circle"></i> Estilos disponibles:</p>
           <ul>
@@ -171,6 +189,124 @@
           Cancelar
         </button>
         <button id="saveEditStyleBtn" class="save-btn">
+          <i class="fas fa-save"></i>
+          Guardar Cambios
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal para crear nuevo estilo de miniatura -->
+  <div id="thumbnailStyleModal" class="style-modal">
+    <div class="style-modal-content">
+      <div class="style-modal-header">
+        <h3><i class="fas fa-image"></i> Crear Nuevo Estilo de Miniatura</h3>
+        <button id="closeThumbnailStyleModal" class="close-modal-btn">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <div class="style-modal-body">
+        <div class="form-group">
+          <label for="thumbnailStyleName">Nombre del Estilo:</label>
+          <input type="text" id="thumbnailStyleName" placeholder="Ej: Dorado Épico, Verde Retro, Azul Cyberpunk, etc." maxlength="30">
+        </div>
+        <div class="form-group">
+          <label for="thumbnailStyleDescription">Descripción del Estilo:</label>
+          <textarea id="thumbnailStyleDescription" rows="4" placeholder="Describe el estilo visual de la miniatura. Ej: Estilo épico con colores dorados y efectos brillantes..."></textarea>
+        </div>
+        <div class="form-group">
+          <label for="thumbnailPrimaryColor">Color Principal del Texto:</label>
+          <input type="text" id="thumbnailPrimaryColor" placeholder="Ej: dorado, rojo brillante, azul neón, etc." maxlength="20">
+        </div>
+        <div class="form-group">
+          <label for="thumbnailSecondaryColor">Color Secundario del Texto:</label>
+          <input type="text" id="thumbnailSecondaryColor" placeholder="Ej: blanco, negro, plata, etc." maxlength="20">
+        </div>
+        <div class="form-group">
+          <label for="thumbnailInstructions">Instrucciones Detalladas del Estilo:</label>
+          <textarea id="thumbnailInstructions" rows="6" placeholder="Instrucciones específicas para la IA sobre este estilo de miniatura. Ej: Texto con efecto de resplandor dorado, contorno negro grueso, fondo con efectos de partículas..."></textarea>
+        </div>
+      </div>
+      <div class="style-modal-footer">
+        <button id="cancelThumbnailStyleBtn" class="cancel-btn">
+          <i class="fas fa-times"></i>
+          Cancelar
+        </button>
+        <button id="saveThumbnailStyleBtn" class="save-btn">
+          <i class="fas fa-save"></i>
+          Guardar Estilo
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal para gestionar estilos de miniatura -->
+  <div id="manageThumbnailStylesModal" class="style-modal">
+    <div class="style-modal-content manage-styles-content">
+      <div class="style-modal-header">
+        <h3><i class="fas fa-cog"></i> Gestionar Estilos de Miniatura</h3>
+        <button id="closeManageThumbnailStylesModal" class="close-modal-btn">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <div class="style-modal-body">
+        <div class="styles-list-container">
+          <div id="thumbnailStylesList" class="styles-list">
+            <!-- Los estilos se cargarán dinámicamente aquí -->
+          </div>
+          <div id="noThumbnailStylesMessage" class="no-styles-message" style="display: none;">
+            <i class="fas fa-image"></i>
+            <p>No tienes estilos de miniatura personalizados aún</p>
+            <p>Crea tu primer estilo usando el botón "Crear Estilo Miniatura"</p>
+          </div>
+        </div>
+      </div>
+      <div class="style-modal-footer">
+        <button id="closeManageThumbnailStylesBtn" class="cancel-btn">
+          <i class="fas fa-times"></i>
+          Cerrar
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal para editar estilo de miniatura -->
+  <div id="editThumbnailStyleModal" class="style-modal">
+    <div class="style-modal-content">
+      <div class="style-modal-header">
+        <h3><i class="fas fa-edit"></i> Editar Estilo de Miniatura</h3>
+        <button id="closeEditThumbnailStyleModal" class="close-modal-btn">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <div class="style-modal-body">
+        <div class="form-group">
+          <label for="editThumbnailStyleName">Nombre del Estilo:</label>
+          <input type="text" id="editThumbnailStyleName" placeholder="Ej: Dorado Épico, Verde Retro, Azul Cyberpunk, etc." maxlength="30">
+        </div>
+        <div class="form-group">
+          <label for="editThumbnailStyleDescription">Descripción del Estilo:</label>
+          <textarea id="editThumbnailStyleDescription" rows="4" placeholder="Describe el estilo visual de la miniatura..."></textarea>
+        </div>
+        <div class="form-group">
+          <label for="editThumbnailPrimaryColor">Color Principal del Texto:</label>
+          <input type="text" id="editThumbnailPrimaryColor" placeholder="Ej: dorado, rojo brillante, azul neón, etc." maxlength="20">
+        </div>
+        <div class="form-group">
+          <label for="editThumbnailSecondaryColor">Color Secundario del Texto:</label>
+          <input type="text" id="editThumbnailSecondaryColor" placeholder="Ej: blanco, negro, plata, etc." maxlength="20">
+        </div>
+        <div class="form-group">
+          <label for="editThumbnailInstructions">Instrucciones Detalladas del Estilo:</label>
+          <textarea id="editThumbnailInstructions" rows="6" placeholder="Instrucciones específicas para la IA sobre este estilo de miniatura..."></textarea>
+        </div>
+      </div>
+      <div class="style-modal-footer">
+        <button id="cancelEditThumbnailStyleBtn" class="cancel-btn">
+          <i class="fas fa-times"></i>
+          Cancelar
+        </button>
+        <button id="saveEditThumbnailStyleBtn" class="save-btn">
           <i class="fas fa-save"></i>
           Guardar Cambios
         </button>
@@ -373,6 +509,18 @@
               <i class="fas fa-magic"></i> Instrucciones para Imágenes:
             </label>
             <textarea id="promptModifier" class="field-textarea" rows="4" placeholder="Ej: A Saria ponle cabello verde, armadura dorada..."></textarea>
+          </div>
+
+          <div class="field-group">
+            <label for="thumbnailStyleSelect" class="field-label">
+              <i class="fas fa-image"></i> Estilo de Miniatura:
+            </label>
+            <select id="thumbnailStyleSelect" class="field-select">
+              <option value="default" selected>Amarillo y Blanco (Predeterminado)</option>
+              <option value="gaming_red">Rojo Gaming</option>
+              <option value="neon_blue">Azul Neón</option>
+              <option value="retro_purple">Púrpura Retro</option>
+            </select>
           </div>
 
           <div class="info-box">

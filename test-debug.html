@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Debug Test</title>
+</head>
+<body>
+    <h1>Debug Test</h1>
+    <script>
+        setTimeout(() => {
+            console.log('=== DEBUG TEST ===');
+            
+            const elements = {
+                'createThumbnailStyleFromSidebar': document.getElementById('createThumbnailStyleFromSidebar'),
+                'manageThumbnailStylesFromSidebar': document.getElementById('manageThumbnailStylesFromSidebar'),
+                'thumbnailStyleModal': document.getElementById('thumbnailStyleModal'),
+                'manageThumbnailStylesModal': document.getElementById('manageThumbnailStylesModal')
+            };
+            
+            Object.keys(elements).forEach(key => {
+                console.log(`${key}:`, elements[key] ? '✅ FOUND' : '❌ NOT FOUND');
+            });
+            
+            // Intentar abrir la página principal
+            window.location.href = '/';
+        }, 1000);
+    </script>
+</body>
+</html>
