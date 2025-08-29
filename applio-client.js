@@ -73,7 +73,7 @@ class ApplioClient {
             
             const response = await axios.post(`${this.applioUrl}/gradio_api/queue/join`, joinPayload, {
                 headers: { 'Content-Type': 'application/json' },
-                timeout: 60000
+                timeout: 120000
             });
 
             console.log('✅ Solicitud enviada');
@@ -107,7 +107,7 @@ class ApplioClient {
         console.log('⏳ Esperando generación...');
         
         const startTime = Date.now();
-        const timeout = 45000; // 45 segundos
+        const timeout = 120000; // 120 segundos (2 minutos)
 
         return new Promise((resolve, reject) => {
             const checkFile = async () => {

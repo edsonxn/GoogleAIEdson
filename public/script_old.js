@@ -79,11 +79,39 @@ window.addEventListener('load', function() {
   }
 });
 
-const generateBtn = document.getElementById("generateBtn");
-const continueBtn = document.getElementById("continueBtn");
-const generateAudioBtn = document.getElementById("generateAudioBtn");
-const promptInput = document.getElementById("prompt");
-const output = document.getElementById("output");
+// Variables globales que se inicializarán cuando el DOM esté listo
+let generateBtn, continueBtn, generateAudioBtn, promptInput, output;
+
+// Inicializar cuando el DOM esté listo
+document.addEventListener('DOMContentLoaded', function() {
+  console.log('🌐 DOM cargado - inicializando elementos...');
+  
+  // Definir elementos del DOM
+  generateBtn = document.getElementById("generateBtn");
+  continueBtn = document.getElementById("continueBtn");
+  generateAudioBtn = document.getElementById("generateAudioBtn");
+  promptInput = document.getElementById("prompt");
+  output = document.getElementById("output");
+  
+  // Verificar que los elementos principales existen
+  if (!generateBtn || !continueBtn || !promptInput || !output) {
+    console.error('❌ Elementos principales no encontrados:', {
+      generateBtn: !!generateBtn,
+      continueBtn: !!continueBtn,
+      promptInput: !!promptInput,
+      output: !!output
+    });
+    return;
+  }
+  
+  console.log('✅ Elementos principales encontrados');
+  
+  // Inicializar event listeners
+  initializeEventListeners();
+});
+
+function initializeEventListeners() {
+  console.log('🔧 Inicializando event listeners...');
 
 // Variables para el carrusel y secciones
 let currentSlide = 0;
@@ -100,6 +128,35 @@ let isAutoGenerating = false; // Bandera para la generación automática
 // Variables globales para estilos de miniatura
 let customThumbnailStyles = [];
 let currentEditingThumbnailStyleId = null;
+
+// Función auxiliar para determinar si se deben omitir imágenes reales
+function shouldSkipImages() {
+  try {
+    const showGoogleLinks = document.getElementById('showGoogleLinks');
+    const showAIPrompts = document.getElementById('showAIPrompts');
+    
+    console.log('🔍 DEBUG shouldSkipImages - showGoogleLinks:', !!showGoogleLinks, showGoogleLinks?.checked);
+    console.log('🔍 DEBUG shouldSkipImages - showAIPrompts:', !!showAIPrompts, showAIPrompts?.checked);
+    
+    // Si está marcado "Imágenes Google", se omiten las imágenes reales (solo se generan links)
+    // Si está marcado "Imágenes IA", se generan imágenes reales
+    if (showGoogleLinks && showGoogleLinks.checked) {
+      console.log('🔍 DEBUG shouldSkipImages - Resultado: true (Google Links)');
+      return true; // Omitir imágenes reales, solo generar links
+    } else if (showAIPrompts && showAIPrompts.checked) {
+      console.log('🔍 DEBUG shouldSkipImages - Resultado: false (AI Prompts)');
+      return false; // Generar imágenes reales
+    }
+    
+    // Por defecto, mostrar links de Google (omitir imágenes reales)
+    console.log('🔍 DEBUG shouldSkipImages - Resultado: true (default)');
+    return true;
+  } catch (error) {
+    console.error('❌ Error en shouldSkipImages:', error);
+    // Fallback seguro
+    return true;
+  }
+}
 
 // Estilos predeterminados de miniatura
 const defaultThumbnailStyles = {
@@ -146,7 +203,7 @@ async function runAutoGeneration() {
   const imageCount = parseInt(document.getElementById("imagesSelect").value);
   const promptModifier = document.getElementById("promptModifier").value.trim();
   const selectedImageModel = document.getElementById("modelSelect").value;
-  const skipImages = document.getElementById("skipImages").checked;
+  const skipImages = shouldSkipImages(); // Usar función auxiliar
   const generateAudio = document.getElementById("autoGenerateAudio").checked;
   const generateApplioAudio = document.getElementById("autoGenerateApplioAudio").checked;
   
@@ -430,13 +487,19 @@ async function displaySectionContent(data, section) {
     showScript(data.script, section, totalSections, data.voice, data.scriptFile);
     
     setTimeout(() => {
-      if (!document.getElementById("skipImages").checked && data.images && data.images.length > 0) {
+      if (!shouldSkipImages() && data.images && data.images.length > 0) {
         // Mostrar carrusel de imágenes
         createCarousel(data.images, section, data.imagePrompts);
       } else if (data.imagePrompts && data.imagePrompts.length > 0) {
         // Mostrar prompts de imágenes en el panel lateral
         addPromptsToSidebar(data.imagePrompts, section);
       }
+      
+      // Agregar links de búsqueda si existen
+      if (data.searchTerms && data.searchTerms.length > 0) {
+        addSearchLinksToSidebar(data.searchTerms, section);
+      }
+      
       resolve();
     }, 500);
   });
@@ -453,7 +516,7 @@ function updateGenerationProgress(section, total, phase) {
   
   // Actualizar etapas de carga
   if (phase === 'script') {
-    showLoadingStages(section, parseInt(document.getElementById("imagesSelect").value), document.getElementById("skipImages").checked);
+    showLoadingStages(section, parseInt(document.getElementById("imagesSelect").value), shouldSkipImages());
   } else {
     showAudioGenerationStage(section);
   }
@@ -1408,21 +1471,40 @@ function showCompletionMessage(sectionNum, totalSections, isComplete) {
   }
 }
 
-// Event listener para el botón principal
-generateBtn.addEventListener("click", async () => {
-  console.log("Botón clickeado");
+  // Event listener para el botón principal
+  if (generateBtn) {
+    generateBtn.addEventListener("click", async () => {
+      console.log("🔥 DEBUG - Botón clickeado!");
+      
+      // Verificar que los elementos básicos existan
+      if (!generateBtn) {
+        console.error("❌ generateBtn no encontrado!");
+        return;
+      }
+  
+  if (!promptInput) {
+    console.error("❌ promptInput no encontrado!");
+    return;
+  }
+  
+  console.log("🔥 DEBUG - generateBtn:", !!generateBtn);
+  console.log("🔥 DEBUG - promptInput:", !!promptInput);
   
   // Verificar si la generación automática está activada
-  const autoGenerate = document.getElementById("autoGenerate").checked;
+  const autoGenerate = document.getElementById("autoGenerate");
+  console.log("🔥 DEBUG - autoGenerate checkbox:", !!autoGenerate, autoGenerate?.checked);
   
-  if (autoGenerate) {
+  if (autoGenerate && autoGenerate.checked) {
     console.log("🤖 Iniciando generación automática");
     await runAutoGeneration();
     return;
   }
   
+  console.log("🔥 DEBUG - Continuando con generación normal...");
+  
   // Continuar con la generación normal
   const topic = promptInput.value.trim();
+  console.log("🔥 DEBUG - Topic:", topic);
   const folderName = document.getElementById("folderName").value.trim();
   const selectedVoice = document.getElementById("voiceSelect").value;
   const selectedSections = document.getElementById("sectionsSelect").value;
@@ -1430,7 +1512,7 @@ generateBtn.addEventListener("click", async () => {
   const imageCount = parseInt(document.getElementById("imagesSelect").value);
   const promptModifier = document.getElementById("promptModifier").value.trim();
   const selectedImageModel = document.getElementById("modelSelect").value;
-  const skipImages = document.getElementById("skipImages").checked;
+  const skipImages = shouldSkipImages();
   
   console.log("Topic:", topic);
   console.log("Folder Name:", folderName);
@@ -1544,6 +1626,14 @@ generateBtn.addEventListener("click", async () => {
           } else {
             console.log(`❌ DEBUG FRONTEND - No se encontraron prompts de imágenes válidos`);
           }
+          
+          // Agregar links de búsqueda si existen
+          if (data.searchTerms && data.searchTerms.length > 0) {
+            console.log(`✅ DEBUG FRONTEND - Añadiendo ${data.searchTerms.length} links de búsqueda al panel lateral`);
+            addSearchLinksToSidebar(data.searchTerms, data.currentSection);
+          } else {
+            console.log(`❌ DEBUG FRONTEND - No se encontraron términos de búsqueda válidos`);
+          }
         }, 500);
       }
       
@@ -1572,10 +1662,10 @@ generateBtn.addEventListener("click", async () => {
       <span>Generar Sección 1</span>
     `;
   }
-});
+  });
 
-// Event listener para el botón de continuar
-continueBtn.addEventListener("click", async () => {
+  // Event listener para el botón de continuar
+  continueBtn.addEventListener("click", async () => {
   if (!currentTopic || currentSectionNumber >= totalSections) {
     showError("No se puede continuar. Genera primero una sección o ya has completado todas las secciones.");
     return;
@@ -1597,11 +1687,12 @@ continueBtn.addEventListener("click", async () => {
   
   generateAudioBtn.style.display = "none";
   
+  const skipImages = shouldSkipImages();
   showLoadingStages(nextSection, imageCount, skipImages);
 
   try {
     console.log(`Enviando llamada API para sección ${nextSection}`);
-    const skipImages = document.getElementById("skipImages").checked;
+    const skipImages = shouldSkipImages();
     console.log(`Omitir imágenes: ${skipImages}`);
     const customStyleInstructions = getCustomStyleInstructions(selectedStyle);
     
@@ -1661,6 +1752,11 @@ continueBtn.addEventListener("click", async () => {
           if (data.imagePrompts && data.imagePrompts.length > 0) {
             addPromptsToSidebar(data.imagePrompts, data.currentSection);
           }
+          
+          // Agregar links de búsqueda si existen
+          if (data.searchTerms && data.searchTerms.length > 0) {
+            addSearchLinksToSidebar(data.searchTerms, data.currentSection);
+          }
         }, 500);
       }
       
@@ -1691,10 +1787,10 @@ continueBtn.addEventListener("click", async () => {
       <span>Continuar con Sección ${nextSection}</span>
     `;
   }
-});
+  });
 
-// Event listener para el botón de generar audio
-generateAudioBtn.addEventListener("click", async () => {
+  // Event listener para el botón de generar audio
+  generateAudioBtn.addEventListener("click", async () => {
   if (!currentScript) {
     showError("Primero genera un guión antes de crear el audio.");
     return;
@@ -1749,16 +1845,19 @@ promptInput.addEventListener("keydown", (e) => {
   if (e.ctrlKey && e.key === "Enter") {
     generateBtn.click();
   }
-});
+  });
 
-// Auto-resize del textarea
-promptInput.addEventListener("input", function() {
-  this.style.height = "auto";
-  this.style.height = Math.min(this.scrollHeight, 300) + "px";
-});
+  // Auto-resize del textarea
+  promptInput.addEventListener("input", function() {
+    this.style.height = "auto";
+    this.style.height = Math.min(this.scrollHeight, 300) + "px";
+  });
+  
+  console.log('✅ Event listeners inicializados correctamente');
+}
 
-// Manejar checkbox de omitir imágenes
-document.getElementById("skipImages").addEventListener("change", function() {
+// Manejar checkbox de omitir imágenes (comentado porque se eliminó skipImages)
+// document.getElementById("skipImages") && document.getElementById("skipImages").addEventListener("change", function() {
   const imageRelatedFields = [
     // Solo deshabilitar el selector de modelo, no el de cantidad de imágenes
     document.getElementById("modelSelect").closest('.model-selector-container')
@@ -1831,6 +1930,7 @@ document.getElementById("skipImages").addEventListener("change", function() {
         helpText.textContent = "Estas instrucciones se aplicarán a todas las imágenes generadas";
       }
     }
+/*
   }
   
   // Actualizar texto del botón
@@ -1845,15 +1945,7 @@ document.getElementById("skipImages").addEventListener("change", function() {
     if (continueBtnText) continueBtnText.textContent = `Continuar con Sección ${currentSectionNumber + 1}`;
   }
 });
-
-// Inicializar el estado de la casilla de omitir imágenes al cargar la página
-document.addEventListener('DOMContentLoaded', function() {
-  // Simular el evento change para aplicar el estado inicial
-  const skipImagesCheckbox = document.getElementById("skipImages");
-  if (skipImagesCheckbox && skipImagesCheckbox.checked) {
-    skipImagesCheckbox.dispatchEvent(new Event('change'));
-  }
-});
+*/
 
 // Función para mostrar prompts de imágenes cuando se omiten las imágenes
 // COMENTADA: Ya no se usa porque ahora se usa el panel lateral
@@ -2672,28 +2764,15 @@ function debugStyles() {
 
 // Funciones para la barra lateral colapsable
 function toggleSidebar() {
-  console.log('🔄 toggleSidebar() ejecutada');
-  
   const sidebar = document.getElementById('sidebar');
   const body = document.body;
   
-  console.log('🔍 sidebar element:', sidebar);
-  console.log('🔍 body element:', body);
-  
   if (sidebar && body) {
-    const wasExpanded = sidebar.classList.contains('expanded');
-    
     sidebar.classList.toggle('expanded');
     body.classList.toggle('sidebar-expanded');
     
     const isExpanded = sidebar.classList.contains('expanded');
-    console.log(`🎯 Barra lateral cambió de ${wasExpanded ? 'expandida' : 'colapsada'} a ${isExpanded ? 'expandida' : 'colapsada'}`);
-    console.log('🔍 Clases del sidebar:', sidebar.className);
-    console.log('🔍 Clases del body:', body.className);
-  } else {
-    console.error('❌ No se encontró el sidebar o el body');
-    console.error('sidebar:', sidebar);
-    console.error('body:', body);
+    console.log(`🎯 Barra lateral ${isExpanded ? 'expandida' : 'colapsada'}`);
   }
 }
 
@@ -2725,24 +2804,9 @@ function openManageStylesFromSidebar() {
 document.addEventListener('DOMContentLoaded', function() {
   // Botón de menú para expandir/colapsar barra lateral
   const menuToggleBtn = document.getElementById('menuToggleBtn');
-  const sidebar = document.getElementById('sidebar');
-  
-  console.log('🔍 Debug sidebar - menuToggleBtn:', menuToggleBtn);
-  console.log('🔍 Debug sidebar - sidebar:', sidebar);
-  
   if (menuToggleBtn) {
-    menuToggleBtn.addEventListener('click', function(e) {
-      console.log('🖱️ Click detectado en botón menú');
-      e.preventDefault();
-      toggleSidebar();
-    });
+    menuToggleBtn.addEventListener('click', toggleSidebar);
     console.log('✅ Event listener del botón menú configurado');
-  } else {
-    console.error('❌ No se encontró el botón menuToggleBtn');
-  }
-  
-  if (!sidebar) {
-    console.error('❌ No se encontró el elemento sidebar');
   }
   
   // Botones de la barra lateral
@@ -2975,6 +3039,79 @@ function initializePromptsPanel() {
   }
   
   console.log('✅ Panel lateral de prompts inicializado correctamente');
+  
+  // Inicializar manejo de checkboxes del panel lateral
+  initializeSidebarCheckboxes();
+}
+
+// Función para inicializar los checkboxes del panel lateral
+function initializeSidebarCheckboxes() {
+  console.log('🔍 Iniciando inicialización de checkboxes del panel lateral...');
+  
+  const showGoogleLinksCheckbox = document.getElementById('showGoogleLinks');
+  const showAIPromptsCheckbox = document.getElementById('showAIPrompts');
+  
+  if (!showGoogleLinksCheckbox || !showAIPromptsCheckbox) {
+    console.log('❌ Checkboxes del panel lateral no encontrados');
+    return;
+  }
+  
+  // Event listeners para los checkboxes
+  showGoogleLinksCheckbox.addEventListener('change', function() {
+    if (this.checked) {
+      // Desmarcar el otro checkbox
+      showAIPromptsCheckbox.checked = false;
+      // Cambiar vista a Google Links
+      switchSidebarView('google');
+    } else if (!showAIPromptsCheckbox.checked) {
+      // Si se desmarca y el otro también está desmarcado, volver a marcar este
+      this.checked = true;
+    }
+  });
+  
+  showAIPromptsCheckbox.addEventListener('change', function() {
+    if (this.checked) {
+      // Desmarcar el otro checkbox
+      showGoogleLinksCheckbox.checked = false;
+      // Cambiar vista a AI Prompts
+      switchSidebarView('prompts');
+    } else if (!showGoogleLinksCheckbox.checked) {
+      // Si se desmarca y el otro también está desmarcado, volver a marcar el de Google
+      showGoogleLinksCheckbox.checked = true;
+      switchSidebarView('google');
+    }
+  });
+  
+  // Establecer vista inicial (Google Links por defecto)
+  switchSidebarView('google');
+  
+  console.log('✅ Checkboxes del panel lateral inicializados');
+}
+
+// Función para cambiar la vista del panel lateral
+function switchSidebarView(viewType) {
+  const googleLinksView = document.getElementById('googleLinksView');
+  const promptsView = document.getElementById('promptsView');
+  const sidebarTitle = document.getElementById('sidebarTitle');
+  
+  if (!googleLinksView || !promptsView || !sidebarTitle) {
+    console.log('❌ Elementos de vista del panel lateral no encontrados');
+    return;
+  }
+  
+  if (viewType === 'google') {
+    // Mostrar vista de Google Links
+    googleLinksView.style.display = 'block';
+    promptsView.style.display = 'none';
+    sidebarTitle.innerHTML = '<i class="fas fa-search"></i> Búsquedas Google';
+    console.log('🔄 Cambiado a vista: Google Links');
+  } else if (viewType === 'prompts') {
+    // Mostrar vista de AI Prompts
+    googleLinksView.style.display = 'none';
+    promptsView.style.display = 'block';
+    sidebarTitle.innerHTML = '<i class="fas fa-robot"></i> Prompts IA';
+    console.log('🔄 Cambiado a vista: AI Prompts');
+  }
 }
 
 // Función para añadir prompts al panel lateral
@@ -3049,6 +3186,134 @@ function addPromptsToSidebar(prompts, sectionNumber) {
       lastPrompt.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
   }, 300);
+  
+  // Actualizar estadísticas
+  updateStats();
+}
+
+// Función para añadir links de búsqueda al panel lateral
+function addSearchLinksToSidebar(searchLinks, sectionNumber) {
+  if (!searchLinks || !Array.isArray(searchLinks) || searchLinks.length === 0) {
+    console.log('❌ No hay links de búsqueda válidos para añadir al panel lateral');
+    return;
+  }
+  
+  console.log(`🔗 Añadiendo ${searchLinks.length} links de búsqueda de la sección ${sectionNumber} al panel lateral`);
+  
+  const searchLinksList = document.getElementById('searchLinksList');
+  const emptyState = document.getElementById('searchLinksEmptyState');
+  
+  if (!searchLinksList || !emptyState) {
+    console.log('❌ Elementos del panel de búsquedas no encontrados');
+    return;
+  }
+  
+  // Ocultar el estado vacío si existe
+  if (emptyState.style.display !== 'none') {
+    emptyState.style.display = 'none';
+  }
+  
+  // Añadir divider si no es la primera sección
+  if (sectionNumber > 1) {
+    const divider = document.createElement('div');
+    divider.className = 'section-divider';
+    divider.innerHTML = `
+      <div class="section-divider-text">
+        <i class="fas fa-layer-group"></i>
+        Sección ${sectionNumber}
+      </div>
+    `;
+    searchLinksList.appendChild(divider);
+  }
+  
+  // Añadir cada link de búsqueda al panel
+  searchLinks.forEach((searchLink, index) => {
+    const searchLinkItem = createSearchLinkItem(searchLink, sectionNumber, index + 1);
+    searchLinksList.appendChild(searchLinkItem);
+    
+    // Añadir animación de entrada
+    setTimeout(() => {
+      searchLinkItem.classList.add('new');
+    }, index * 100);
+  });
+  
+  // Hacer scroll al último link añadido
+  setTimeout(() => {
+    const lastLink = searchLinksList.lastElementChild;
+    if (lastLink) {
+      lastLink.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }, 300);
+  
+  console.log(`✅ Links de búsqueda añadidos al panel lateral`);
+}
+
+// Función para crear un item de link de búsqueda individual
+function createSearchLinkItem(searchLink, sectionNumber, linkNumber) {
+  const searchLinkItem = document.createElement('div');
+  searchLinkItem.className = 'search-link-item';
+  
+  const header = document.createElement('div');
+  header.className = 'search-link-item-header';
+  
+  const title = document.createElement('div');
+  title.className = 'search-link-item-title';
+  title.innerHTML = `<i class="fas fa-search"></i> Búsqueda ${linkNumber}`;
+  
+  const section = document.createElement('div');
+  section.className = 'search-link-item-section';
+  section.textContent = `Sección ${sectionNumber}`;
+  
+  header.appendChild(title);
+  header.appendChild(section);
+  
+  const content = document.createElement('div');
+  content.className = 'search-link-content';
+  
+  const text = document.createElement('div');
+  text.className = 'search-link-text';
+  text.textContent = searchLink.description || `Búsqueda de imágenes: ${searchLink.term}`;
+  
+  const url = document.createElement('a');
+  url.className = 'search-link-url';
+  url.href = searchLink.url;
+  url.target = '_blank';
+  url.textContent = searchLink.url;
+  url.title = `Abrir búsqueda: ${searchLink.term}`;
+  
+  const actions = document.createElement('div');
+  actions.className = 'search-link-actions';
+  
+  const openBtn = document.createElement('button');
+  openBtn.className = 'search-link-btn';
+  openBtn.innerHTML = '<i class="fas fa-external-link-alt"></i> Abrir';
+  openBtn.onclick = function() {
+    window.open(searchLink.url, '_blank');
+  };
+  
+  const copyBtn = document.createElement('button');
+  copyBtn.className = 'search-link-btn';
+  copyBtn.innerHTML = '<i class="fas fa-copy"></i> Copiar';
+  copyBtn.onclick = function() {
+    navigator.clipboard.writeText(searchLink.url).then(() => {
+      copyBtn.innerHTML = '<i class="fas fa-check"></i> Copiado';
+      setTimeout(() => {
+        copyBtn.innerHTML = '<i class="fas fa-copy"></i> Copiar';
+      }, 2000);
+    });
+  };
+  
+  actions.appendChild(openBtn);
+  actions.appendChild(copyBtn);
+  
+  content.appendChild(text);
+  content.appendChild(url);
+  content.appendChild(actions);
+  
+  searchLinkItem.appendChild(header);
+  searchLinkItem.appendChild(content);
+  
+  return searchLinkItem;
 }
 
 // Función para crear un item de prompt individual
@@ -5045,30 +5310,171 @@ function getThumbnailStyleData() {
   return selectedValue;
 }
 
-// FALLBACK PARA SIDEBAR - Se ejecuta después de que todo esté cargado
-setTimeout(function() {
-  console.log('🔄 FALLBACK: Verificando configuración del sidebar...');
+// ===== FUNCIONES DE HERRAMIENTAS DEL PANEL LATERAL =====
+
+// Función para exportar prompts
+function exportPrompts() {
+  console.log('📁 Exportando prompts...');
   
-  const menuToggleBtn = document.getElementById('menuToggleBtn');
-  const sidebar = document.getElementById('sidebar');
-  
-  if (menuToggleBtn && sidebar) {
-    // Remover event listeners previos para evitar duplicados
-    const newMenuBtn = menuToggleBtn.cloneNode(true);
-    menuToggleBtn.parentNode.replaceChild(newMenuBtn, menuToggleBtn);
-    
-    // Agregar event listener fresh
-    newMenuBtn.addEventListener('click', function(e) {
-      console.log('🖱️ FALLBACK: Click detectado en botón menú');
-      e.preventDefault();
-      e.stopPropagation();
-      toggleSidebar();
-    });
-    
-    console.log('✅ FALLBACK: Event listener del sidebar configurado');
-  } else {
-    console.error('❌ FALLBACK: Elementos del sidebar no encontrados');
-    console.error('menuToggleBtn:', menuToggleBtn);
-    console.error('sidebar:', sidebar);
+  if (!allAccumulatedPrompts || allAccumulatedPrompts.length === 0) {
+    alert('No hay prompts para exportar. Genera algunas secciones primero.');
+    return;
   }
-}, 3000);
+  
+  let exportText = `PROMPTS DE IMÁGENES\n`;
+  exportText += `Generado el: ${new Date().toLocaleString()}\n`;
+  exportText += `Total de prompts: ${allAccumulatedPrompts.length}\n`;
+  exportText += `${'='.repeat(50)}\n\n`;
+  
+  allAccumulatedPrompts.forEach((prompt, index) => {
+    exportText += `[${index + 1}] Sección ${prompt.section} - Imagen ${prompt.imageNumber}\n`;
+    exportText += `${prompt.text}\n\n`;
+  });
+  
+  // Crear y descargar archivo
+  const blob = new Blob([exportText], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `prompts_${new Date().toISOString().split('T')[0]}.txt`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  
+  console.log('✅ Prompts exportados');
+}
+
+// Función para exportar guión
+function exportScript() {
+  console.log('📄 Exportando guión...');
+  
+  if (!allSections || allSections.length === 0) {
+    alert('No hay guión para exportar. Genera algunas secciones primero.');
+    return;
+  }
+  
+  const topic = currentTopic || 'Sin título';
+  const voice = currentVoice || 'Voz no especificada';
+  
+  let exportText = `GUIÓN DE VIDEO\n`;
+  exportText += `${'='.repeat(50)}\n\n`;
+  exportText += `Tema: ${topic}\n`;
+  exportText += `Voz: ${voice}\n`;
+  exportText += `Generado el: ${new Date().toLocaleString()}\n`;
+  exportText += `Total de secciones: ${allSections.length}\n\n`;
+  exportText += `${'='.repeat(50)}\n\n`;
+  
+  allSections.forEach((section, index) => {
+    exportText += `SECCIÓN ${index + 1}\n`;
+    exportText += `${'-'.repeat(20)}\n`;
+    exportText += `${section}\n\n`;
+  });
+  
+  // Crear y descargar archivo
+  const blob = new Blob([exportText], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `guion_${topic.replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().split('T')[0]}.txt`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  
+  console.log('✅ Guión exportado');
+}
+
+// Función para limpiar todo
+function clearAll() {
+  console.log('🗑️ Limpiando todo...');
+  
+  // Limpiar variables globales
+  allSections = [];
+  allAccumulatedPrompts = [];
+  imagePrompts = [];
+  currentScript = '';
+  currentSectionNumber = 1;
+  totalSections = 3;
+  
+  // Limpiar UI
+  const output = document.getElementById('output');
+  if (output) {
+    output.innerHTML = '';
+  }
+  
+  const promptsList = document.getElementById('promptsList');
+  if (promptsList) {
+    promptsList.innerHTML = '';
+  }
+  
+  const searchLinksList = document.getElementById('searchLinksList');
+  if (searchLinksList) {
+    searchLinksList.innerHTML = '';
+  }
+  
+  const emptyState = document.getElementById('promptsEmptyState');
+  if (emptyState) {
+    emptyState.style.display = 'block';
+  }
+  
+  const searchLinksEmptyState = document.getElementById('searchLinksEmptyState');
+  if (searchLinksEmptyState) {
+    searchLinksEmptyState.style.display = 'block';
+  }
+  
+  // Cerrar panel lateral
+  const promptsSidebar = document.getElementById('promptsSidebar');
+  if (promptsSidebar) {
+    promptsSidebar.classList.remove('active');
+    document.body.classList.remove('prompts-panel-active');
+  }
+  
+  // Resetear botones
+  const generateBtn = document.getElementById('generateBtn');
+  const continueBtn = document.getElementById('continueBtn');
+  
+  if (generateBtn) {
+    generateBtn.style.display = 'block';
+    generateBtn.disabled = false;
+  }
+  
+  if (continueBtn) {
+    continueBtn.style.display = 'none';
+  }
+  
+  // Actualizar estadísticas
+  updateStats();
+  
+  console.log('✅ Todo limpiado');
+}
+
+// Función para abrir configuración (placeholder)
+function openSettings() {
+  alert('Panel de configuración - Próximamente disponible');
+}
+
+// Función para actualizar estadísticas
+function updateStats() {
+  const sectionsCount = document.getElementById('sectionsCount');
+  const promptsCount = document.getElementById('promptsCount');
+  const wordsCount = document.getElementById('wordsCount');
+  
+  if (sectionsCount) {
+    sectionsCount.textContent = allSections ? allSections.length : 0;
+  }
+  
+  if (promptsCount) {
+    promptsCount.textContent = allAccumulatedPrompts ? allAccumulatedPrompts.length : 0;
+  }
+  
+  if (wordsCount) {
+    let totalWords = 0;
+    if (allSections && allSections.length > 0) {
+      totalWords = allSections.reduce((total, section) => {
+        return total + section.split(' ').length;
+      }, 0);
+    }
+    wordsCount.textContent = totalWords;
+  }
+}
