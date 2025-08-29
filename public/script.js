@@ -147,11 +147,14 @@ async function runAutoGeneration() {
   const promptModifier = document.getElementById("promptModifier").value.trim();
   const selectedImageModel = document.getElementById("modelSelect").value;
   const skipImages = document.getElementById("skipImages").checked;
+  const googleImages = document.getElementById("googleImages").checked;
   const generateAudio = document.getElementById("autoGenerateAudio").checked;
   const generateApplioAudio = document.getElementById("autoGenerateApplioAudio").checked;
   
   console.log(`🔊 Generación de audio Google: ${generateAudio ? 'ACTIVADA' : 'DESACTIVADA'}`);
   console.log(`🎤 Generación de audio Applio: ${generateApplioAudio ? 'ACTIVADA' : 'DESACTIVADA'}`);
+  console.log(`🖼️ Imágenes de Google: ${googleImages ? 'ACTIVADA' : 'DESACTIVADA'}`);
+  console.log(`🚫 Omitir imágenes: ${skipImages ? 'ACTIVADA' : 'DESACTIVADA'}`);
   
   if (!topic) {
     promptInput.focus();
@@ -190,7 +193,7 @@ async function runAutoGeneration() {
       // Generar guión e imágenes
       const scriptResult = await generateSectionContent(section, {
         topic, folderName, selectedVoice, selectedStyle, 
-        imageCount, promptModifier, selectedImageModel, skipImages
+        imageCount, promptModifier, selectedImageModel, skipImages, googleImages
       });
       
       if (!scriptResult.success) {
@@ -315,6 +318,7 @@ async function generateSectionContent(section, params) {
         promptModifier: params.promptModifier,
         imageModel: params.selectedImageModel,
         skipImages: params.skipImages,
+        googleImages: params.googleImages,
         allSections: allSections
       })
     });
@@ -430,11 +434,28 @@ async function displaySectionContent(data, section) {
     showScript(data.script, section, totalSections, data.voice, data.scriptFile);
     
     setTimeout(() => {
-      if (!document.getElementById("skipImages").checked && data.images && data.images.length > 0) {
-        // Mostrar carrusel de imágenes
+      // Usar los datos del servidor en lugar de leer los checkboxes
+      const skipImages = data.imagesSkipped || false;
+      const googleImages = data.googleImagesMode || false;
+      
+      console.log(`🔍 DEBUG displaySectionContent - skipImages: ${skipImages}`);
+      console.log(`🔍 DEBUG displaySectionContent - googleImages: ${googleImages}`);
+      console.log(`🔍 DEBUG displaySectionContent - data.imagesSkipped: ${data.imagesSkipped}`);
+      console.log(`🔍 DEBUG displaySectionContent - data.googleImagesMode: ${data.googleImagesMode}`);
+      console.log(`🔍 DEBUG displaySectionContent - data.images: ${data.images ? data.images.length : 'null'}`);
+      console.log(`🔍 DEBUG displaySectionContent - data.imagePrompts: ${data.imagePrompts ? data.imagePrompts.length : 'null'}`);
+      
+      if (!skipImages && !googleImages && data.images && data.images.length > 0) {
+        // Mostrar carrusel de imágenes normales
+        console.log(`📷 Mostrando carrusel de imágenes normales`);
         createCarousel(data.images, section, data.imagePrompts);
+      } else if (googleImages && data.imagePrompts && data.imagePrompts.length > 0) {
+        // Crear enlaces de Google Images y mostrarlos en el panel lateral
+        console.log(`🔗🔗🔗 EJECUTANDO createGoogleImageLinks 🔗🔗🔗`);
+        createGoogleImageLinks(data.imagePrompts, section);
       } else if (data.imagePrompts && data.imagePrompts.length > 0) {
         // Mostrar prompts de imágenes en el panel lateral
+        console.log(`📋 Mostrando prompts en el panel lateral`);
         addPromptsToSidebar(data.imagePrompts, section);
       }
       resolve();
@@ -453,7 +474,7 @@ function updateGenerationProgress(section, total, phase) {
   
   // Actualizar etapas de carga
   if (phase === 'script') {
-    showLoadingStages(section, parseInt(document.getElementById("imagesSelect").value), document.getElementById("skipImages").checked);
+    showLoadingStages(section, parseInt(document.getElementById("imagesSelect").value), document.getElementById("skipImages").checked, document.getElementById("googleImages").checked);
   } else {
     showAudioGenerationStage(section);
   }
@@ -523,7 +544,7 @@ function disableControls(disable) {
   const controls = [
     'prompt', 'folderName', 'voiceSelect', 'sectionsSelect', 
     'styleSelect', 'imagesSelect', 'promptModifier', 'modelSelect', 
-    'skipImages', 'autoGenerate', 'autoGenerateAudio', 'autoGenerateApplioAudio'
+    'skipImages', 'autoGenerate', 'autoGenerateAudio', 'autoGenerateApplioAudio', 'googleImages'
   ];
   
   controls.forEach(id => {
@@ -539,17 +560,30 @@ function disableControls(disable) {
 }
 
 // Función para mostrar mensaje de carga con etapas
-function showLoadingStages(sectionNum, imageCount = 5, skipImages = false) {
-  const imageStagesHTML = skipImages ? '' : `
-    <div class="stage" id="stage-prompt">
-      <div class="stage-icon"><i class="fas fa-brain"></i></div>
-      <div class="stage-text">Creando secuencia visual...</div>
-    </div>
-    <div class="stage" id="stage-image">
-      <div class="stage-icon"><i class="fas fa-images"></i></div>
-      <div class="stage-text">Generando ${imageCount} imágenes gaming...</div>
-    </div>
-  `;
+function showLoadingStages(sectionNum, imageCount = 5, skipImages = false, googleImages = false) {
+  let imageStagesHTML = '';
+  
+  if (!skipImages && !googleImages) {
+    // Modo normal: generar imágenes
+    imageStagesHTML = `
+      <div class="stage" id="stage-prompt">
+        <div class="stage-icon"><i class="fas fa-brain"></i></div>
+        <div class="stage-text">Creando secuencia visual...</div>
+      </div>
+      <div class="stage" id="stage-image">
+        <div class="stage-icon"><i class="fas fa-images"></i></div>
+        <div class="stage-text">Generando ${imageCount} imágenes gaming...</div>
+      </div>
+    `;
+  } else if (googleImages) {
+    // Modo Google Images: crear enlaces
+    imageStagesHTML = `
+      <div class="stage" id="stage-prompt">
+        <div class="stage-icon"><i class="fab fa-google"></i></div>
+        <div class="stage-text">Preparando enlaces de Google Images...</div>
+      </div>
+    `;
+  }
   
   output.innerHTML = `
     <div class="loading-stages">
@@ -1431,6 +1465,7 @@ generateBtn.addEventListener("click", async () => {
   const promptModifier = document.getElementById("promptModifier").value.trim();
   const selectedImageModel = document.getElementById("modelSelect").value;
   const skipImages = document.getElementById("skipImages").checked;
+  const googleImages = document.getElementById("googleImages").checked;
   
   console.log("Topic:", topic);
   console.log("Folder Name:", folderName);
@@ -1441,6 +1476,7 @@ generateBtn.addEventListener("click", async () => {
   console.log("Prompt Modifier:", promptModifier);
   console.log("Image Model:", selectedImageModel);
   console.log("Skip Images:", skipImages);
+  console.log("Google Images:", googleImages);
   
   if (!topic) {
     console.log("Tema vacío, mostrando error");
@@ -1479,7 +1515,7 @@ generateBtn.addEventListener("click", async () => {
   generateAudioBtn.style.display = "none";
   continueBtn.style.display = "none";
   
-  showLoadingStages(1, imageCount, skipImages);
+  showLoadingStages(1, imageCount, skipImages, googleImages);
 
   try {
     console.log('Enviando primera llamada API sin historial previo');
@@ -1499,7 +1535,8 @@ generateBtn.addEventListener("click", async () => {
         imageCount: imageCount,
         promptModifier: promptModifier,
         imageModel: selectedImageModel,
-        skipImages: skipImages
+        skipImages: skipImages,
+        googleImages: googleImages
       })
     });
 
@@ -1537,10 +1574,18 @@ generateBtn.addEventListener("click", async () => {
           console.log(`🔍 DEBUG FRONTEND - data.imagePrompts existe:`, !!data.imagePrompts);
           console.log(`🔍 DEBUG FRONTEND - data.imagePrompts.length:`, data.imagePrompts ? data.imagePrompts.length : 'undefined');
           console.log(`🔍 DEBUG FRONTEND - data.imagesSkipped:`, data.imagesSkipped);
+          console.log(`🔍 DEBUG FRONTEND - data.googleImagesMode:`, data.googleImagesMode);
+          console.log(`🔍 DEBUG FRONTEND - Objeto data completo:`, data);
           
           if (data.imagePrompts && data.imagePrompts.length > 0) {
-            console.log(`✅ DEBUG FRONTEND - Añadiendo ${data.imagePrompts.length} prompts al panel lateral`);
-            addPromptsToSidebar(data.imagePrompts, data.currentSection);
+            if (data.googleImagesMode) {
+              console.log(`🔗🔗🔗 DEBUG FRONTEND - Ejecutando createGoogleImageLinks con ${data.imagePrompts.length} keywords`);
+              createGoogleImageLinks(data.imagePrompts, data.currentSection);
+            } else {
+              console.log(`📋 DEBUG FRONTEND - Ejecutando addPromptsToSidebar con ${data.imagePrompts.length} prompts`);
+              console.log(`📋 DEBUG FRONTEND - data.googleImagesMode es:`, data.googleImagesMode);
+              addPromptsToSidebar(data.imagePrompts, data.currentSection);
+            }
           } else {
             console.log(`❌ DEBUG FRONTEND - No se encontraron prompts de imágenes válidos`);
           }
@@ -1587,6 +1632,8 @@ continueBtn.addEventListener("click", async () => {
   const selectedStyle = document.getElementById("styleSelect").value;
   const promptModifier = document.getElementById("promptModifier").value.trim();
   const selectedImageModel = document.getElementById("modelSelect").value;
+  const skipImages = document.getElementById("skipImages").checked;
+  const googleImages = document.getElementById("googleImages").checked;
   
   // Deshabilitar botón y mostrar estado de carga
   continueBtn.disabled = true;
@@ -1597,11 +1644,12 @@ continueBtn.addEventListener("click", async () => {
   
   generateAudioBtn.style.display = "none";
   
-  showLoadingStages(nextSection, imageCount, skipImages);
+  showLoadingStages(nextSection, imageCount, skipImages, googleImages);
 
   try {
     console.log(`Enviando llamada API para sección ${nextSection}`);
     const skipImages = document.getElementById("skipImages").checked;
+    const googleImages = document.getElementById("googleImages").checked;
     console.log(`Omitir imágenes: ${skipImages}`);
     const customStyleInstructions = getCustomStyleInstructions(selectedStyle);
     
@@ -1619,7 +1667,8 @@ continueBtn.addEventListener("click", async () => {
         imageCount: imageCount,
         promptModifier: promptModifier,
         imageModel: selectedImageModel,
-        skipImages: skipImages
+        skipImages: skipImages,
+        googleImages: googleImages
       })
     });
 
@@ -1629,8 +1678,22 @@ continueBtn.addEventListener("click", async () => {
       // Actualizar etapas completadas
       updateStage('stage-script', 'completed');
       
-      if (!skipImages && data.images && data.images.length > 0) {
-        // Con imágenes
+      // Usar los datos del servidor en lugar de leer los checkboxes
+      const serverSkipImages = data.imagesSkipped || false;
+      const serverGoogleImages = data.googleImagesMode || false;
+      
+      console.log(`🔍 DEBUG continueGeneration - skipImages: ${skipImages}`);
+      console.log(`🔍 DEBUG continueGeneration - googleImages: ${googleImages}`);
+      console.log(`🔍 DEBUG continueGeneration - serverSkipImages: ${serverSkipImages}`);
+      console.log(`🔍 DEBUG continueGeneration - serverGoogleImages: ${serverGoogleImages}`);
+      console.log(`🔍 DEBUG continueGeneration - data.imagesSkipped: ${data.imagesSkipped}`);
+      console.log(`🔍 DEBUG continueGeneration - data.googleImagesMode: ${data.googleImagesMode}`);
+      console.log(`🔍 DEBUG continueGeneration - data.images: ${data.images ? data.images.length : 'null'}`);
+      console.log(`🔍 DEBUG continueGeneration - data.imagePrompts: ${data.imagePrompts ? data.imagePrompts.length : 'null'}`);
+      
+      if (!serverSkipImages && !serverGoogleImages && data.images && data.images.length > 0) {
+        // Con imágenes normales
+        console.log(`📷 continueGeneration - Mostrando carrusel de imágenes normales`);
         updateStage('stage-prompt', 'completed');
         updateStage('stage-image', 'completed');
         
@@ -1646,8 +1709,26 @@ continueBtn.addEventListener("click", async () => {
         setTimeout(() => {
           createCarousel(data.images, data.currentSection, data.imagePrompts);
         }, 1000);
+      } else if (serverGoogleImages && data.imagePrompts && data.imagePrompts.length > 0) {
+        // Modo Google Images
+        console.log(`🔗🔗🔗 continueGeneration - EJECUTANDO createGoogleImageLinks 🔗🔗🔗`);
+        updateStage('stage-prompt', 'completed');
+        
+        // Actualizar número de sección actual
+        currentSectionNumber = data.currentSection;
+        
+        // Mostrar guión
+        setTimeout(() => {
+          showScript(data.script, data.currentSection, data.totalSections, data.voice, data.scriptFile);
+          // Ocultar el carrusel de imágenes
+          document.getElementById("carousel-container").style.display = "none";
+          
+          // Crear enlaces de Google Images
+          createGoogleImageLinks(data.imagePrompts, data.currentSection);
+        }, 500);
       } else {
         // Sin imágenes (omitidas)
+        console.log(`📋 continueGeneration - Mostrando prompts en panel lateral (modo skipImages)`);
         // Actualizar número de sección actual
         currentSectionNumber = data.currentSection;
         
@@ -2979,6 +3060,7 @@ function initializePromptsPanel() {
 
 // Función para añadir prompts al panel lateral
 function addPromptsToSidebar(prompts, sectionNumber) {
+  console.log('📋📋📋 INICIO addPromptsToSidebar - ESTA FUNCIÓN SE ESTÁ EJECUTANDO 📋📋📋');
   if (!prompts || !Array.isArray(prompts) || prompts.length === 0) {
     console.log('❌ No hay prompts válidos para añadir al panel lateral');
     return;
@@ -3049,6 +3131,107 @@ function addPromptsToSidebar(prompts, sectionNumber) {
       lastPrompt.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
   }, 300);
+}
+
+// Función para crear enlaces de Google Images
+function createGoogleImageLinks(prompts, sectionNumber) {
+  console.log('🚀🚀🚀 INICIO createGoogleImageLinks - ESTA FUNCIÓN SE ESTÁ EJECUTANDO 🚀🚀🚀');
+  console.log('🔗 prompts:', prompts);
+  console.log('🔗 sectionNumber:', sectionNumber);
+  console.log('🔗 prompts.length:', prompts ? prompts.length : 'null');
+  console.log('🔗 Array.isArray(prompts):', Array.isArray(prompts));
+  
+  if (!prompts || !Array.isArray(prompts) || prompts.length === 0) {
+    console.log('❌ No hay prompts válidos para crear enlaces de Google Images');
+    return;
+  }
+  
+  console.log(`🔗 Creando ${prompts.length} enlaces de Google Images de la sección ${sectionNumber}`);
+  
+  const promptsList = document.getElementById('promptsList');
+  const emptyState = document.getElementById('promptsEmptyState');
+  const promptsSidebar = document.getElementById('promptsSidebar');
+  
+  if (!promptsList || !emptyState || !promptsSidebar) {
+    console.log('❌ Elementos del panel lateral no encontrados');
+    return;
+  }
+  
+  // Ocultar el estado vacío si existe
+  if (emptyState.style.display !== 'none') {
+    emptyState.style.display = 'none';
+  }
+  
+  // Mostrar automáticamente el panel si no está visible
+  if (!promptsSidebar.classList.contains('active')) {
+    promptsSidebar.classList.add('active');
+    document.body.classList.add('prompts-panel-active');
+    const toggleBtn = document.getElementById('promptsSidebarToggle');
+    if (toggleBtn) {
+      toggleBtn.innerHTML = '<i class="fas fa-chevron-right"></i>';
+      toggleBtn.title = 'Ocultar panel de prompts';
+    }
+  }
+  
+  // Añadir divider si no es la primera sección
+  if (sectionNumber > 1) {
+    const divider = document.createElement('div');
+    divider.className = 'section-divider';
+    divider.innerHTML = `
+      <div class="section-divider-text">
+        <i class="fas fa-layer-group"></i>
+        Sección ${sectionNumber}
+      </div>
+    `;
+    promptsList.appendChild(divider);
+  }
+  
+  // Añadir cada enlace de Google al panel
+  console.log('🔗 Iniciando bucle para crear enlaces...');
+  prompts.forEach((prompt, index) => {
+    console.log(`🔗 Procesando prompt ${index + 1}: "${prompt}"`);
+    
+    // Crear el término de búsqueda limpiando el prompt
+    const searchTerm = prompt.trim()
+      .replace(/[^\w\s]/g, '') // Remover caracteres especiales
+      .replace(/\s+/g, '+'); // Reemplazar espacios con +
+    
+    const googleUrl = `https://www.google.com/search?q=${searchTerm}&tbm=isch`;
+    
+    console.log(`🔗 searchTerm: "${searchTerm}"`);
+    console.log(`🔗 googleUrl: "${googleUrl}"`);
+    
+    // Almacenar en el array global (como Google link en lugar de prompt)
+    allAccumulatedPrompts.push({
+      text: googleUrl,
+      section: sectionNumber,
+      imageNumber: index + 1,
+      isGoogleLink: true,
+      originalPrompt: prompt.trim()
+    });
+    
+    const linkItem = createGoogleLinkItem(prompt.trim(), googleUrl, sectionNumber, index + 1);
+    console.log(`🔗 linkItem creado:`, !!linkItem);
+    promptsList.appendChild(linkItem);
+    console.log(`🔗 linkItem añadido al promptsList`);
+    
+    // Añadir animación de entrada
+    setTimeout(() => {
+      linkItem.classList.add('new');
+    }, index * 100);
+  });
+  
+  console.log('🔗 Bucle completado');
+  
+  // Hacer scroll al último enlace añadido
+  setTimeout(() => {
+    const lastLink = promptsList.lastElementChild;
+    if (lastLink) {
+      lastLink.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }, 300);
+  
+  console.log('🔗 FIN createGoogleImageLinks');
 }
 
 // Función para crear un item de prompt individual
@@ -3140,6 +3323,99 @@ function createPromptItem(promptText, sectionNumber, imageNumber) {
   }
   
   return promptItem;
+}
+
+// Función para crear un item de enlace de Google
+function createGoogleLinkItem(originalPrompt, googleUrl, sectionNumber, imageNumber) {
+  const linkItem = document.createElement('div');
+  linkItem.className = 'prompt-item google-link-item';
+  
+  const header = document.createElement('div');
+  header.className = 'prompt-item-header';
+  
+  const title = document.createElement('div');
+  title.className = 'prompt-item-title';
+  title.innerHTML = `<i class="fab fa-google"></i> Sección ${sectionNumber} - Imagen ${imageNumber}`;
+  
+  const actionsDiv = document.createElement('div');
+  actionsDiv.className = 'google-link-actions';
+  
+  const openBtn = document.createElement('button');
+  openBtn.className = 'prompt-copy-btn google-open-btn';
+  openBtn.innerHTML = '<i class="fas fa-external-link-alt"></i>';
+  openBtn.title = 'Abrir en Google Images';
+  
+  const copyBtn = document.createElement('button');
+  copyBtn.className = 'prompt-copy-btn';
+  copyBtn.innerHTML = '<i class="fas fa-copy"></i>';
+  copyBtn.title = 'Copiar enlace';
+  
+  // Event listener para abrir el enlace
+  openBtn.addEventListener('click', function(e) {
+    e.preventDefault();
+    window.open(googleUrl, '_blank');
+    console.log('🔗 Abriendo búsqueda de Google Images:', googleUrl);
+  });
+  
+  // Event listener para copiar el enlace
+  copyBtn.addEventListener('click', async function(e) {
+    e.preventDefault();
+    try {
+      await navigator.clipboard.writeText(googleUrl);
+      
+      // Cambiar el estilo del botón temporalmente
+      copyBtn.classList.add('copied');
+      copyBtn.innerHTML = '<i class="fas fa-check"></i>';
+      copyBtn.title = 'Copiado!';
+      
+      setTimeout(() => {
+        copyBtn.classList.remove('copied');
+        copyBtn.innerHTML = '<i class="fas fa-copy"></i>';
+        copyBtn.title = 'Copiar enlace';
+      }, 2000);
+      
+      console.log('📋 Enlace de Google copiado al portapapeles');
+    } catch (err) {
+      console.error('❌ Error al copiar enlace:', err);
+      
+      // Fallback para navegadores que no soportan clipboard API
+      const textArea = document.createElement('textarea');
+      textArea.value = googleUrl;
+      document.body.appendChild(textArea);
+      textArea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textArea);
+      
+      copyBtn.classList.add('copied');
+      copyBtn.innerHTML = '<i class="fas fa-check"></i>';
+      setTimeout(() => {
+        copyBtn.classList.remove('copied');
+        copyBtn.innerHTML = '<i class="fas fa-copy"></i>';
+      }, 2000);
+    }
+  });
+  
+  actionsDiv.appendChild(openBtn);
+  actionsDiv.appendChild(copyBtn);
+  header.appendChild(title);
+  header.appendChild(actionsDiv);
+  
+  const textElement = document.createElement('div');
+  textElement.className = 'prompt-item-text google-link-text';
+  
+  // Crear el enlace clickeable
+  const linkElement = document.createElement('a');
+  linkElement.href = googleUrl;
+  linkElement.target = '_blank';
+  linkElement.className = 'google-search-link';
+  linkElement.innerHTML = `<i class="fab fa-google"></i> ${googleUrl}`;
+  
+  textElement.appendChild(linkElement);
+  
+  linkItem.appendChild(header);
+  linkItem.appendChild(textElement);
+  
+  return linkItem;
 }
 
 // Función para limpiar el panel de prompts

@@ -680,13 +680,14 @@ RECUERDA: RESPONDE SOLO CON EL TEXTO DEL GUIÓN, SIN COMENTARIOS NI EXPLICACIONE
 
 app.post('/generate', async (req, res) => {
   try {
-    const { topic, folderName, voice, totalSections, currentSection, previousSections, imageCount, promptModifier, imageModel, skipImages, scriptStyle, customStyleInstructions } = req.body;
+    const { topic, folderName, voice, totalSections, currentSection, previousSections, imageCount, promptModifier, imageModel, skipImages, googleImages, scriptStyle, customStyleInstructions } = req.body;
     
     console.log(`🔍 DEBUG REQUEST - Datos recibidos en /generate:`);
     console.log(`🔍 DEBUG REQUEST - topic: "${topic}"`);
     console.log(`🔍 DEBUG REQUEST - scriptStyle: "${scriptStyle}"`);
     console.log(`🔍 DEBUG REQUEST - customStyleInstructions: "${customStyleInstructions || 'N/A'}"`);
     console.log(`🔍 DEBUG REQUEST - skipImages: ${skipImages} (tipo: ${typeof skipImages})`);
+    console.log(`🔍 DEBUG REQUEST - googleImages: ${googleImages} (tipo: ${typeof googleImages})`);
     console.log(`🔍 DEBUG REQUEST - imageCount: ${imageCount}`);
     console.log(`🔍 DEBUG REQUEST - Cuerpo completo:`, req.body);
     
@@ -698,8 +699,9 @@ app.post('/generate', async (req, res) => {
     const additionalInstructions = promptModifier || ''; // Instrucciones adicionales para imágenes
     const selectedImageModel = imageModel || 'gemini2'; // Default a gemini2 si no se especifica
     const shouldSkipImages = skipImages === true; // Verificar explícitamente si es true
+    const shouldUseGoogleImages = googleImages === true; // Verificar explícitamente si es true
     
-    console.log(`🎯 Solicitud recibida: ${shouldSkipImages ? 'SIN IMÁGENES' : numImages + ' imágenes'} para la sección ${section}`);
+    console.log(`🎯 Solicitud recibida: ${shouldUseGoogleImages ? 'ENLACES GOOGLE' : shouldSkipImages ? 'SIN IMÁGENES' : numImages + ' imágenes'} para la sección ${section}`);
     console.log(`📁 Nombre de carpeta personalizado: ${folderName || 'auto-generado'}`);
     console.log(`� Estilo de guión seleccionado: ${selectedStyle}`);
     console.log(`�🎨 Instrucciones adicionales recibidas:`, additionalInstructions);
@@ -708,7 +710,9 @@ app.post('/generate', async (req, res) => {
     console.log(`📏 Longitud additionalInstructions:`, additionalInstructions ? additionalInstructions.length : 0);
     console.log(`✅ ¿Hay instrucciones adicionales?:`, !!additionalInstructions);
     console.log(`🚫 ¿Omitir imágenes?:`, shouldSkipImages);
-    console.log(`🔍 DEBUG - skipImages original: ${skipImages}, shouldSkipImages procesado: ${shouldSkipImages}`);
+    console.log(`� ¿Usar Google Images?:`, shouldUseGoogleImages);
+    console.log(`�🔍 DEBUG - skipImages original: ${skipImages}, shouldSkipImages procesado: ${shouldSkipImages}`);
+    console.log(`🔍 DEBUG - googleImages original: ${googleImages}, shouldUseGoogleImages procesado: ${shouldUseGoogleImages}`);
     
     if (!topic) {
       return res.status(400).json({ error: 'Tema requerido' });
@@ -811,50 +815,107 @@ Generado automáticamente por el sistema de creación de contenido
       // No detener el proceso por este error, solo registrarlo
     }
 
-    // Verificar si se deben omitir las imágenes
-    if (shouldSkipImages) {
-      console.log(`🚫 Omitiendo generación de imágenes, pero generando prompts para mostrar`);
+    // Verificar si se deben omitir las imágenes o usar Google Images
+    if (shouldSkipImages || shouldUseGoogleImages) {
+      const modeDescription = shouldUseGoogleImages ? 'Generando prompts para enlaces de Google Images' : 'Omitiendo generación de imágenes, pero generando prompts para mostrar';
+      console.log(`🚫 ${modeDescription}`);
       console.log(`🔍 DEBUG SKIP - shouldSkipImages: ${shouldSkipImages}`);
+      console.log(`🔍 DEBUG GOOGLE - shouldUseGoogleImages: ${shouldUseGoogleImages}`);
       console.log(`🔍 DEBUG SKIP - numImages: ${numImages}`);
       
-      // Generar prompts para mostrar al usuario aunque no se generen imágenes
-      console.log(`🎨 Generando prompts para secuencia de ${numImages} imágenes (solo texto)...`);
-      const promptsResponse = await ai.models.generateContent({
-        model: "models/gemini-2.5-flash",
-        contents: `Basándote en este guión de la sección ${section} sobre "${topic}": "${cleanScript}", crea EXACTAMENTE ${numImages} prompts detallados para generar una SECUENCIA de ${numImages} imágenes que ilustren visualmente el contenido del guión en orden cronológico.
+      // Generar contenido según el modo seleccionado
+      let enhancedPrompts = [];
+      
+      if (shouldUseGoogleImages) {
+        console.log(`🔍 Generando palabras clave para búsquedas de Google de ${numImages} términos...`);
+        const keywordsResponse = await ai.models.generateContent({
+          model: "models/gemini-2.5-flash",
+          contents: `Analiza este guión de la sección ${section} sobre "${topic}": "${cleanScript}"
 
-        IMPORTANTE: Debes crear EXACTAMENTE ${numImages} prompts, ni más ni menos.
+          Extrae EXACTAMENTE ${numImages} frases descriptivas EN INGLÉS (entre 3 y 6 palabras cada una) que sean perfectas para búsquedas de imágenes en Google Images y que den contexto específico al contenido. 
 
-        ENFOQUE:
-        - Las imágenes deben seguir la narrativa del guión paso a paso
-        - Cada imagen debe representar una parte específica del guión en orden
-        - Enfócate en elementos del lore interno del juego mencionados en el guión
-        - Ilustra lugares, personajes, eventos y elementos específicos del guión
-        - Mantén consistencia visual entre las ${numImages} imágenes
+          CRITERIOS:
+          - Frases descriptivas de 3-6 palabras EN INGLÉS que incluyan contexto específico
+          - Términos específicos mencionados en el guión (lugares, personajes, objetos, conceptos) traducidos al inglés con adjetivos descriptivos
+          - Frases que generen buenas imágenes de referencia en Google Images con contexto visual
+          - Conceptos visuales concretos con detalles específicos, no abstractos
+          - Combinaciones de elementos que ayuden a ilustrar visualmente el contenido del guión
+          - EN INGLÉS para mejores resultados de búsqueda en Google Images (mayor cantidad de contenido disponible)
+          - Incluir detalles como colores, estilos, épocas o características específicas cuando sea relevante
+          - Usar terminología en inglés que sea común en búsquedas de imágenes
 
-        INSTRUCCIONES CRÍTICAS PARA EL FORMATO:
-        - DEBES dividir el guión en EXACTAMENTE ${numImages} partes cronológicas
-        - DEBES crear un prompt independiente para cada parte
-        - DEBES separar cada prompt con "||PROMPT||" (sin espacios adicionales)
-        - DEBES asegurarte de que haya exactamente ${numImages} prompts en tu respuesta
-        - Las imágenes deben contar la historia del guión de forma visual secuencial
-        - Incluye detalles específicos mencionados en el texto del guión
+          IMPORTANTE: Debes devolver EXACTAMENTE ${numImages} frases descriptivas EN INGLÉS separadas por "||KEYWORD||"
 
-        REQUISITOS OBLIGATORIOS para cada prompt:
-        - Formato: Aspecto 16:9 (widescreen)
+          FORMATO DE RESPUESTA OBLIGATORIO:
+          english descriptive phrase 1||KEYWORD||english descriptive phrase 2||KEYWORD||english descriptive phrase 3||KEYWORD||...hasta ${numImages} frases
+
+          EJEMPLO PARA 3 FRASES:
+          Hyrule Castle medieval fantasy||KEYWORD||Golden Triforce glowing symbol||KEYWORD||Link Master Sword ocarina time
+
+          VERIFICACIÓN: Tu respuesta debe tener exactamente ${numImages - 1} delimitadores "||KEYWORD||" para generar ${numImages} términos.`,
+          config: {
+            systemInstruction: `Eres un experto en extraer palabras clave para búsquedas visuales. Tu ÚNICA tarea es devolver términos separados por "||KEYWORD||".
+
+REGLAS CRÍTICAS:
+1. SIEMPRE usa el delimitador exacto "||KEYWORD||" (sin espacios adicionales)
+2. NUNCA generes texto adicional fuera de los términos
+3. CUENTA cuidadosamente para generar el número exacto solicitado
+4. Cada término debe ser específico y visual
+5. Máximo 3-4 palabras por término
+
+Si te piden N términos, tu respuesta debe tener exactamente (N-1) delimitadores "||KEYWORD||".`,
+          },
+        });
+
+        const keywordsText = keywordsResponse.text || '';
+        console.log(`📝 DEBUG GOOGLE - Respuesta del modelo: ${keywordsText ? keywordsText.substring(0, 200) + '...' : 'RESPUESTA VACÍA'}`);
+        console.log(`🔍 DEBUG GOOGLE - Buscando delimitadores "||KEYWORD||" en la respuesta...`);
         
-        FORMATO DE RESPUESTA OBLIGATORIO:
-        DEBES presentar EXACTAMENTE ${numImages} prompts separados por "||PROMPT||" (sin espacios antes o después del delimitador).
+        const keywords = keywordsText.split('||KEYWORD||').filter(k => k.trim()).slice(0, numImages);
+        console.log(`🔍 DEBUG GOOGLE - Delimitadores encontrados: ${keywordsText.split('||KEYWORD||').length - 1}`);
+        console.log(`🔍 DEBUG GOOGLE - Keywords después del filtro: ${keywords.length}`);
+        console.log(`🔢 DEBUG GOOGLE - Se solicitaron ${numImages} keywords, se generaron ${keywords.length} keywords válidas`);
+        console.log(`🎯 DEBUG GOOGLE - Keywords generadas:`, keywords);
         
-        ESTRUCTURA REQUERIDA:
-        Prompt 1 aquí||PROMPT||Prompt 2 aquí||PROMPT||Prompt 3 aquí||PROMPT||... hasta el Prompt ${numImages}
-        
-        EJEMPLO PARA 3 PROMPTS (adaptar a ${numImages}):
-        Un bosque oscuro con árboles ancianos||PROMPT||Una batalla épica entre guerreros||PROMPT||Un castillo en ruinas bajo la luna
-        
-        VERIFICACIÓN FINAL: Tu respuesta debe contener exactamente ${numImages - 1} ocurrencias del delimitador "||PROMPT||" para generar ${numImages} prompts.`,
-        config: {
-          systemInstruction: `Eres un experto en arte conceptual y narrativa visual. Tu ÚNICA tarea es crear prompts separados por "||PROMPT||". 
+        enhancedPrompts = keywords.map(keyword => keyword.trim());
+      } else {
+        console.log(`🎨 Generando prompts para secuencia de ${numImages} imágenes (solo texto)...`);
+        const promptsResponse = await ai.models.generateContent({
+          model: "models/gemini-2.5-flash",
+          contents: `Basándote en este guión de la sección ${section} sobre "${topic}": "${cleanScript}", crea EXACTAMENTE ${numImages} prompts detallados para generar una SECUENCIA de ${numImages} imágenes que ilustren visualmente el contenido del guión en orden cronológico.
+
+          IMPORTANTE: Debes crear EXACTAMENTE ${numImages} prompts, ni más ni menos.
+
+          ENFOQUE:
+          - Las imágenes deben seguir la narrativa del guión paso a paso
+          - Cada imagen debe representar una parte específica del guión en orden
+          - Enfócate en elementos del lore interno del juego mencionados en el guión
+          - Ilustra lugares, personajes, eventos y elementos específicos del guión
+          - Mantén consistencia visual entre las ${numImages} imágenes
+
+          INSTRUCCIONES CRÍTICAS PARA EL FORMATO:
+          - DEBES dividir el guión en EXACTAMENTE ${numImages} partes cronológicas
+          - DEBES crear un prompt independiente para cada parte
+          - DEBES separar cada prompt con "||PROMPT||" (sin espacios adicionales)
+          - DEBES asegurarte de que haya exactamente ${numImages} prompts en tu respuesta
+          - Las imágenes deben contar la historia del guión de forma visual secuencial
+          - Incluye detalles específicos mencionados en el texto del guión
+
+          REQUISITOS OBLIGATORIOS para cada prompt:
+          - Formato: Aspecto 16:9 (widescreen)
+          
+          FORMATO DE RESPUESTA OBLIGATORIO:
+          DEBES presentar EXACTAMENTE ${numImages} prompts separados por "||PROMPT||" (sin espacios antes o después del delimitador).
+          
+          ESTRUCTURA REQUERIDA:
+          Prompt 1 aquí||PROMPT||Prompt 2 aquí||PROMPT||Prompt 3 aquí||PROMPT||... hasta el Prompt ${numImages}
+          
+          EJEMPLO PARA 3 PROMPTS (adaptar a ${numImages}):
+          Un bosque oscuro con árboles ancianos||PROMPT||Una batalla épica entre guerreros||PROMPT||Un castillo en ruinas bajo la luna
+          
+          VERIFICACIÓN FINAL: Tu respuesta debe contener exactamente ${numImages - 1} ocurrencias del delimitador "||PROMPT||" para generar ${numImages} prompts.`,
+          config: {
+            systemInstruction: `Eres un experto en arte conceptual y narrativa visual. Tu ÚNICA tarea es crear prompts separados por "||PROMPT||". 
 
 REGLAS CRÍTICAS:
 1. SIEMPRE usa el delimitador exacto "||PROMPT||" (sin espacios adicionales)
@@ -864,32 +925,33 @@ REGLAS CRÍTICAS:
 5. Cada prompt debe ser independiente y descriptivo
 
 Si te piden N prompts, tu respuesta debe tener exactamente (N-1) delimitadores "||PROMPT||".`,
-        },
-      });
-
-      const promptsText = promptsResponse.text || '';
-      console.log(`📝 DEBUG SKIP - Respuesta del modelo: ${promptsText ? promptsText.substring(0, 200) + '...' : 'RESPUESTA VACÍA'}`);
-      console.log(`🔍 DEBUG SKIP - Buscando delimitadores "||PROMPT||" en la respuesta...`);
-      
-      const imagePrompts = promptsText.split('||PROMPT||').filter(p => p.trim()).slice(0, numImages);
-      console.log(`🔍 DEBUG SKIP - Delimitadores encontrados: ${promptsText.split('||PROMPT||').length - 1}`);
-      console.log(`🔍 DEBUG SKIP - Prompts después del filtro: ${imagePrompts.length}`);
-      console.log(`🔢 DEBUG SKIP - Se solicitaron ${numImages} prompts, se generaron ${imagePrompts.length} prompts válidos`);
-      console.log(`🎨 DEBUG SKIP - Primeros 3 prompts:`, imagePrompts.slice(0, 3));
-      
-      // Aplicar instrucciones adicionales a los prompts si existen
-      let enhancedPrompts = imagePrompts;
-      if (additionalInstructions && additionalInstructions.trim()) {
-        console.log(`✅ DEBUG SKIP - Aplicando instrucciones adicionales a prompts: "${additionalInstructions}"`);
-        enhancedPrompts = imagePrompts.map((prompt, index) => {
-          const enhanced = `${prompt.trim()}. ${additionalInstructions.trim()}`;
-          console.log(`🎨 DEBUG SKIP - Prompt ${index + 1} mejorado: ${enhanced.substring(0, 100)}...`);
-          return enhanced;
+          },
         });
-      } else {
-        console.log(`❌ DEBUG SKIP - No hay instrucciones adicionales para aplicar a prompts`);
+
+        const promptsText = promptsResponse.text || '';
+        console.log(`📝 DEBUG SKIP - Respuesta del modelo: ${promptsText ? promptsText.substring(0, 200) + '...' : 'RESPUESTA VACÍA'}`);
+        console.log(`🔍 DEBUG SKIP - Buscando delimitadores "||PROMPT||" en la respuesta...`);
+        
+        const imagePrompts = promptsText.split('||PROMPT||').filter(p => p.trim()).slice(0, numImages);
+        console.log(`🔍 DEBUG SKIP - Delimitadores encontrados: ${promptsText.split('||PROMPT||').length - 1}`);
+        console.log(`🔍 DEBUG SKIP - Prompts después del filtro: ${imagePrompts.length}`);
+        console.log(`🔢 DEBUG SKIP - Se solicitaron ${numImages} prompts, se generaron ${imagePrompts.length} prompts válidos`);
+        console.log(`🎨 DEBUG SKIP - Primeros 3 prompts:`, imagePrompts.slice(0, 3));
+        
+        // Aplicar instrucciones adicionales a los prompts si existen
+        enhancedPrompts = imagePrompts;
+        if (additionalInstructions && additionalInstructions.trim()) {
+          console.log(`✅ DEBUG SKIP - Aplicando instrucciones adicionales a prompts: "${additionalInstructions}"`);
+          enhancedPrompts = imagePrompts.map((prompt, index) => {
+            const enhanced = `${prompt.trim()}. ${additionalInstructions.trim()}`;
+            console.log(`🎨 DEBUG SKIP - Prompt ${index + 1} mejorado: ${enhanced.substring(0, 100)}...`);
+            return enhanced;
+          });
+        } else {
+          console.log(`❌ DEBUG SKIP - No hay instrucciones adicionales para aplicar a prompts`);
+        }
       }
-      
+
       // Guardar los prompts como archivo de texto en la carpeta de la sección
       try {
         const promptsFileName = `${folderStructure.safeTopicName}_seccion_${section}_prompts_imagenes.txt`;
@@ -942,7 +1004,8 @@ Generado automáticamente por el sistema de creación de contenido
 
       console.log(`🔍 DEBUG SKIP - Enviando respuesta con imagePrompts:`, !!enhancedPrompts);
       console.log(`🔍 DEBUG SKIP - imagePrompts.length:`, enhancedPrompts.length);
-      console.log(`🔍 DEBUG SKIP - imagesSkipped:`, true);
+      console.log(`🔍 DEBUG SKIP - imagesSkipped:`, shouldSkipImages && !shouldUseGoogleImages);
+      console.log(`🔍 DEBUG GOOGLE - googleImagesMode:`, shouldUseGoogleImages);
 
       res.json({ 
         script: cleanScript,
@@ -965,7 +1028,8 @@ Generado automáticamente por el sistema de creación de contenido
         projectFolder: folderStructure.safeTopicName,
         sectionFolder: `seccion_${section}`,
         folderPath: path.relative('./public', folderStructure.sectionDir).replace(/\\/g, '/'),
-        imagesSkipped: true
+        imagesSkipped: shouldSkipImages && !shouldUseGoogleImages,
+        googleImagesMode: shouldUseGoogleImages
       });
       return;
     }
