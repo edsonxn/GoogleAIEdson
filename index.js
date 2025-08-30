@@ -62,6 +62,28 @@ const ai = new GoogleGenAI({
 // Almacén de conversaciones en memoria (historial por proyecto)
 const conversationStore = new Map();
 
+// Función helper para retry automático con Google AI
+async function generateContentWithRetry(ai, params, maxRetries = 3, delay = 2000) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`🤖 Intento ${attempt}/${maxRetries} de generar contenido...`);
+      const response = await ai.models.generateContent(params);
+      console.log(`✅ Contenido generado exitosamente en el intento ${attempt}`);
+      return response;
+    } catch (error) {
+      console.error(`❌ Error en intento ${attempt}/${maxRetries}:`, error.message);
+      
+      if (error.status === 503 && attempt < maxRetries) {
+        console.log(`⏳ Esperando ${delay}ms antes del siguiente intento...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        delay *= 1.5; // Incrementar delay exponencialmente
+      } else {
+        throw error; // Si no es error 503 o es el último intento, lanzar error
+      }
+    }
+  }
+}
+
 // Función para obtener o crear una conversación
 function getOrCreateConversation(projectKey) {
   if (!conversationStore.has(projectKey)) {
@@ -153,6 +175,210 @@ function getThumbnailStyleInstructions(styleId) {
 
 // Limpiar conversaciones antiguas cada hora
 setInterval(cleanOldConversations, 60 * 60 * 1000);
+
+// ================================
+// SISTEMA DE GUARDADO Y CARGA DE PROYECTOS
+// ================================
+
+// Función para guardar el estado completo del proyecto
+function saveProjectState(projectData) {
+  try {
+    const { 
+      topic, 
+      folderName, 
+      totalSections, 
+      currentSection, 
+      voice, 
+      imageModel, 
+      scriptStyle, 
+      customStyleInstructions,
+      promptModifier,
+      imageCount,
+      skipImages,
+      googleImages
+    } = projectData;
+    
+    const safeFolderName = folderName && folderName.trim() 
+      ? createSafeFolderName(folderName.trim())
+      : createSafeFolderName(topic);
+    
+    const outputsDir = path.join('./public/outputs');
+    const projectDir = path.join(outputsDir, safeFolderName);
+    
+    // Crear carpetas si no existen
+    if (!fs.existsSync(outputsDir)) {
+      fs.mkdirSync(outputsDir, { recursive: true });
+    }
+    if (!fs.existsSync(projectDir)) {
+      fs.mkdirSync(projectDir, { recursive: true });
+    }
+    
+    const projectStateFile = path.join(projectDir, 'project_state.json');
+    
+    const projectState = {
+      topic,
+      folderName: safeFolderName,
+      originalFolderName: folderName,
+      totalSections,
+      currentSection,
+      voice,
+      imageModel,
+      scriptStyle,
+      customStyleInstructions,
+      promptModifier: promptModifier || '',
+      imageCount: imageCount || 3,
+      skipImages: skipImages || false,
+      googleImages: googleImages || false,
+      createdAt: new Date().toISOString(),
+      lastModified: new Date().toISOString(),
+      completedSections: []
+    };
+    
+    // Si ya existe un archivo de estado, preservar secciones completadas
+    if (fs.existsSync(projectStateFile)) {
+      const existingState = JSON.parse(fs.readFileSync(projectStateFile, 'utf8'));
+      projectState.completedSections = existingState.completedSections || [];
+      projectState.createdAt = existingState.createdAt || projectState.createdAt;
+    }
+    
+    fs.writeFileSync(projectStateFile, JSON.stringify(projectState, null, 2), 'utf8');
+    console.log(`💾 Estado del proyecto guardado: ${projectStateFile}`);
+    
+    return projectState;
+  } catch (error) {
+    console.error('❌ Error guardando estado del proyecto:', error);
+    return null;
+  }
+}
+
+// Función para actualizar sección completada
+function updateCompletedSection(projectData, sectionNumber, sectionData) {
+  try {
+    const { topic, folderName } = projectData;
+    
+    const safeFolderName = folderName && folderName.trim() 
+      ? createSafeFolderName(folderName.trim())
+      : createSafeFolderName(topic);
+    
+    const projectStateFile = path.join('./public/outputs', safeFolderName, 'project_state.json');
+    
+    if (fs.existsSync(projectStateFile)) {
+      const projectState = JSON.parse(fs.readFileSync(projectStateFile, 'utf8'));
+      
+      // Actualizar o agregar sección completada
+      const existingSectionIndex = projectState.completedSections.findIndex(s => s.section === sectionNumber);
+      
+      const sectionInfo = {
+        section: sectionNumber,
+        script: sectionData.script,
+        imageCount: sectionData.images ? sectionData.images.length : 0,
+        hasImages: !sectionData.imagesSkipped && !sectionData.googleImagesMode,
+        googleImagesMode: sectionData.googleImagesMode || false,
+        imagesSkipped: sectionData.imagesSkipped || false,
+        imagePrompts: sectionData.imagePrompts || [],
+        completedAt: new Date().toISOString(),
+        scriptFile: sectionData.scriptFile,
+        promptsFile: sectionData.promptsFile
+      };
+      
+      if (existingSectionIndex >= 0) {
+        projectState.completedSections[existingSectionIndex] = sectionInfo;
+      } else {
+        projectState.completedSections.push(sectionInfo);
+      }
+      
+      // Ordenar secciones por número
+      projectState.completedSections.sort((a, b) => a.section - b.section);
+      
+      projectState.lastModified = new Date().toISOString();
+      projectState.currentSection = Math.max(projectState.currentSection, sectionNumber);
+      
+      fs.writeFileSync(projectStateFile, JSON.stringify(projectState, null, 2), 'utf8');
+      console.log(`✅ Sección ${sectionNumber} marcada como completada en el proyecto`);
+      
+      return projectState;
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('❌ Error actualizando sección completada:', error);
+    return null;
+  }
+}
+
+// Función para obtener lista de proyectos disponibles
+function getAvailableProjects() {
+  try {
+    const outputsDir = path.join('./public/outputs');
+    
+    if (!fs.existsSync(outputsDir)) {
+      return [];
+    }
+    
+    const projects = [];
+    const folders = fs.readdirSync(outputsDir);
+    
+    for (const folder of folders) {
+      const projectDir = path.join(outputsDir, folder);
+      const projectStateFile = path.join(projectDir, 'project_state.json');
+      
+      if (fs.existsSync(projectStateFile) && fs.statSync(projectDir).isDirectory()) {
+        try {
+          const projectState = JSON.parse(fs.readFileSync(projectStateFile, 'utf8'));
+          projects.push({
+            ...projectState,
+            folderPath: folder,
+            sectionsCompleted: projectState.completedSections.length,
+            lastModifiedDate: new Date(projectState.lastModified).toLocaleString()
+          });
+        } catch (parseError) {
+          console.warn(`⚠️ Error leyendo proyecto ${folder}:`, parseError);
+        }
+      }
+    }
+    
+    console.log(`📊 Total proyectos válidos: ${projects.length}`);
+    
+    // Ordenar por última modificación (más recientes primero)
+    projects.sort((a, b) => new Date(b.lastModified) - new Date(a.lastModified));
+    
+    return projects;
+  } catch (error) {
+    console.error('❌ Error obteniendo proyectos disponibles:', error);
+    return [];
+  }
+}
+
+// Función para cargar estado completo de un proyecto
+function loadProjectState(folderName) {
+  try {
+    const projectStateFile = path.join('./public/outputs', folderName, 'project_state.json');
+    
+    if (!fs.existsSync(projectStateFile)) {
+      return null;
+    }
+    
+    const projectState = JSON.parse(fs.readFileSync(projectStateFile, 'utf8'));
+    
+    // Cargar datos adicionales de cada sección completada
+    for (const section of projectState.completedSections) {
+      const sectionDir = path.join('./public/outputs', folderName, `seccion_${section.section}`);
+      
+      // Verificar si existen las imágenes
+      if (section.hasImages && fs.existsSync(sectionDir)) {
+        const imageFiles = fs.readdirSync(sectionDir).filter(file => 
+          file.endsWith('.png') || file.endsWith('.jpg') || file.endsWith('.jpeg')
+        );
+        section.imageFiles = imageFiles.map(file => `outputs/${folderName}/seccion_${section.section}/${file}`);
+      }
+    }
+    
+    return projectState;
+  } catch (error) {
+    console.error('❌ Error cargando estado del proyecto:', error);
+    return null;
+  }
+}
 
 // Función para crear nombre de carpeta seguro basado en el tema
 function createSafeFolderName(topic) {
@@ -698,8 +924,15 @@ app.post('/generate', async (req, res) => {
     const numImages = imageCount || 5; // Default a 5 imágenes si no se especifica
     const additionalInstructions = promptModifier || ''; // Instrucciones adicionales para imágenes
     const selectedImageModel = imageModel || 'gemini2'; // Default a gemini2 si no se especifica
-    const shouldSkipImages = skipImages === true; // Verificar explícitamente si es true
-    const shouldUseGoogleImages = googleImages === true; // Verificar explícitamente si es true
+    let shouldSkipImages = skipImages === true; // Verificar explícitamente si es true
+    let shouldUseGoogleImages = googleImages === true; // Verificar explícitamente si es true
+    
+    // 🔧 VALIDACIÓN BACKEND: skipImages=true y googleImages=true es válido 
+    // (significa: solo guión + generar keywords para Google Images)
+    if (shouldSkipImages && shouldUseGoogleImages) {
+      console.log('✅ BACKEND: Configuración detectada: skipImages=true y googleImages=true');
+      console.log('� BACKEND: Modo "solo guión + keywords": se generará guión y keywords de Google Images (sin imágenes)');
+    }
     
     console.log(`🎯 Solicitud recibida: ${shouldUseGoogleImages ? 'ENLACES GOOGLE' : shouldSkipImages ? 'SIN IMÁGENES' : numImages + ' imágenes'} para la sección ${section}`);
     console.log(`📁 Nombre de carpeta personalizado: ${folderName || 'auto-generado'}`);
@@ -770,7 +1003,7 @@ app.post('/generate', async (req, res) => {
       systemInstruction = "Eres un escritor profesional de guiones para YouTube. IMPORTANTE: Responde ÚNICAMENTE con el texto del guión, sin explicaciones, comentarios, etiquetas o texto adicional. El texto debe estar listo para TTS. No incluyas pensamientos, notas o aclaraciones. ESTRUCTURA OBLIGATORIA: Exactamente 3 párrafos detallados, máximo 300 palabras total, mínimo 200 palabras. Solo el guión puro.";
     }
 
-    const scriptResponse = await ai.models.generateContent({
+    const scriptResponse = await generateContentWithRetry(ai, {
       model: "models/gemini-2.5-flash",
       contents: conversation.history,
       config: {
@@ -832,10 +1065,10 @@ Generado automáticamente por el sistema de creación de contenido
           model: "models/gemini-2.5-flash",
           contents: `Analiza este guión de la sección ${section} sobre "${topic}": "${cleanScript}"
 
-          Extrae EXACTAMENTE ${numImages} frases descriptivas EN INGLÉS (entre 3 y 6 palabras cada una) que sean perfectas para búsquedas de imágenes en Google Images y que den contexto específico al contenido. 
+          Extrae EXACTAMENTE ${numImages} frases descriptivas EN INGLÉS (entre 1 y 4 palabras cada una) que sean perfectas para búsquedas de imágenes en Google Images y que den contexto específico al contenido. 
 
           CRITERIOS:
-          - Frases descriptivas de 3-6 palabras EN INGLÉS que incluyan contexto específico
+          - Frases descriptivas de 1-4 palabras EN INGLÉS que incluyan contexto específico
           - Términos específicos mencionados en el guión (lugares, personajes, objetos, conceptos) traducidos al inglés con adjetivos descriptivos
           - Frases que generen buenas imágenes de referencia en Google Images con contexto visual
           - Conceptos visuales concretos con detalles específicos, no abstractos
@@ -1031,6 +1264,53 @@ Generado automáticamente por el sistema de creación de contenido
         imagesSkipped: shouldSkipImages && !shouldUseGoogleImages,
         googleImagesMode: shouldUseGoogleImages
       });
+
+      // Guardar estado del proyecto automáticamente
+      try {
+        const projectData = {
+          topic: topic,
+          folderName: folderName,
+          totalSections: sections,
+          currentSection: section,
+          voice: selectedVoice,
+          imageModel: selectedImageModel,
+          scriptStyle: scriptStyle,
+          customStyleInstructions: customStyleInstructions,
+          promptModifier: promptModifier,
+          imageCount: imageCount,
+          skipImages: shouldSkipImages,
+          googleImages: shouldUseGoogleImages
+        };
+        
+        const savedState = saveProjectState(projectData);
+        
+        if (savedState) {
+          // Actualizar sección completada
+          const sectionData = {
+            script: cleanScript,
+            images: [], // Sin imágenes en este modo
+            imagesSkipped: shouldSkipImages && !shouldUseGoogleImages,
+            googleImagesMode: shouldUseGoogleImages,
+            imagePrompts: enhancedPrompts,
+            scriptFile: {
+              path: scriptFilePath,
+              filename: scriptFileName,
+              saved: true
+            },
+            promptsFile: {
+              path: promptsFilePath,
+              filename: promptsFileName,
+              saved: true
+            }
+          };
+          
+          updateCompletedSection(projectData, section, sectionData);
+          console.log(`💾 Estado del proyecto guardado automáticamente`);
+        }
+      } catch (saveError) {
+        console.error('⚠️ Error guardando estado del proyecto:', saveError);
+        // No detener el proceso por este error
+      }
       return;
     }
 
@@ -1191,6 +1471,48 @@ Si te piden N prompts, tu respuesta debe tener exactamente (N-1) delimitadores "
       sectionFolder: `seccion_${section}`,
       folderPath: path.relative('./public', folderStructure.sectionDir).replace(/\\/g, '/')
     });
+
+    // Guardar estado del proyecto automáticamente
+    try {
+      const projectData = {
+        topic: topic,
+        folderName: folderName,
+        totalSections: sections,
+        currentSection: section,
+        voice: selectedVoice,
+        imageModel: selectedImageModel,
+        scriptStyle: scriptStyle,
+        customStyleInstructions: customStyleInstructions,
+        promptModifier: promptModifier,
+        imageCount: imageCount,
+        skipImages: shouldSkipImages,
+        googleImages: shouldUseGoogleImages
+      };
+      
+      const savedState = saveProjectState(projectData);
+      
+      if (savedState) {
+        // Actualizar sección completada
+        const sectionData = {
+          script: cleanScript,
+          images: allImages,
+          imagesSkipped: false,
+          googleImagesMode: false,
+          imagePrompts: imagePrompts,
+          scriptFile: {
+            path: scriptFilePath,
+            filename: scriptFileName,
+            saved: true
+          }
+        };
+        
+        updateCompletedSection(projectData, section, sectionData);
+        console.log(`💾 Estado del proyecto guardado automáticamente`);
+      }
+    } catch (saveError) {
+      console.error('⚠️ Error guardando estado del proyecto:', saveError);
+      // No detener el proceso por este error
+    }
   } catch (error) {
     console.error('❌ Error:', error);
     res.status(500).json({ error: 'Error generando contenido' });
@@ -2178,6 +2500,104 @@ Generado automáticamente por el sistema de creación de contenido
       success: false, 
       error: 'Error generando metadata de YouTube: ' + error.message 
     });
+  }
+});
+
+// ================================
+// RUTAS PARA SISTEMA DE PROYECTOS
+// ================================
+
+// Ruta para obtener lista de proyectos disponibles
+app.get('/api/projects', (req, res) => {
+  try {
+    console.log('📡 API /api/projects llamada');
+    const projects = getAvailableProjects();
+    console.log('📊 Proyectos encontrados:', projects.length);
+    res.json({ success: true, projects });
+  } catch (error) {
+    console.error('❌ Error obteniendo proyectos:', error);
+    res.status(500).json({ success: false, error: 'Error obteniendo proyectos: ' + error.message });
+  }
+});
+
+// Ruta para cargar un proyecto específico
+app.get('/api/projects/:folderName', (req, res) => {
+  try {
+    const { folderName } = req.params;
+    const projectState = loadProjectState(folderName);
+    
+    if (!projectState) {
+      return res.status(404).json({ success: false, error: 'Proyecto no encontrado' });
+    }
+    
+    res.json({ success: true, project: projectState });
+  } catch (error) {
+    console.error('❌ Error cargando proyecto:', error);
+    res.status(500).json({ success: false, error: 'Error cargando proyecto' });
+  }
+});
+
+// Ruta para eliminar un proyecto
+app.delete('/api/projects/:folderName', (req, res) => {
+  try {
+    const { folderName } = req.params;
+    const projectDir = path.join('./public/outputs', folderName);
+    
+    if (fs.existsSync(projectDir)) {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+      console.log(`🗑️ Proyecto eliminado: ${folderName}`);
+      res.json({ success: true, message: 'Proyecto eliminado exitosamente' });
+    } else {
+      res.status(404).json({ success: false, error: 'Proyecto no encontrado' });
+    }
+  } catch (error) {
+    console.error('❌ Error eliminando proyecto:', error);
+    res.status(500).json({ success: false, error: 'Error eliminando proyecto' });
+  }
+});
+
+// Ruta para duplicar un proyecto
+app.post('/api/projects/:folderName/duplicate', (req, res) => {
+  try {
+    const { folderName } = req.params;
+    const { newName } = req.body;
+    
+    const sourceDir = path.join('./public/outputs', folderName);
+    const newFolderName = createSafeFolderName(newName);
+    const targetDir = path.join('./public/outputs', newFolderName);
+    
+    if (!fs.existsSync(sourceDir)) {
+      return res.status(404).json({ success: false, error: 'Proyecto fuente no encontrado' });
+    }
+    
+    if (fs.existsSync(targetDir)) {
+      return res.status(400).json({ success: false, error: 'Ya existe un proyecto con ese nombre' });
+    }
+    
+    // Copiar directorio completo
+    fs.cpSync(sourceDir, targetDir, { recursive: true });
+    
+    // Actualizar el archivo de estado del proyecto duplicado
+    const projectStateFile = path.join(targetDir, 'project_state.json');
+    if (fs.existsSync(projectStateFile)) {
+      const projectState = JSON.parse(fs.readFileSync(projectStateFile, 'utf8'));
+      projectState.originalFolderName = newName;
+      projectState.folderName = newFolderName;
+      projectState.createdAt = new Date().toISOString();
+      projectState.lastModified = new Date().toISOString();
+      
+      fs.writeFileSync(projectStateFile, JSON.stringify(projectState, null, 2), 'utf8');
+    }
+    
+    console.log(`📋 Proyecto duplicado: ${folderName} -> ${newFolderName}`);
+    res.json({ 
+      success: true, 
+      message: 'Proyecto duplicado exitosamente',
+      newFolderName: newFolderName
+    });
+  } catch (error) {
+    console.error('❌ Error duplicando proyecto:', error);
+    res.status(500).json({ success: false, error: 'Error duplicando proyecto' });
   }
 });
 

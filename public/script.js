@@ -1,6 +1,31 @@
 // Función simple para verificar que el script se carga
 console.log('🚀 Script.js cargado correctamente');
 
+// ================================
+// VARIABLES GLOBALES PARA PROYECTOS - INICIALIZACIÓN INMEDIATA
+// ================================
+if (typeof window.currentProject === 'undefined') {
+  window.currentProject = null;
+}
+if (typeof window.availableProjects === 'undefined') {
+  window.availableProjects = [];
+}
+
+// ================================
+// VARIABLES GLOBALES PARA PROYECTOS - INICIALIZACIÓN ÚNICA
+// ================================
+if (typeof window.currentProject === 'undefined') {
+  window.currentProject = null;
+}
+if (typeof window.availableProjects === 'undefined') {
+  window.availableProjects = [];
+}
+
+console.log('✅ Variables globales de proyectos inicializadas:', {
+  currentProject: window.currentProject,
+  availableProjects: window.availableProjects
+});
+
 // DEBUG: Verificar elementos de miniatura al cargar
 setTimeout(() => {
   console.log('🔍 DEBUG: Verificando elementos de miniatura...');
@@ -96,6 +121,7 @@ let totalSections = 3;
 let allSections = []; // Almacenar todas las secciones generadas (solo texto del guión)
 let imagePrompts = []; // Almacenar los prompts de las imágenes
 let isAutoGenerating = false; // Bandera para la generación automática
+let isLoadingProject = false; // Bandera para evitar validaciones durante la carga de proyectos
 
 // Variables globales para estilos de miniatura
 let customThumbnailStyles = [];
@@ -146,10 +172,22 @@ async function runAutoGeneration() {
   const imageCount = parseInt(document.getElementById("imagesSelect").value);
   const promptModifier = document.getElementById("promptModifier").value.trim();
   const selectedImageModel = document.getElementById("modelSelect").value;
-  const skipImages = document.getElementById("skipImages").checked;
-  const googleImages = document.getElementById("googleImages").checked;
+  let skipImages = document.getElementById("skipImages").checked;
+  let googleImages = document.getElementById("googleImages").checked;
   const generateAudio = document.getElementById("autoGenerateAudio").checked;
   const generateApplioAudio = document.getElementById("autoGenerateApplioAudio").checked;
+  
+  // 🔧 VALIDACIÓN: No se puede omitir imágenes Y usar Google Images al mismo tiempo
+  // PERO solo aplicar esta validación si NO estamos cargando un proyecto
+  if (skipImages && googleImages && !isLoadingProject) {
+    console.warn('⚠️ Configuración contradictoria detectada: skipImages=true y googleImages=true');
+    console.warn('🔧 Corrigiendo: Desactivando skipImages porque googleImages tiene prioridad');
+    skipImages = false;
+    document.getElementById("skipImages").checked = false;
+    showNotification('⚠️ Corrección automática: No puedes omitir imágenes si usas Google Images', 'warning');
+  } else if (skipImages && googleImages && isLoadingProject) {
+    console.log('📂 Cargando proyecto: Permitiendo skipImages=true y googleImages=true (solo guión + keywords)');
+  }
   
   console.log(`🔊 Generación de audio Google: ${generateAudio ? 'ACTIVADA' : 'DESACTIVADA'}`);
   console.log(`🎤 Generación de audio Applio: ${generateApplioAudio ? 'ACTIVADA' : 'DESACTIVADA'}`);
@@ -1621,19 +1659,41 @@ generateBtn.addEventListener("click", async () => {
 
 // Event listener para el botón de continuar
 continueBtn.addEventListener("click", async () => {
+  console.log('🚀 CONTINUAR BUTTON CLICKED');
+  console.log('📊 Variables de estado actual:', {
+    currentTopic,
+    currentSectionNumber,
+    totalSections,
+    'window.currentProject?.completedSections?.length': window.currentProject?.completedSections?.length
+  });
+
   if (!currentTopic || currentSectionNumber >= totalSections) {
     showError("No se puede continuar. Genera primero una sección o ya has completado todas las secciones.");
     return;
   }
 
   const nextSection = currentSectionNumber + 1;
+  console.log('🎯 Sección que se va a generar:', nextSection);
+  
   const imageCount = parseInt(document.getElementById("imagesSelect").value);
   const folderName = document.getElementById("folderName").value.trim();
   const selectedStyle = document.getElementById("styleSelect").value;
   const promptModifier = document.getElementById("promptModifier").value.trim();
   const selectedImageModel = document.getElementById("modelSelect").value;
-  const skipImages = document.getElementById("skipImages").checked;
-  const googleImages = document.getElementById("googleImages").checked;
+  let skipImages = document.getElementById("skipImages").checked;
+  let googleImages = document.getElementById("googleImages").checked;
+  
+  // 🔧 VALIDACIÓN: No se puede omitir imágenes Y usar Google Images al mismo tiempo
+  // PERO solo aplicar esta validación si NO estamos cargando un proyecto
+  if (skipImages && googleImages && !isLoadingProject) {
+    console.warn('⚠️ Configuración contradictoria detectada en CONTINUAR: skipImages=true y googleImages=true');
+    console.warn('🔧 Corrigiendo: Desactivando skipImages porque googleImages tiene prioridad');
+    skipImages = false;
+    document.getElementById("skipImages").checked = false;
+    showNotification('⚠️ Corrección automática: No puedes omitir imágenes si usas Google Images', 'warning');
+  } else if (skipImages && googleImages && isLoadingProject) {
+    console.log('📂 Continuando proyecto: Permitiendo skipImages=true y googleImages=true (solo guión + keywords)');
+  }
   
   // Deshabilitar botón y mostrar estado de carga
   continueBtn.disabled = true;
@@ -2778,6 +2838,9 @@ function toggleSidebar() {
   }
 }
 
+// Hacer la función disponible globalmente
+window.toggleSidebar = toggleSidebar;
+
 function collapseSidebar() {
   const sidebar = document.getElementById('sidebar');
   const body = document.body;
@@ -2812,12 +2875,7 @@ document.addEventListener('DOMContentLoaded', function() {
   console.log('🔍 Debug sidebar - sidebar:', sidebar);
   
   if (menuToggleBtn) {
-    menuToggleBtn.addEventListener('click', function(e) {
-      console.log('🖱️ Click detectado en botón menú');
-      e.preventDefault();
-      toggleSidebar();
-    });
-    console.log('✅ Event listener del botón menú configurado');
+    console.log('✅ Botón de menú encontrado - onclick configurado en HTML');
   } else {
     console.error('❌ No se encontró el botón menuToggleBtn');
   }
@@ -3058,6 +3116,29 @@ function initializePromptsPanel() {
   console.log('✅ Panel lateral de prompts inicializado correctamente');
 }
 
+// Función para limpiar el panel lateral de prompts
+function clearPromptsSidebar() {
+  console.log('🧹 Limpiando panel lateral de prompts...');
+  
+  const promptsList = document.getElementById('promptsList');
+  const emptyState = document.getElementById('promptsEmptyState');
+  
+  if (promptsList) {
+    // Limpiar todos los prompts existentes
+    promptsList.innerHTML = '';
+  }
+  
+  if (emptyState) {
+    // Mostrar estado vacío
+    emptyState.style.display = 'block';
+  }
+  
+  // Limpiar array global
+  allAccumulatedPrompts = [];
+  
+  console.log('✅ Panel lateral limpiado');
+}
+
 // Función para añadir prompts al panel lateral
 function addPromptsToSidebar(prompts, sectionNumber) {
   console.log('📋📋📋 INICIO addPromptsToSidebar - ESTA FUNCIÓN SE ESTÁ EJECUTANDO 📋📋📋');
@@ -3108,14 +3189,18 @@ function addPromptsToSidebar(prompts, sectionNumber) {
   
   // Añadir cada prompt al panel
   prompts.forEach((prompt, index) => {
-    // Almacenar en el array global
+    // Detectar si el prompt contiene HTML (enlaces de Google Images)
+    const isHtmlPrompt = prompt.includes('<a href=') && prompt.includes('target="_blank"');
+    const cleanText = isHtmlPrompt ? prompt.replace(/<[^>]*>/g, '').replace(/^🔗\s*/, '').replace(/^Buscar:\s*"/, '').replace(/"$/, '') : prompt.trim();
+    
+    // Almacenar en el array global con texto limpio
     allAccumulatedPrompts.push({
-      text: prompt.trim(),
+      text: cleanText,
       section: sectionNumber,
       imageNumber: index + 1
     });
     
-    const promptItem = createPromptItem(prompt.trim(), sectionNumber, index + 1);
+    const promptItem = createPromptItem(prompt, sectionNumber, index + 1, isHtmlPrompt);
     promptsList.appendChild(promptItem);
     
     // Añadir animación de entrada
@@ -3235,7 +3320,7 @@ function createGoogleImageLinks(prompts, sectionNumber) {
 }
 
 // Función para crear un item de prompt individual
-function createPromptItem(promptText, sectionNumber, imageNumber) {
+function createPromptItem(promptText, sectionNumber, imageNumber, isHtml = false) {
   const promptItem = document.createElement('div');
   promptItem.className = 'prompt-item';
   
@@ -3251,11 +3336,14 @@ function createPromptItem(promptText, sectionNumber, imageNumber) {
   copyBtn.innerHTML = '<i class="fas fa-copy"></i>';
   copyBtn.title = 'Copiar prompt';
   
+  // Para HTML, extraer el texto limpio para copiar
+  const textToCopy = isHtml ? promptText.replace(/<[^>]*>/g, '').replace(/^🔗\s*/, '').replace(/^Buscar:\s*"/, '').replace(/"$/, '') : promptText;
+  
   // Event listener para copiar
   copyBtn.addEventListener('click', async function(e) {
     e.preventDefault();
     try {
-      await navigator.clipboard.writeText(promptText);
+      await navigator.clipboard.writeText(textToCopy);
       
       // Cambiar el estilo del botón temporalmente
       copyBtn.classList.add('copied');
@@ -3274,7 +3362,7 @@ function createPromptItem(promptText, sectionNumber, imageNumber) {
       
       // Fallback para navegadores que no soportan clipboard API
       const textArea = document.createElement('textarea');
-      textArea.value = promptText;
+      textArea.value = textToCopy;
       document.body.appendChild(textArea);
       textArea.select();
       document.execCommand('copy');
@@ -3294,10 +3382,17 @@ function createPromptItem(promptText, sectionNumber, imageNumber) {
   
   const textElement = document.createElement('div');
   textElement.className = 'prompt-item-text';
-  textElement.textContent = promptText;
   
-  // Añadir botón de expandir si el texto es largo
-  if (promptText.length > 150) {
+  // Usar innerHTML si es HTML, textContent si es texto normal
+  if (isHtml) {
+    textElement.innerHTML = promptText;
+  } else {
+    textElement.textContent = promptText;
+  }
+  
+  // Añadir botón de expandir si el texto es largo (usar longitud del texto limpio)
+  const textLength = isHtml ? textToCopy.length : promptText.length;
+  if (textLength > 150) {
     const expandBtn = document.createElement('button');
     expandBtn.className = 'prompt-expand-btn';
     expandBtn.innerHTML = '<i class="fas fa-chevron-down"></i> Ver más';
@@ -5329,22 +5424,1690 @@ setTimeout(function() {
   const sidebar = document.getElementById('sidebar');
   
   if (menuToggleBtn && sidebar) {
-    // Remover event listeners previos para evitar duplicados
-    const newMenuBtn = menuToggleBtn.cloneNode(true);
-    menuToggleBtn.parentNode.replaceChild(newMenuBtn, menuToggleBtn);
-    
-    // Agregar event listener fresh
-    newMenuBtn.addEventListener('click', function(e) {
-      console.log('🖱️ FALLBACK: Click detectado en botón menú');
-      e.preventDefault();
-      e.stopPropagation();
-      toggleSidebar();
-    });
-    
-    console.log('✅ FALLBACK: Event listener del sidebar configurado');
+    console.log('✅ Elementos del sidebar encontrados - onclick ya configurado en HTML');
   } else {
     console.error('❌ FALLBACK: Elementos del sidebar no encontrados');
     console.error('menuToggleBtn:', menuToggleBtn);
     console.error('sidebar:', sidebar);
   }
 }, 3000);
+
+// ================================
+// SISTEMA DE PROYECTOS
+// ================================
+
+// Inicializar sistema de proyectos
+document.addEventListener('DOMContentLoaded', function() {
+  console.log('🚀 DOM cargado, inicializando sistema de proyectos...');
+  initializeProjectSystem();
+});
+
+// Fallback con delay para asegurar que se inicialice
+setTimeout(function() {
+  console.log('🔄 Inicializador de respaldo ejecutándose...');
+  const saveBtn = document.getElementById('saveProjectBtn');
+  const loadBtn = document.getElementById('loadProjectBtn');
+  const manageBtn = document.getElementById('manageProjectsBtn');
+  
+  if (saveBtn && !saveBtn.onclick && !saveBtn.hasAttribute('data-initialized')) {
+    console.log('🔧 Configurando eventos de respaldo...');
+    
+    saveBtn.addEventListener('click', function(e) {
+      console.log('💾 RESPALDO: Click en Guardar Proyecto');
+      e.preventDefault();
+      saveCurrentProject();
+    });
+    saveBtn.setAttribute('data-initialized', 'true');
+    
+    if (loadBtn) {
+      loadBtn.addEventListener('click', function(e) {
+        console.log('📂 RESPALDO: Click en Cargar Proyecto');
+        e.preventDefault();
+        showLoadProjectModal();
+      });
+      loadBtn.setAttribute('data-initialized', 'true');
+    }
+    
+    if (manageBtn) {
+      manageBtn.addEventListener('click', function(e) {
+        console.log('🔧 RESPALDO: Click en Gestionar Proyectos');
+        e.preventDefault();
+        showManageProjectsModal();
+      });
+      manageBtn.setAttribute('data-initialized', 'true');
+    }
+    
+    console.log('✅ Eventos de respaldo configurados');
+  } else {
+    console.log('ℹ️ Eventos ya configurados o elementos no encontrados');
+  }
+}, 2000);
+
+function initializeProjectSystem() {
+  console.log('🔧 Inicializando sistema de proyectos...');
+  
+  const saveProjectBtn = document.getElementById('saveProjectBtn');
+  const loadProjectBtn = document.getElementById('loadProjectBtn');
+  const manageProjectsBtn = document.getElementById('manageProjectsBtn');
+
+  console.log('🔍 Elementos encontrados:', {
+    saveProjectBtn: !!saveProjectBtn,
+    loadProjectBtn: !!loadProjectBtn,
+    manageProjectsBtn: !!manageProjectsBtn
+  });
+
+  if (saveProjectBtn) {
+    console.log('✅ Configurando evento para saveProjectBtn');
+    saveProjectBtn.addEventListener('click', function(e) {
+      console.log('🖱️ Click en Guardar Proyecto');
+      e.preventDefault();
+      saveCurrentProject();
+    });
+  } else {
+    console.error('❌ No se encontró saveProjectBtn');
+  }
+  
+  if (loadProjectBtn) {
+    console.log('✅ Configurando evento para loadProjectBtn');
+    loadProjectBtn.addEventListener('click', function(e) {
+      console.log('🖱️ Click en Cargar Proyecto');
+      e.preventDefault();
+      showLoadProjectModal();
+    });
+  } else {
+    console.error('❌ No se encontró loadProjectBtn');
+  }
+  
+  if (manageProjectsBtn) {
+    console.log('✅ Configurando evento para manageProjectsBtn');
+    manageProjectsBtn.addEventListener('click', function(e) {
+      console.log('🖱️ Click en Gestionar Proyectos');
+      e.preventDefault();
+      showManageProjectsModal();
+    });
+  } else {
+    console.error('❌ No se encontró manageProjectsBtn');
+  }
+
+  // Inicializar event listeners de modales
+  initializeProjectModals();
+  
+  console.log('✅ Sistema de proyectos inicializado');
+}
+
+// Función para guardar el proyecto actual
+async function saveCurrentProject() {
+  try {
+    console.log('💾 Iniciando guardado de proyecto...');
+    
+    const topicElement = document.getElementById('topic');
+    const folderNameElement = document.getElementById('folderName');
+    const sectionsSelectElement = document.getElementById('sectionsSelect');
+    
+    console.log('🔍 Elementos encontrados:', {
+      topic: !!topicElement,
+      folderName: !!folderNameElement,
+      sectionsSelect: !!sectionsSelectElement
+    });
+    
+    if (!topicElement || !folderNameElement || !sectionsSelectElement) {
+      showNotification('⚠️ No se encontraron los elementos del formulario. Asegúrate de haber configurado un proyecto.', 'warning');
+      return;
+    }
+    
+    const topic = topicElement.value.trim();
+    const folderName = folderNameElement.value.trim();
+    const totalSections = parseInt(sectionsSelectElement.value);
+    
+    if (!topic) {
+      showNotification('⚠️ Ingresa un tema para guardar el proyecto', 'warning');
+      return;
+    }
+
+    // El proyecto se guarda automáticamente al generar contenido
+    // Esta función es principalmente para mostrar confirmación manual
+    showNotification('💾 El proyecto se guarda automáticamente al generar contenido', 'info');
+    
+    // Si hay contenido generado, refrescar la lista de proyectos
+    if (currentSectionNumber > 0) {
+      await refreshProjectsList();
+      showNotification('✅ Estado del proyecto actualizado', 'success');
+    }
+    
+  } catch (error) {
+    console.error('❌ Error guardando proyecto:', error);
+    showNotification('❌ Error guardando el proyecto', 'error');
+  }
+}
+
+// Función para mostrar modal de cargar proyecto
+async function showLoadProjectModal() {
+  const modal = document.getElementById('loadProjectModal');
+  const container = document.getElementById('projectsListContainer');
+  
+  modal.style.display = 'block';
+  container.innerHTML = '<div class="loading-indicator"><i class="fas fa-spinner fa-spin"></i><span>Cargando proyectos...</span></div>';
+  
+  try {
+    console.log('🔍 Haciendo fetch a /api/projects...');
+    const response = await fetch('/api/projects');
+    console.log('📡 Respuesta recibida:', response.status, response.statusText);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    
+    const data = await response.json();
+    console.log('📊 Datos recibidos:', data);
+    
+    if (data.success) {
+      window.availableProjects = data.projects || [];
+      console.log('✅ Proyectos cargados en window.availableProjects:', window.availableProjects.length);
+      renderProjectsList(container, 'load');
+    } else {
+      console.error('❌ API devolvió error:', data.error);
+      container.innerHTML = `<div class="empty-state"><i class="fas fa-folder-open"></i><h3>Error cargando proyectos</h3><p>${data.error || 'No se pudieron cargar los proyectos disponibles'}</p></div>`;
+    }
+  } catch (error) {
+    console.error('❌ Error cargando proyectos:', error);
+    // No usar availableProjects aquí que causa el error
+    container.innerHTML = `<div class="empty-state"><i class="fas fa-exclamation-triangle"></i><h3>Error de conexión</h3><p>Error: ${error.message}</p><p>Asegúrate de que el servidor esté funcionando en http://localhost:3000</p></div>`;
+  }
+}
+
+// Función para mostrar modal de gestionar proyectos
+async function showManageProjectsModal() {
+  const modal = document.getElementById('manageProjectsModal');
+  const container = document.getElementById('manageProjectsContainer');
+  
+  modal.style.display = 'block';
+  container.innerHTML = '<div class="loading-indicator"><i class="fas fa-spinner fa-spin"></i><span>Cargando proyectos...</span></div>';
+  
+  try {
+    await refreshProjectsList();
+    renderProjectsList(container, 'manage');
+  } catch (error) {
+    console.error('❌ Error cargando proyectos para gestión:', error);
+    container.innerHTML = '<div class="empty-state"><i class="fas fa-exclamation-triangle"></i><h3>Error de conexión</h3><p>No se pudo conectar con el servidor</p></div>';
+  }
+}
+
+// Función para refrescar lista de proyectos
+async function refreshProjectsList() {
+  // Verificar que availableProjects esté definido
+  if (typeof window.availableProjects === 'undefined') {
+    console.log('⚠️ window.availableProjects no definido en refresh, inicializando...');
+    window.availableProjects = [];
+  }
+  
+  try {
+    const response = await fetch('/api/projects');
+    const data = await response.json();
+    
+    if (data.success) {
+      window.availableProjects = data.projects;
+      availableProjects = window.availableProjects; // Sincronizar variable local
+      
+      // Actualizar containers si están visibles
+      const loadContainer = document.getElementById('projectsListContainer');
+      const manageContainer = document.getElementById('manageProjectsContainer');
+      
+      if (loadContainer && !loadContainer.querySelector('.loading-indicator')) {
+        renderProjectsList(loadContainer, 'load');
+      }
+      
+      if (manageContainer && !manageContainer.querySelector('.loading-indicator')) {
+        renderProjectsList(manageContainer, 'manage');
+      }
+      
+      return true;
+    }
+    return false;
+  } catch (error) {
+    console.error('❌ Error refrescando proyectos:', error);
+    return false;
+  }
+}
+
+// Función para renderizar lista de proyectos
+function renderProjectsList(container, mode = 'load') {
+  // Usar window.availableProjects como fuente principal
+  const projectsToRender = window.availableProjects || [];
+  
+  if (!projectsToRender || projectsToRender.length === 0) {
+    container.innerHTML = `
+      <div class="empty-state">
+        <i class="fas fa-folder-open"></i>
+        <h3>No hay proyectos guardados</h3>
+        <p>Genera algunas secciones para crear tu primer proyecto</p>
+      </div>
+    `;
+    return;
+  }
+
+  const projectsHTML = projectsToRender.map(project => {
+    const progress = (project.sectionsCompleted / project.totalSections) * 100;
+    const isComplete = project.sectionsCompleted >= project.totalSections;
+    
+    return `
+      <div class="project-card" data-project="${project.folderName}">
+        <div class="project-card-header">
+          <h3 class="project-title">${project.originalFolderName || project.topic}</h3>
+          <span class="project-status">${isComplete ? 'Completo' : 'En progreso'}</span>
+        </div>
+        
+        <div class="project-info">
+          <div class="project-info-item">
+            <span class="project-info-label">Tema:</span>
+            <span class="project-info-value">${project.topic}</span>
+          </div>
+          <div class="project-info-item">
+            <span class="project-info-label">Secciones:</span>
+            <span class="project-info-value">${project.sectionsCompleted}/${project.totalSections}</span>
+          </div>
+          <div class="project-info-item">
+            <span class="project-info-label">Última modificación:</span>
+            <span class="project-info-value">${project.lastModifiedDate}</span>
+          </div>
+        </div>
+        
+        <div class="project-progress">
+          <div class="progress-bar">
+            <div class="progress-fill" style="width: ${progress}%"></div>
+          </div>
+          <div class="progress-text">${Math.round(progress)}% completado</div>
+        </div>
+        
+        <div class="project-actions">
+          ${mode === 'load' ? `
+            <button class="project-action-btn load-action" onclick="loadProject('${project.folderName}')">
+              <i class="fas fa-folder-open"></i>
+              Cargar
+            </button>
+          ` : `
+            <button class="project-action-btn load-action" onclick="loadProject('${project.folderName}')">
+              <i class="fas fa-eye"></i>
+              Ver
+            </button>
+            <button class="project-action-btn duplicate-action" onclick="duplicateProject('${project.folderName}')">
+              <i class="fas fa-copy"></i>
+              Duplicar
+            </button>
+            <button class="project-action-btn delete-action" onclick="confirmDeleteProject('${project.folderName}', '${project.originalFolderName || project.topic}')">
+              <i class="fas fa-trash"></i>
+              Eliminar
+            </button>
+          `}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  container.innerHTML = `<div class="projects-container">${projectsHTML}</div>`;
+}
+
+// Función para cargar un proyecto
+async function loadProject(folderName) {
+  try {
+    isLoadingProject = true; // Activar bandera de carga
+    showNotification('📂 Cargando proyecto...', 'info');
+    
+    const response = await fetch(`/api/projects/${folderName}`);
+    const data = await response.json();
+    
+    if (data.success) {
+      window.currentProject = data.project;
+      
+      // Verificar y llenar formulario con datos del proyecto
+      const topicElement = document.getElementById('prompt'); // Cambiado de 'topic' a 'prompt'
+      const folderNameElement = document.getElementById('folderName');
+      const sectionsSelectElement = document.getElementById('sectionsSelect');
+      const voiceSelectElement = document.getElementById('voiceSelect');
+      const modelSelectElement = document.getElementById('modelSelect');
+      
+      console.log('🔍 Elementos del formulario encontrados:', {
+        prompt: !!topicElement, // Cambiado de topic a prompt
+        folderName: !!folderNameElement,
+        sectionsSelect: !!sectionsSelectElement,
+        voiceSelect: !!voiceSelectElement,
+        modelSelect: !!modelSelectElement
+      });
+      
+      if (topicElement) {
+        topicElement.value = window.currentProject.topic;
+        console.log('📝 Tema del guión cargado:', window.currentProject.topic);
+      } else {
+        console.warn('⚠️ Elemento prompt (tema del guión) no encontrado');
+      }
+      
+      if (folderNameElement) {
+        folderNameElement.value = window.currentProject.originalFolderName || window.currentProject.topic;
+      } else {
+        console.warn('⚠️ Elemento folderName no encontrado');
+      }
+      
+      if (sectionsSelectElement) {
+        sectionsSelectElement.value = window.currentProject.totalSections;
+      } else {
+        console.warn('⚠️ Elemento sectionsSelect no encontrado');
+      }
+      
+      if (voiceSelectElement) {
+        voiceSelectElement.value = window.currentProject.voice || 'shimmer';
+      } else {
+        console.warn('⚠️ Elemento voiceSelect no encontrado');
+      }
+      
+      if (modelSelectElement && window.currentProject.imageModel) {
+        modelSelectElement.value = window.currentProject.imageModel;
+      }
+      
+      // 🔧 CARGAR CONFIGURACIONES ADICIONALES DEL PROYECTO
+      console.log('🔧 Cargando configuraciones adicionales del proyecto...');
+      
+      // Cargar estilo de narración
+      const styleSelectElement = document.getElementById('styleSelect');
+      if (styleSelectElement && window.currentProject.scriptStyle) {
+        styleSelectElement.value = window.currentProject.scriptStyle;
+        console.log('📝 Estilo de narración cargado:', window.currentProject.scriptStyle);
+      }
+      
+      // Cargar modificador de prompts (instrucciones para imágenes)
+      const promptModifierElement = document.getElementById('promptModifier');
+      if (promptModifierElement && window.currentProject.promptModifier) {
+        promptModifierElement.value = window.currentProject.promptModifier;
+        console.log('🎨 Modificador de prompts cargado:', window.currentProject.promptModifier);
+      }
+      
+      // Cargar configuración de checkboxes
+      const skipImagesElement = document.getElementById('skipImages');
+      if (skipImagesElement && typeof window.currentProject.skipImages === 'boolean') {
+        skipImagesElement.checked = window.currentProject.skipImages;
+        console.log('🚫 Skip imágenes cargado:', window.currentProject.skipImages, 'checkbox checked:', skipImagesElement.checked);
+      } else {
+        console.warn('⚠️ Skip Images - elemento:', !!skipImagesElement, 'valor en proyecto:', window.currentProject.skipImages, 'tipo:', typeof window.currentProject.skipImages);
+      }
+      
+      const googleImagesElement = document.getElementById('googleImages');
+      if (googleImagesElement && typeof window.currentProject.googleImages === 'boolean') {
+        googleImagesElement.checked = window.currentProject.googleImages;
+        console.log('🔗 Google Images cargado:', window.currentProject.googleImages, 'checkbox checked:', googleImagesElement.checked);
+      } else {
+        console.warn('⚠️ Google Images - elemento:', !!googleImagesElement, 'valor en proyecto:', window.currentProject.googleImages, 'tipo:', typeof window.currentProject.googleImages);
+      }
+      
+      // Cargar número de imágenes
+      const imagesSelectElement = document.getElementById('imagesSelect');
+      if (imagesSelectElement && window.currentProject.imageCount) {
+        imagesSelectElement.value = window.currentProject.imageCount;
+        console.log('🖼️ Número de imágenes cargado:', window.currentProject.imageCount);
+      }
+      
+      console.log('✅ Todas las configuraciones del proyecto han sido restauradas');
+      
+      // Actualizar estado de la interfaz
+      if (window.currentProject.completedSections.length > 0) {
+        window.currentTopic = window.currentProject.topic;
+        window.totalSections = window.currentProject.totalSections;
+        // Para el botón continuar, currentSectionNumber debe ser el número de secciones completadas
+        window.currentSectionNumber = window.currentProject.completedSections.length;
+        
+        // También actualizar las variables globales para compatibilidad
+        currentTopic = window.currentProject.topic;
+        totalSections = window.currentProject.totalSections;
+        currentSectionNumber = window.currentProject.completedSections.length;
+        
+        console.log('📊 Variables globales actualizadas:', {
+          currentTopic,
+          totalSections,
+          currentSectionNumber,
+          completedSections: window.currentProject.completedSections.length
+        });
+        
+        // Mostrar la última sección completada
+        const lastSection = window.currentProject.completedSections[window.currentProject.completedSections.length - 1];
+        if (lastSection) {
+          showLoadedSection(lastSection);
+        }
+        
+        // Cargar prompts al panel lateral si existen
+        loadProjectPrompts(window.currentProject);
+      }
+      
+      // Actualizar estado de los botones según el progreso del proyecto
+      updateProjectButtons(window.currentProject);
+      
+      // Cerrar modales
+      closeModal('loadProjectModal');
+      closeModal('manageProjectsModal');
+      
+      showNotification(`✅ Proyecto "${window.currentProject.originalFolderName || window.currentProject.topic}" cargado exitosamente`, 'success');
+      
+      // Mostrar detalles del proyecto cargado
+      showProjectDetails(window.currentProject);
+      
+    } else {
+      showNotification('❌ Error cargando el proyecto', 'error');
+    }
+    
+  } catch (error) {
+    console.error('❌ Error cargando proyecto:', error);
+    showNotification('❌ Error de conexión al cargar proyecto', 'error');
+  } finally {
+    isLoadingProject = false; // Desactivar bandera de carga al finalizar
+  }
+}
+
+// Función para mostrar sección cargada
+function showLoadedSection(section) {
+  const scriptContent = document.getElementById('scriptContent');
+  const sectionTitle = document.getElementById('sectionTitle');
+  const currentSectionSpan = document.getElementById('currentSection');
+  
+  if (scriptContent && section.script) {
+    // Mostrar script
+    const scriptHTML = `
+      <div class="script-container">
+        <div class="script-actions">
+          <button class="copy-script-btn" onclick="copyScriptText()" title="Copiar texto del guión">
+            <i class="fas fa-copy"></i>
+          </button>
+          <button class="audio-script-btn" onclick="generateSectionAudioButton()" title="Generar audio del guión">
+            <i class="fas fa-microphone"></i>
+          </button>
+        </div>
+        <div class="script-text">${section.script.replace(/\n/g, '<br><br>')}</div>
+      </div>`;
+    
+    scriptContent.innerHTML = scriptHTML;
+    scriptContent.style.display = 'block';
+  }
+  
+  if (sectionTitle) {
+    sectionTitle.textContent = `Sección ${section.section}`;
+  }
+  
+  if (currentSectionSpan) {
+    currentSectionSpan.textContent = section.section;
+  }
+  
+  // Si hay imágenes, mostrarlas
+  if (section.hasImages && section.imageFiles) {
+    // Aquí podrías cargar las imágenes si implementas esa funcionalidad
+    console.log('Sección con imágenes cargada:', section.imageFiles);
+  }
+}
+
+// Función para cargar prompts del proyecto al panel lateral
+function loadProjectPrompts(project) {
+  console.log('📋 Iniciando carga de prompts del proyecto...');
+  
+  if (!project.completedSections || project.completedSections.length === 0) {
+    console.log('❌ No hay secciones completadas con prompts');
+    return;
+  }
+  
+  // Limpiar prompts existentes
+  allAccumulatedPrompts = [];
+  
+  // Limpiar el panel lateral
+  clearPromptsSidebar();
+  
+  let totalPrompts = 0;
+  
+  // Cargar prompts de cada sección completada
+  project.completedSections.forEach(section => {
+    console.log(`🔍 Procesando sección ${section.section}:`, {
+      tienePrompts: !!(section.imagePrompts && section.imagePrompts.length > 0),
+      tieneImageUrls: !!(section.imageUrls && section.imageUrls.length > 0),
+      esGoogleImages: section.googleImagesMode
+    });
+    
+    if (section.imagePrompts && section.imagePrompts.length > 0) {
+      console.log(`📋 Cargando ${section.imagePrompts.length} prompts de la sección ${section.section}`);
+      
+      if (section.googleImagesMode) {
+        console.log(`🔗 Sección ${section.section} tiene keywords para Google Images`);
+        
+        // Para Google Images, convertir keywords en URLs clicables
+        const googleImageUrls = section.imagePrompts.map((keyword, index) => {
+          const encodedKeyword = encodeURIComponent(keyword.trim());
+          const googleUrl = `https://www.google.com/search?q=${encodedKeyword}&tbm=isch`;
+          return `🔗 <a href="${googleUrl}" target="_blank" style="color: #00bfff; text-decoration: underline;">Buscar: "${keyword.trim()}"</a>`;
+        });
+        
+        addPromptsToSidebar(googleImageUrls, section.section);
+        totalPrompts += googleImageUrls.length;
+      } else {
+        // Prompts normales de imagen
+        addPromptsToSidebar(section.imagePrompts, section.section);
+        totalPrompts += section.imagePrompts.length;
+      }
+    } else if (section.imageUrls && section.imageUrls.length > 0) {
+      console.log(`🖼️ Sección ${section.section} tiene ${section.imageUrls.length} URLs de imágenes generadas`);
+      
+      // Si tiene URLs pero no prompts, crear prompts genéricos
+      const genericPrompts = section.imageUrls.map((url, index) => `Imagen ${index + 1} generada para la sección ${section.section}`);
+      addPromptsToSidebar(genericPrompts, section.section);
+      totalPrompts += genericPrompts.length;
+    } else if (section.googleImagesMode) {
+      console.log(`🔗 Sección ${section.section} usa Google Images automático`);
+      
+      // Para Google Images, mostrar un indicador
+      const googleImageIndicator = [`Sección ${section.section} configurada para usar Google Images automático`];
+      addPromptsToSidebar(googleImageIndicator, section.section);
+      totalPrompts += 1;
+    }
+  });
+  
+  console.log(`✅ Total de prompts cargados en el panel: ${totalPrompts}`);
+}
+
+// Función para mostrar detalles del proyecto
+function showProjectDetails(project) {
+  console.log('📊 Mostrando detalles del proyecto:', project);
+  
+  const modal = document.getElementById('projectDetailModal');
+  const title = document.getElementById('projectDetailTitle');
+  const content = document.getElementById('projectDetailContent');
+  
+  if (!modal || !title || !content) {
+    console.error('❌ Elementos del modal no encontrados:', { modal: !!modal, title: !!title, content: !!content });
+    return;
+  }
+  
+  title.innerHTML = `<i class="fas fa-folder"></i> ${project.originalFolderName || project.topic}`;
+  
+  const progress = (project.completedSections.length / project.totalSections) * 100;
+  const isComplete = project.completedSections.length >= project.totalSections;
+  
+  console.log('📈 Progreso del proyecto:', {
+    completed: project.completedSections.length,
+    total: project.totalSections,
+    progress: progress,
+    sections: project.completedSections,
+    folderName: project.folderName
+  });
+  
+  content.innerHTML = `
+    <div class="project-detail-content">
+      <div class="project-overview">
+        <h4><i class="fas fa-info-circle"></i> Información General</h4>
+        <div class="overview-grid">
+          <div class="overview-item">
+            <div class="overview-label">Tema</div>
+            <div class="overview-value">${project.topic}</div>
+          </div>
+          <div class="overview-item">
+            <div class="overview-label">Estado</div>
+            <div class="overview-value">${isComplete ? '✅ Completo' : '🔄 En progreso'}</div>
+          </div>
+          <div class="overview-item">
+            <div class="overview-label">Progreso</div>
+            <div class="overview-value">${project.completedSections.length}/${project.totalSections} secciones</div>
+          </div>
+          <div class="overview-item">
+            <div class="overview-label">Creado</div>
+            <div class="overview-value">${project.createdAt ? new Date(project.createdAt).toLocaleString() : 'No disponible'}</div>
+          </div>
+          <div class="overview-item">
+            <div class="overview-label">Última modificación</div>
+            <div class="overview-value">${project.lastModified ? new Date(project.lastModified).toLocaleString() : 'No disponible'}</div>
+          </div>
+          <div class="overview-item">
+            <div class="overview-label">Voz</div>
+            <div class="overview-value">${project.voice || 'No especificada'}</div>
+          </div>
+          ${project.imageModel ? `
+          <div class="overview-item">
+            <div class="overview-label">Modelo de IA</div>
+            <div class="overview-value">${project.imageModel}</div>
+          </div>
+          ` : ''}
+        </div>
+      </div>
+      
+      <div class="project-sections">
+        <div class="sections-header">
+          <h4><i class="fas fa-list"></i> Secciones Completadas (${project.completedSections.length})</h4>
+          <div class="progress-bar" style="width: 200px;">
+            <div class="progress-fill" style="width: ${progress}%"></div>
+          </div>
+        </div>
+        
+        ${project.completedSections.length > 0 ? `
+          <div class="sections-grid">
+            ${project.completedSections.map(section => {
+              console.log('🔍 Procesando sección:', section);
+              const hasScript = section.script && section.script.length > 0;
+              const hasImages = section.hasImages || section.imageUrls?.length > 0 || section.googleImagesMode;
+              const imageCount = section.imageUrls?.length || section.imageCount || 0;
+              
+              return `
+              <div class="section-card">
+                <div class="section-header">
+                  <div style="display: flex; align-items: center; gap: 10px;">
+                    <div class="section-number">${section.section}</div>
+                    <span style="color: #ffffff; font-weight: 600;">Sección ${section.section}</span>
+                  </div>
+                  <div class="section-status-badge completed">Completada</div>
+                </div>
+                <div class="section-info">
+                  <div>📝 Script: ${hasScript ? '✅ Generado' : '❌ No disponible'}</div>
+                  <div>🖼️ Imágenes: ${hasImages ? (section.googleImagesMode ? '🔗 Google Images' : `✅ ${imageCount} imágenes`) : '❌ Sin imágenes'}</div>
+                  <div>📅 ${section.completedAt ? new Date(section.completedAt).toLocaleDateString() : 'Fecha no disponible'}</div>
+                  ${section.prompts?.length > 0 ? `<div>🎨 Prompts: ${section.prompts.length}</div>` : ''}
+                </div>
+                <div class="section-actions">
+                  <button class="section-action-btn" data-section="${section.section}" data-folder="${project.folderName}" data-action="details" data-project='${JSON.stringify(project).replace(/'/g, "&#39;")}'>
+                    <i class="fas fa-eye"></i>
+                    Ver Detalles
+                  </button>
+                </div>
+              </div>
+              `;
+            }).join('')}
+          </div>
+          
+          <div class="project-actions-footer">
+            <button class="btn btn-primary btn-activate-project" data-folder="${project.folderName}" data-project='${JSON.stringify(project).replace(/'/g, "&#39;")}'>
+              <i class="fas fa-play-circle"></i>
+              Activar Proyecto Completo
+            </button>
+          </div>
+        ` : `
+          <div class="empty-state">
+            <i class="fas fa-file-alt"></i>
+            <h3>No hay secciones completadas</h3>
+            <p>Genera contenido para ver las secciones aquí</p>
+          </div>
+        `}
+      </div>
+    </div>
+  `;
+  
+  // Agregar event listeners para los botones
+  setTimeout(() => {
+    const actionButtons = content.querySelectorAll('.section-action-btn');
+    const activateButton = content.querySelector('.btn-activate-project');
+    console.log('🎯 Configurando event listeners para', actionButtons.length, 'botones de sección y', activateButton ? '1' : '0', 'botón de activar');
+    
+    // Event listeners para botones de sección individuales
+    actionButtons.forEach(button => {
+      const section = button.getAttribute('data-section');
+      const folder = button.getAttribute('data-folder');
+      const action = button.getAttribute('data-action');
+      const projectData = button.getAttribute('data-project');
+      
+      button.addEventListener('click', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        console.log('🔄 Click en botón:', action, 'sección:', section);
+        
+        let projectObj = project; // Usar el proyecto actual por defecto
+        
+        // Si hay datos del proyecto en el atributo, usarlos
+        if (projectData) {
+          try {
+            projectObj = JSON.parse(projectData);
+          } catch (error) {
+            console.error('❌ Error parseando datos del proyecto:', error);
+          }
+        }
+        
+        if (action === 'details') {
+          loadSectionDetailsWithProject(parseInt(section), folder, projectObj);
+        }
+      });
+    });
+    
+    // Event listener para el botón de activar proyecto completo
+    if (activateButton) {
+      const folder = activateButton.getAttribute('data-folder');
+      const projectData = activateButton.getAttribute('data-project');
+      
+      activateButton.addEventListener('click', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        console.log('🚀 Activando proyecto completo:', folder);
+        
+        let projectObj = project;
+        if (projectData) {
+          try {
+            projectObj = JSON.parse(projectData);
+          } catch (error) {
+            console.error('❌ Error parseando datos del proyecto:', error);
+          }
+        }
+        
+        activateFullProject(projectObj);
+      });
+    }
+  }, 100);
+  
+  modal.style.display = 'block';
+}
+
+// Función para duplicar proyecto
+async function duplicateProject(folderName) {
+  const newName = prompt('Ingresa el nombre para el proyecto duplicado:');
+  if (!newName || !newName.trim()) return;
+  
+  try {
+    showNotification('📋 Duplicando proyecto...', 'info');
+    
+    const response = await fetch(`/api/projects/${folderName}/duplicate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ newName: newName.trim() })
+    });
+    
+    const data = await response.json();
+    
+    if (data.success) {
+      showNotification('✅ Proyecto duplicado exitosamente', 'success');
+      await refreshProjectsList();
+    } else {
+      showNotification(`❌ Error: ${data.error}`, 'error');
+    }
+    
+  } catch (error) {
+    console.error('❌ Error duplicando proyecto:', error);
+    showNotification('❌ Error de conexión', 'error');
+  }
+}
+
+// Función para confirmar eliminación de proyecto
+function confirmDeleteProject(folderName, projectName) {
+  const modal = document.getElementById('confirmDeleteModal');
+  const text = document.getElementById('deleteConfirmText');
+  const confirmBtn = document.getElementById('confirmDelete');
+  
+  text.textContent = `¿Estás seguro de que quieres eliminar el proyecto "${projectName}"? Esta acción no se puede deshacer.`;
+  
+  // Limpiar event listeners anteriores
+  const newConfirmBtn = confirmBtn.cloneNode(true);
+  confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
+  
+  // Agregar nuevo event listener
+  newConfirmBtn.addEventListener('click', () => deleteProject(folderName));
+  
+  modal.style.display = 'block';
+}
+
+// Función para eliminar proyecto
+async function deleteProject(folderName) {
+  try {
+    showNotification('🗑️ Eliminando proyecto...', 'info');
+    
+    const response = await fetch(`/api/projects/${folderName}`, {
+      method: 'DELETE'
+    });
+    
+    const data = await response.json();
+    
+    if (data.success) {
+      showNotification('✅ Proyecto eliminado exitosamente', 'success');
+      await refreshProjectsList();
+      closeModal('confirmDeleteModal');
+    } else {
+      showNotification(`❌ Error: ${data.error}`, 'error');
+    }
+    
+  } catch (error) {
+    console.error('❌ Error eliminando proyecto:', error);
+    showNotification('❌ Error de conexión', 'error');
+  }
+}
+
+// Función para inicializar modales de proyectos
+function initializeProjectModals() {
+  console.log('🔧 Inicializando modales de proyectos...');
+  
+  // Event listeners para cerrar modales con múltiples métodos
+  document.querySelectorAll('.close').forEach(closeBtn => {
+    closeBtn.addEventListener('click', function(e) {
+      e.preventDefault();
+      console.log('❌ Cerrando modal via botón X');
+      const modalId = this.getAttribute('data-modal');
+      if (modalId) {
+        closeModal(modalId);
+      } else {
+        // Fallback - buscar el modal padre
+        const modal = this.closest('.modal');
+        if (modal) {
+          modal.style.display = 'none';
+        }
+      }
+    });
+  });
+  
+  // Cerrar modal al hacer click fuera
+  window.addEventListener('click', function(event) {
+    if (event.target.classList.contains('modal')) {
+      console.log('❌ Cerrando modal via click fuera');
+      event.target.style.display = 'none';
+    }
+  });
+  
+  // Botones específicos de cerrar para modales de proyecto
+  const closeButtons = [
+    'closeLoadProjectModal',
+    'closeManageProjectsModal', 
+    'closeProjectDetailModal',
+    'closeConfirmDeleteModal'
+  ];
+  
+  closeButtons.forEach(btnId => {
+    const btn = document.getElementById(btnId);
+    if (btn) {
+      btn.addEventListener('click', function(e) {
+        e.preventDefault();
+        console.log(`❌ Cerrando modal via ${btnId}`);
+        const modal = this.closest('.modal');
+        if (modal) {
+          modal.style.display = 'none';
+        }
+      });
+    }
+  });
+  
+  // Botón de cancelar eliminación
+  const cancelDeleteBtn = document.getElementById('cancelDelete');
+  if (cancelDeleteBtn) {
+    cancelDeleteBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      closeModal('confirmDeleteModal');
+    });
+  }
+  
+  // Botón de refrescar proyectos
+  const refreshBtn = document.getElementById('refreshProjectsList');
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      refreshBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Actualizando...';
+      await refreshProjectsList();
+      refreshBtn.innerHTML = '<i class="fas fa-sync-alt"></i> Actualizar';
+    });
+  }
+  
+  // Búsqueda de proyectos
+  const searchInput = document.getElementById('projectsSearch');
+  if (searchInput) {
+    searchInput.addEventListener('input', function() {
+      filterProjects(this.value);
+    });
+  }
+  
+  console.log('✅ Modales de proyectos inicializados');
+}
+
+// Función para cerrar modal
+function closeModal(modalId) {
+  const modal = document.getElementById(modalId);
+  if (modal) {
+    modal.style.display = 'none';
+  }
+}
+
+// Función para filtrar proyectos
+function filterProjects(searchTerm) {
+  const projectCards = document.querySelectorAll('.project-card');
+  const term = searchTerm.toLowerCase();
+  
+  projectCards.forEach(card => {
+    const projectName = card.querySelector('.project-title').textContent.toLowerCase();
+    const projectTopic = card.querySelector('.project-info-value').textContent.toLowerCase();
+    
+    if (projectName.includes(term) || projectTopic.includes(term)) {
+      card.style.display = 'block';
+    } else {
+      card.style.display = 'none';
+    }
+  });
+}
+
+// Función para cargar detalles de una sección específica
+function loadSectionDetails(sectionNumber) {
+  if (!currentProject || !currentProject.completedSections) return;
+  
+  const section = currentProject.completedSections.find(s => s.section === sectionNumber);
+  if (section) {
+    showLoadedSection(section);
+    closeModal('projectDetailModal');
+    showNotification(`📄 Sección ${sectionNumber} cargada`, 'success');
+  }
+}
+
+console.log('✅ Sistema de proyectos cargado completamente');
+
+// INICIALIZADOR FINAL DIRECTO - FORZAR EVENTOS
+setTimeout(function() {
+  console.log('🔧 INICIALIZADOR FINAL: Configurando eventos directos...');
+  
+  // Configurar eventos directos como onclick
+  const saveBtn = document.getElementById('saveProjectBtn');
+  const loadBtn = document.getElementById('loadProjectBtn');
+  const manageBtn = document.getElementById('manageProjectsBtn');
+  
+  if (saveBtn) {
+    console.log('✅ Configurando saveProjectBtn con onclick directo');
+    saveBtn.onclick = function(e) {
+      console.log('💾 ONCLICK DIRECTO: Guardar Proyecto');
+      e.preventDefault();
+      saveCurrentProject();
+      return false;
+    };
+  }
+  
+  if (loadBtn) {
+    console.log('✅ Configurando loadProjectBtn con onclick directo');
+    loadBtn.onclick = function(e) {
+      console.log('📂 ONCLICK DIRECTO: Cargar Proyecto');
+      e.preventDefault();
+      showLoadProjectModal();
+      return false;
+    };
+  }
+  
+  if (manageBtn) {
+    console.log('✅ Configurando manageProjectsBtn con onclick directo');
+    manageBtn.onclick = function(e) {
+      console.log('🔧 ONCLICK DIRECTO: Gestionar Proyectos');
+      e.preventDefault();
+      showManageProjectsModal();
+      return false;
+    };
+  }
+  
+  // Inicializar modales de proyectos
+  initializeProjectModals();
+  
+  // FORZAR eventos de cerrar modal específicamente
+  console.log('🔒 Configurando eventos de cerrar modal...');
+  document.querySelectorAll('.close[data-modal]').forEach(closeBtn => {
+    const modalId = closeBtn.getAttribute('data-modal');
+    console.log(`⚙️ Configurando cierre para modal: ${modalId}`);
+    
+    closeBtn.onclick = function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      console.log(`❌ CERRANDO MODAL: ${modalId}`);
+      closeModal(modalId);
+      return false;
+    };
+  });
+  
+  console.log('🎯 Eventos onclick directos configurados');
+}, 3000);
+
+// Función para activar un proyecto completo con navegación
+function activateFullProject(projectData) {
+  console.log('🚀 Activando proyecto completo:', projectData);
+  
+  if (!projectData || !projectData.completedSections) {
+    console.error('❌ Datos del proyecto no válidos');
+    showNotification('❌ Datos del proyecto no válidos', 'error');
+    return;
+  }
+  
+  isLoadingProject = true; // Activar bandera de carga
+  
+  // Cargar el proyecto completo
+  loadProject(projectData.folderName).then(() => {
+    console.log('✅ Proyecto cargado, configurando navegación completa');
+    
+    // Configurar allSections con todas las secciones completadas
+    allSections = new Array(projectData.totalSections);
+    // Para el botón continuar, currentSectionNumber debe ser el número de secciones completadas
+    currentSectionNumber = projectData.completedSections.length;
+    
+    // También actualizar variables globales
+    currentTopic = projectData.topic;
+    totalSections = projectData.totalSections;
+    
+    console.log('📊 Variables de navegación configuradas:', {
+      currentSectionNumber,
+      totalSections,
+      completedSections: projectData.completedSections.length
+    });
+    
+    // Llenar allSections con los scripts de las secciones completadas
+    projectData.completedSections.forEach(section => {
+      if (section.script) {
+        allSections[section.section - 1] = section.script;
+      }
+    });
+    
+    console.log('� Navegación configurada:', allSections.map((s, i) => s ? `${i+1}: ✅` : `${i+1}: ❌`).join(', '));
+    
+    // Buscar la primera sección disponible
+    let firstAvailableSection = projectData.completedSections.find(s => s.script);
+    if (firstAvailableSection) {
+      currentSectionNumber = firstAvailableSection.section;
+      
+      // Mostrar la primera sección disponible
+      showScript(firstAvailableSection.script, firstAvailableSection.section, projectData.totalSections);
+      
+      // Asegurar que la sección del script sea visible
+      const scriptSection = document.getElementById("script-section");
+      if (scriptSection) {
+        scriptSection.style.display = 'block';
+      }
+      
+      // Configurar navegación
+      setTimeout(() => {
+        initializeSectionNavigation();
+        updateNavigationButtons();
+      }, 300);
+      
+      // Cargar TODOS los prompts del proyecto en el panel lateral
+      loadProjectPrompts(projectData);
+      
+      // Cerrar modal de detalles del proyecto
+      const modal = document.getElementById('projectDetailModal');
+      if (modal) {
+        modal.style.display = 'none';
+      }
+      
+      // Actualizar botones según el estado del proyecto
+      updateProjectButtons(projectData);
+      
+      showNotification(`🚀 Proyecto "${projectData.originalFolderName || projectData.topic}" activado. Usa ← → para navegar entre secciones.`, 'success');
+    } else {
+      showNotification('❌ No hay secciones con script disponibles', 'error');
+    }
+    
+    isLoadingProject = false; // Desactivar bandera de carga al finalizar
+  }).catch(error => {
+    console.error('❌ Error cargando proyecto:', error);
+    showNotification('❌ Error cargando proyecto', 'error');
+    isLoadingProject = false; // Desactivar bandera en caso de error
+  });
+}
+
+// Función para actualizar botones según el estado del proyecto
+function updateProjectButtons(project) {
+  console.log('🔄 Actualizando botones del proyecto:', project);
+  
+  // Validar que el proyecto tenga la estructura esperada
+  if (!project || typeof project !== 'object') {
+    console.error('❌ Proyecto no válido:', project);
+    return;
+  }
+  
+  if (!project.completedSections || !Array.isArray(project.completedSections)) {
+    console.error('❌ completedSections no válido:', project.completedSections);
+    return;
+  }
+  
+  if (!project.totalSections || typeof project.totalSections !== 'number') {
+    console.error('❌ totalSections no válido:', project.totalSections);
+    return;
+  }
+  
+  const generateBtn = document.getElementById("generateBtn");
+  const continueBtn = document.getElementById("continueBtn");
+  const generateAudioBtn = document.getElementById("generateAudioBtn");
+  
+  if (!generateBtn || !continueBtn || !generateAudioBtn) {
+    console.error('❌ Botones no encontrados en el DOM');
+    return;
+  }
+  
+  const completedSections = project.completedSections.length;
+  const totalSections = project.totalSections;
+  const nextSection = completedSections + 1;
+  
+  // ⚠️ CRÍTICO: Actualizar variables globales para que coincidan con el estado del proyecto
+  currentSectionNumber = completedSections;
+  currentTopic = project.topic;
+  window.totalSections = totalSections;
+  window.currentSectionNumber = completedSections;
+  window.currentTopic = project.topic;
+  
+  console.log('📊 Estado del proyecto:', {
+    completedSections,
+    totalSections,
+    nextSection,
+    isComplete: completedSections >= totalSections,
+    'Variables globales actualizadas': {
+      currentSectionNumber,
+      currentTopic,
+      totalSections
+    }
+  });
+  
+  // Ocultar todos los botones primero
+  generateBtn.style.display = "none";
+  continueBtn.style.display = "none";
+  generateAudioBtn.style.display = "none";
+  
+  if (completedSections === 0) {
+    // No hay secciones completadas - mostrar botón de generar primera sección
+    generateBtn.style.display = "inline-flex";
+    generateBtn.innerHTML = `
+      <i class="fas fa-video"></i>
+      <span>Generar Sección 1</span>
+    `;
+  } else if (completedSections < totalSections) {
+    // Hay secciones completadas pero no todas - mostrar botón de continuar
+    continueBtn.style.display = "inline-flex";
+    continueBtn.innerHTML = `
+      <i class="fas fa-forward"></i>
+      <span>Continuar con Sección ${nextSection}</span>
+    `;
+    
+    // También mostrar botón de audio para la sección actual
+    generateAudioBtn.style.display = "inline-flex";
+  } else {
+    // Todas las secciones están completadas - solo mostrar botón de audio
+    generateAudioBtn.style.display = "inline-flex";
+  }
+  
+  console.log('✅ Botones actualizados correctamente');
+}
+
+// Función auxiliar para cargar prompts en el sidebar
+function loadPromptsInSidebar(prompts, sectionNumber) {
+  console.log('🎨 Cargando prompts en panel lateral');
+  
+  // Mostrar panel de prompts
+  const promptsSidebar = document.getElementById('promptsSidebar');
+  if (promptsSidebar) {
+    promptsSidebar.classList.add('expanded');
+  }
+  
+  // Buscar el contenedor de prompts en el panel lateral
+  const promptsContainer = document.querySelector('#promptsSidebar .prompts-list') || 
+                         document.querySelector('#promptsSidebar .sidebar-content') ||
+                         document.querySelector('#promptsSidebar');
+  
+  if (promptsContainer) {
+    // Crear lista de prompts
+    const promptsHTML = `
+      <div class="loaded-prompts">
+        <h4>🎨 Prompts de Sección ${sectionNumber}</h4>
+        ${prompts.map((prompt, index) => `
+          <div class="prompt-item-sidebar">
+            <div class="prompt-header-sidebar">
+              <strong>Prompt ${index + 1}</strong>
+              <button class="copy-btn-sidebar" onclick="copyToClipboard(\`${prompt.replace(/`/g, '\\`')}\`)">
+                <i class="fas fa-copy"></i>
+              </button>
+            </div>
+            <div class="prompt-text-sidebar">${prompt}</div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+    
+    // Limpiar prompts anteriores y agregar nuevos
+    const existingPrompts = promptsContainer.querySelector('.loaded-prompts');
+    if (existingPrompts) {
+      existingPrompts.remove();
+    }
+    
+    promptsContainer.insertAdjacentHTML('beforeend', promptsHTML);
+  }
+}
+
+// Función para obtener el estado actual del proyecto
+function getCurrentProjectState() {
+  console.log('📋 Obteniendo estado del proyecto actual:', window.currentProject);
+  return window.currentProject;
+}
+
+// Función para cargar detalles de una sección específica con datos del proyecto
+function loadSectionDetailsWithProject(sectionNumber, folderName, projectData) {
+  console.log('🔍 Cargando detalles de sección con proyecto:', sectionNumber, folderName, projectData);
+  
+  isLoadingProject = true; // Activar bandera de carga
+  
+  if (!projectData || !projectData.completedSections) {
+    console.error('❌ Datos del proyecto no válidos');
+    showNotification('❌ Datos del proyecto no válidos', 'error');
+    isLoadingProject = false; // Desactivar en caso de error
+    return;
+  }
+  
+  const section = projectData.completedSections.find(s => s.section === sectionNumber);
+  if (!section) {
+    console.error('❌ Sección no encontrada:', sectionNumber);
+    showNotification('❌ Sección no encontrada', 'error');
+    isLoadingProject = false; // Desactivar en caso de error
+    return;
+  }
+  
+  console.log('📋 Datos de la sección encontrada:', section);
+  
+  // Crear modal para mostrar detalles de la sección
+  const modal = document.createElement('div');
+  modal.className = 'modal';
+  modal.style.display = 'block';
+  modal.innerHTML = `
+    <div class="modal-content section-detail-modal">
+      <div class="modal-header">
+        <h3><i class="fas fa-file-alt"></i> Sección ${sectionNumber} - Detalles</h3>
+        <span class="close" onclick="closeSectionModal()">&times;</span>
+      </div>
+      
+      <div class="section-detail-content">
+        <div class="detail-tabs">
+          <button class="detail-tab active" onclick="showSectionTab(event, 'script-tab')">
+            <i class="fas fa-file-text"></i> Script
+          </button>
+          <button class="detail-tab" onclick="showSectionTab(event, 'images-tab')">
+            <i class="fas fa-images"></i> Imágenes
+          </button>
+          <button class="detail-tab" onclick="showSectionTab(event, 'prompts-tab')">
+            <i class="fas fa-palette"></i> Prompts
+          </button>
+        </div>
+        
+        <div id="script-tab" class="tab-content active">
+          <h4>🎬 Script Generado</h4>
+          <div class="script-content">
+            ${section.script ? 
+              `<pre class="script-text">${section.script}</pre>` : 
+              '<p class="no-content">❌ No hay script generado para esta sección</p>'
+            }
+          </div>
+        </div>
+        
+        <div id="images-tab" class="tab-content">
+          <h4>🖼️ Gestión de Imágenes</h4>
+          <div class="images-content">
+            ${section.googleImagesMode ? `
+              <div class="google-images-info">
+                <p><strong>🔗 Modo Google Images activado</strong></p>
+                <p>Las imágenes se buscarán automáticamente desde Google Images</p>
+                ${section.keywords ? `<p><strong>Keywords:</strong> ${section.keywords.join(', ')}</p>` : ''}
+              </div>
+            ` : section.imageUrls && section.imageUrls.length > 0 ? `
+              <div class="generated-images">
+                <p><strong>📊 Imágenes generadas: ${section.imageUrls.length}</strong></p>
+                <div class="image-grid">
+                  ${section.imageUrls.map((url, index) => `
+                    <div class="image-item">
+                      <img src="${url}" alt="Imagen ${index + 1}" onclick="window.open('${url}', '_blank')">
+                      <div class="image-info">Imagen ${index + 1}</div>
+                    </div>
+                  `).join('')}
+                </div>
+              </div>
+            ` : '<p class="no-content">❌ No hay imágenes para esta sección</p>'}
+          </div>
+        </div>
+        
+        <div id="prompts-tab" class="tab-content">
+          <h4>🎨 Prompts de Imagen</h4>
+          <div class="prompts-content">
+            ${section.prompts && section.prompts.length > 0 ? `
+              <div class="prompts-list">
+                ${section.prompts.map((prompt, index) => `
+                  <div class="prompt-item">
+                    <div class="prompt-header">
+                      <strong>Prompt ${index + 1}</strong>
+                      <button class="copy-btn" onclick="copyToClipboard(\`${prompt.replace(/`/g, '\\`')}\`)">
+                        <i class="fas fa-copy"></i>
+                      </button>
+                    </div>
+                    <div class="prompt-text">${prompt}</div>
+                  </div>
+                `).join('')}
+              </div>
+            ` : '<p class="no-content">❌ No hay prompts generados para esta sección</p>'}
+          </div>
+        </div>
+      </div>
+      
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeSectionModal()">
+          <i class="fas fa-times"></i> Cerrar
+        </button>
+        <button class="btn btn-primary" onclick="loadProjectSectionWithProject(${sectionNumber}, '${projectData.folderName}')">
+          <i class="fas fa-play"></i> Cargar en Editor
+        </button>
+      </div>
+    </div>
+  `;
+  
+  document.body.appendChild(modal);
+  
+  isLoadingProject = false; // Desactivar bandera de carga al finalizar
+}
+
+// Función para cargar una sección específica en el editor con datos del proyecto
+function loadProjectSectionWithProject(sectionNumber, folderNameOrProject) {
+  console.log('📥 Cargando sección en editor:', sectionNumber, folderNameOrProject);
+  
+  // Si es un string, es el folderName, cargar el proyecto completo
+  if (typeof folderNameOrProject === 'string') {
+    console.log('📂 Cargando proyecto:', folderNameOrProject);
+    loadProject(folderNameOrProject).then(() => {
+      // Después de cargar el proyecto, cargar la sección específica
+      const projectState = getCurrentProjectState();
+      if (projectState) {
+        const section = projectState.completedSections.find(s => s.section === sectionNumber);
+        if (section) {
+          loadProjectSectionData(sectionNumber, section);
+        }
+      }
+    });
+  } else {
+    // Si es un objeto, usar los datos directamente
+    const projectData = folderNameOrProject;
+    if (!projectData || !projectData.completedSections) {
+      console.error('❌ Datos del proyecto no válidos');
+      showNotification('❌ Datos del proyecto no válidos', 'error');
+      return;
+    }
+    
+    const section = projectData.completedSections.find(s => s.section === sectionNumber);
+    if (!section) {
+      console.error('❌ Sección no encontrada:', sectionNumber);
+      showNotification('❌ Sección no encontrada', 'error');
+      return;
+    }
+    
+    // Primero cargar el proyecto si no está activo
+    if (!window.currentProject || window.currentProject.folderName !== projectData.folderName) {
+      console.log('📂 Cargando proyecto antes de cargar sección');
+      loadProject(projectData.folderName).then(() => {
+        // Después de cargar el proyecto, cargar la sección
+        loadProjectSectionData(sectionNumber, section);
+      });
+    } else {
+      // Si el proyecto ya está activo, cargar directamente la sección
+      loadProjectSectionData(sectionNumber, section);
+    }
+  }
+}
+
+// Función auxiliar para cargar datos de sección
+function loadProjectSectionData(sectionNumber, section) {
+  console.log('📋 Cargando datos de sección en interfaz:', sectionNumber, section);
+  
+  // Actualizar variables globales
+  if (window.currentProject) {
+    // Para el botón continuar, currentSectionNumber debe ser el número de secciones completadas
+    currentSectionNumber = window.currentProject.completedSections.length;
+    window.currentSectionNumber = window.currentProject.completedSections.length;
+    window.totalSections = window.currentProject.totalSections;
+    window.currentTopic = window.currentProject.topic;
+    
+    // También actualizar variables globales para compatibilidad
+    currentTopic = window.currentProject.topic;
+    totalSections = window.currentProject.totalSections;
+    
+    console.log('📊 Variables actualizadas en loadProjectSectionData:', {
+      currentSectionNumber,
+      totalSections,
+      completedSections: window.currentProject.completedSections.length,
+      showingSection: sectionNumber
+    });
+    
+    // Configurar allSections para la navegación
+    allSections = new Array(window.currentProject.totalSections); // Usar variable global directa
+    
+    // Llenar allSections con los scripts de las secciones completadas
+    window.currentProject.completedSections.forEach(completedSection => {
+      if (completedSection.script) {
+        allSections[completedSection.section - 1] = completedSection.script;
+      }
+    });
+    
+    console.log('📚 allSections configurado:', allSections.map((s, i) => s ? `${i+1}: ✅` : `${i+1}: ❌`).join(', '));
+  }
+  
+  // Actualizar el área del script principal usando la función existente
+  if (section.script) {
+    console.log('📝 Mostrando script en interfaz');
+    // Usar la función existente para mostrar el script
+    showScript(section.script, sectionNumber, window.totalSections || 3);
+    
+    // Asegurar que la sección del script sea visible
+    const scriptSection = document.getElementById("script-section");
+    if (scriptSection) {
+      scriptSection.style.display = 'block';
+    }
+    
+    // Inicializar navegación entre secciones
+    setTimeout(() => {
+      initializeSectionNavigation();
+      updateNavigationButtons();
+    }, 200);
+  }
+  
+  // Actualizar el tema si existe el campo
+  const promptArea = document.getElementById('prompt');
+  if (promptArea && window.currentProject) {
+    promptArea.value = window.currentProject.topic;
+    console.log('📝 Tema del guión actualizado en sección:', window.currentProject.topic);
+  } else {
+    console.warn('⚠️ No se pudo actualizar el tema del guión - elemento:', !!promptArea, 'proyecto:', !!window.currentProject);
+  }
+  
+  // Cargar configuración de checkboxes desde el proyecto actual
+  if (window.currentProject) {
+    const skipImagesElement = document.getElementById('skipImages');
+    if (skipImagesElement && typeof window.currentProject.skipImages === 'boolean') {
+      skipImagesElement.checked = window.currentProject.skipImages;
+      console.log('🚫 Skip imágenes actualizado en sección:', window.currentProject.skipImages);
+    }
+    
+    const googleImagesElement = document.getElementById('googleImages');
+    if (googleImagesElement && typeof window.currentProject.googleImages === 'boolean') {
+      googleImagesElement.checked = window.currentProject.googleImages;
+      console.log('🔗 Google Images actualizado en sección:', window.currentProject.googleImages);
+    }
+  }
+  
+  // Cargar prompts en el panel lateral si existen
+  if (section.imagePrompts && section.imagePrompts.length > 0) {
+    console.log(`🎨 Cargando ${section.imagePrompts.length} prompts de la sección ${sectionNumber} en panel lateral`);
+    
+    // Limpiar el panel antes de cargar nuevos prompts de una sección específica
+    clearPromptsSidebar();
+    
+    // Usar la función estándar para añadir prompts
+    addPromptsToSidebar(section.imagePrompts, sectionNumber);
+    
+  } else if (section.imageUrls && section.imageUrls.length > 0) {
+    console.log(`🖼️ Sección ${sectionNumber} tiene ${section.imageUrls.length} URLs de imágenes generadas`);
+    
+    // Si tiene URLs pero no prompts, crear prompts genéricos
+    const genericPrompts = section.imageUrls.map((url, index) => `Imagen ${index + 1} - URL: ${url}`);
+    clearPromptsSidebar();
+    addPromptsToSidebar(genericPrompts, sectionNumber);
+    
+  } else if (section.googleImagesMode) {
+    console.log(`🔗 Sección ${sectionNumber} configurada para Google Images automático`);
+    
+    // Para Google Images, mostrar un indicador
+    const googleImageIndicator = [`Sección ${sectionNumber} configurada para usar Google Images automático`];
+    clearPromptsSidebar();
+    addPromptsToSidebar(googleImageIndicator, sectionNumber);
+  }
+  
+  // Actualizar modo de imágenes si está activado
+  if (section.googleImagesMode) {
+    const useGoogleImagesCheckbox = document.getElementById('useGoogleImages');
+    if (useGoogleImagesCheckbox) {
+      useGoogleImagesCheckbox.checked = true;
+    }
+  }
+  
+  // Mostrar información sobre las imágenes
+  if (section.imageUrls && section.imageUrls.length > 0) {
+    console.log('🖼️ Mostrando información de imágenes generadas');
+    
+    // Mostrar carrusel de imágenes si existe la función
+    if (typeof showImageCarousel === 'function') {
+      showImageCarousel(section.imageUrls, sectionNumber);
+    } else {
+      // Mostrar carrusel básico
+      const carouselContainer = document.getElementById('carousel-container');
+      if (carouselContainer) {
+        carouselContainer.style.display = 'block';
+        const carouselTrack = document.getElementById('carouselTrack');
+        const carouselTitle = document.getElementById('carousel-section-title');
+        const totalImagesSpan = document.getElementById('total-images');
+        const currentImageSpan = document.getElementById('current-image');
+        
+        if (carouselTitle) {
+          carouselTitle.textContent = `Sección ${sectionNumber}`;
+        }
+        
+        if (totalImagesSpan) {
+          totalImagesSpan.textContent = section.imageUrls.length;
+        }
+        
+        if (currentImageSpan) {
+          currentImageSpan.textContent = '1';
+        }
+        
+        if (carouselTrack) {
+          carouselTrack.innerHTML = section.imageUrls.map((url, index) => `
+            <div class="carousel-slide ${index === 0 ? 'active' : ''}">
+              <img src="${url}" alt="Imagen ${index + 1}" loading="lazy">
+            </div>
+          `).join('');
+        }
+      }
+    }
+    
+    showNotification(`📸 Sección ${sectionNumber} tiene ${section.imageUrls.length} imágenes generadas`, 'info');
+  } else if (section.googleImagesMode) {
+    console.log('🔗 Modo Google Images activado para esta sección');
+    showNotification(`🔗 Sección ${sectionNumber} usa Google Images automático`, 'info');
+  }
+  
+  // Cerrar modal
+  closeSectionModal();
+  
+  // Actualizar estado de los botones según el progreso del proyecto
+  updateProjectButtons(window.currentProject);
+  
+  showNotification(`✅ Sección ${sectionNumber} cargada en editor`, 'success');
+}
+
+// Función para cerrar modal de sección
+function closeSectionModal() {
+  const modal = document.querySelector('.section-detail-modal');
+  if (modal) {
+    modal.closest('.modal').remove();
+  }
+}
+
+// Exponer funciones globalmente
+window.loadSectionDetails = loadSectionDetails;
+window.closeSectionModal = closeSectionModal;
+
+// Función para cambiar entre tabs del detalle de sección
+function showSectionTab(event, tabId) {
+  console.log('🔄 Cambiando a tab:', tabId);
+  // Remover clase active de todos los tabs
+  document.querySelectorAll('.detail-tab').forEach(tab => tab.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+  
+  // Activar el tab seleccionado
+  event.target.closest('.detail-tab').classList.add('active');
+  document.getElementById(tabId).classList.add('active');
+}
+
+// Función para copiar texto al portapapeles
+function copyToClipboard(text) {
+  console.log('📋 Copiando al portapapeles:', text.substring(0, 50) + '...');
+  navigator.clipboard.writeText(text).then(() => {
+    showNotification('✅ Copiado al portapapeles', 'success');
+  }).catch(err => {
+    console.error('Error al copiar:', err);
+    showNotification('❌ Error al copiar', 'error');
+  });
+}
+
+// Función para cargar una sección específica en el editor
+function loadProjectSection(sectionNumber) {
+  console.log('📥 Cargando sección en editor:', sectionNumber);
+  
+  const projectState = getCurrentProjectState();
+  if (!projectState) {
+    console.error('❌ No hay proyecto activo');
+    showNotification('❌ No hay proyecto activo', 'error');
+    return;
+  }
+  
+  const section = projectState.completedSections.find(s => s.section === sectionNumber);
+  if (!section) {
+    console.error('❌ Sección no encontrada:', sectionNumber);
+    showNotification('❌ Sección no encontrada', 'error');
+    return;
+  }
+  
+  // Actualizar el número de sección actual
+  const sectionInput = document.getElementById('sectionNumber');
+  if (sectionInput) {
+    sectionInput.value = sectionNumber;
+  }
+  
+  // Cargar el script en el área de texto
+  const scriptArea = document.getElementById('script');
+  if (scriptArea && section.script) {
+    scriptArea.value = section.script;
+    // Ajustar altura del textarea
+    scriptArea.style.height = 'auto';
+    scriptArea.style.height = scriptArea.scrollHeight + 'px';
+  }
+  
+  // Actualizar modo de imágenes
+  if (section.googleImagesMode) {
+    const googleImagesCheckbox = document.getElementById('useGoogleImages');
+    if (googleImagesCheckbox) {
+      googleImagesCheckbox.checked = true;
+    }
+  }
+  
+  // Cargar prompts si existen
+  if (section.prompts && section.prompts.length > 0) {
+    const promptsArea = document.getElementById('prompts');
+    if (promptsArea) {
+      promptsArea.value = section.prompts.join('\n\n---\n\n');
+      // Ajustar altura del textarea
+      promptsArea.style.height = 'auto';
+      promptsArea.style.height = promptsArea.scrollHeight + 'px';
+    }
+  }
+  
+  // Cerrar modal
+  closeSectionModal();
+  
+  showNotification(`✅ Sección ${sectionNumber} cargada en editor`, 'success');
+}
+
+// Función para auto-redimensionar textareas
+function autoResize(textarea) {
+  if (textarea) {
+    textarea.style.height = 'auto';
+    textarea.style.height = textarea.scrollHeight + 'px';
+  }
+}
+
+// Exponer todas las funciones globalmente
+window.getCurrentProjectState = getCurrentProjectState;
+window.loadSectionDetails = loadSectionDetails;
+window.loadSectionDetailsWithProject = loadSectionDetailsWithProject;
+window.loadProjectSectionWithProject = loadProjectSectionWithProject;
+window.loadProjectSectionData = loadProjectSectionData;
+window.activateFullProject = activateFullProject;
+window.loadPromptsInSidebar = loadPromptsInSidebar;
+window.showSectionTab = showSectionTab;
+window.copyToClipboard = copyToClipboard;
+window.loadProjectSection = loadProjectSection;
+window.autoResize = autoResize;
+window.initializeSectionNavigation = initializeSectionNavigation;
+window.updateNavigationButtons = updateNavigationButtons;

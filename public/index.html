@@ -11,7 +11,48 @@
 <body>
   <!-- Barra lateral izquierda colapsable -->
   <div class="sidebar" id="sidebar">
-    <button id="menuToggleBtn" class="menu-btn" title="Menú">
+    <button id="menuToggleBtn" class="menu-btn" title="Menú" onclick="
+      try {
+        console.log('🖱️ Menu clickeado via HTML onclick'); 
+        const sidebar = document.getElementById('sidebar');
+        const body = document.body;
+        console.log('Sidebar antes:', sidebar.className);
+        console.log('Body antes:', body.className);
+        console.log('Width antes:', getComputedStyle(sidebar).width);
+        
+        if (sidebar && body) {
+          // Hacer toggle manual más explícito
+          if (sidebar.classList.contains('expanded')) {
+            sidebar.classList.remove('expanded');
+            body.classList.remove('sidebar-expanded');
+            console.log('📌 Removiendo clases expanded');
+          } else {
+            sidebar.classList.add('expanded');
+            body.classList.add('sidebar-expanded');
+            console.log('📌 Agregando clases expanded');
+          }
+          
+          console.log('Sidebar después:', sidebar.className);
+          console.log('Body después:', body.className);
+          
+          // Verificar width después de un momento
+          setTimeout(() => {
+            console.log('Width después:', getComputedStyle(sidebar).width);
+            // Forzar width si no se aplicó
+            if (sidebar.classList.contains('expanded') && getComputedStyle(sidebar).width !== '280px') {
+              console.log('🔧 Forzando width a 280px');
+              sidebar.style.width = '280px';
+            }
+          }, 50);
+          
+          console.log('✅ Toggle ejecutado');
+        } else {
+          console.error('❌ Elementos no encontrados');
+        }
+      } catch (error) {
+        console.error('❌ Error en menu onclick:', error);
+      }
+    ">
       <i class="fas fa-bars"></i>
     </button>
     
@@ -32,6 +73,32 @@
         <button id="manageStylesFromSidebar" class="sidebar-btn manage-btn">
           <i class="fas fa-cog"></i>
           <span>Gestionar</span>
+        </button>
+      </div>
+
+      <!-- NUEVA SECCIÓN DE PROYECTOS -->
+      <div class="sidebar-section">
+        <h4><i class="fas fa-folder-open"></i> Proyectos</h4>
+      </div>
+      
+      <div class="sidebar-section">
+        <button id="saveProjectBtn" class="sidebar-btn save-btn" onclick="console.log('💾 Onclick: Guardar Proyecto'); if(typeof saveCurrentProject === 'function') saveCurrentProject();">
+          <i class="fas fa-save"></i>
+          <span>Guardar Proyecto</span>
+        </button>
+      </div>
+      
+      <div class="sidebar-section">
+        <button id="loadProjectBtn" class="sidebar-btn load-btn" onclick="console.log('📂 Onclick: Cargar Proyecto'); if(typeof showLoadProjectModal === 'function') showLoadProjectModal();">
+          <i class="fas fa-folder-open"></i>
+          <span>Cargar Proyecto</span>
+        </button>
+      </div>
+      
+      <div class="sidebar-section">
+        <button id="manageProjectsBtn" class="sidebar-btn manage-btn" onclick="console.log('🔧 Onclick: Gestionar Proyectos'); if(typeof showManageProjectsModal === 'function') showManageProjectsModal();">
+          <i class="fas fa-tasks"></i>
+          <span>Gestionar Proyectos</span>
         </button>
       </div>
       
@@ -315,6 +382,11 @@
   </div>
 
   <div class="container">
+    <!-- Botón de prueba temporal -->
+    <button onclick="alert('Botón de prueba funciona!'); console.log('🧪 Botón de prueba clickeado');" style="position: fixed; top: 100px; right: 20px; z-index: 99999; background: red; color: white; padding: 10px; border: none; border-radius: 5px;">
+      PRUEBA
+    </button>
+    
     <div class="header">
       <div class="header-content">
         <div class="header-title">
@@ -783,6 +855,156 @@
     </div>
   </div>
 
+  <!-- MODALES PARA SISTEMA DE PROYECTOS -->
+  
+  <!-- Modal para cargar proyecto -->
+  <div id="loadProjectModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3><i class="fas fa-folder-open"></i> Cargar Proyecto</h3>
+        <span class="close" data-modal="loadProjectModal" onclick="document.getElementById('loadProjectModal').style.display='none'; console.log('❌ Modal cerrado via onclick');">&times;</span>
+      </div>
+      <div class="modal-body">
+        <div id="projectsListContainer">
+          <div class="loading-indicator">
+            <i class="fas fa-spinner fa-spin"></i>
+            <span>Cargando proyectos...</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <!-- Modal para gestionar proyectos -->
+  <div id="manageProjectsModal" class="modal">
+    <div class="modal-content large-modal">
+      <div class="modal-header">
+        <h3><i class="fas fa-tasks"></i> Gestionar Proyectos</h3>
+        <span class="close" data-modal="manageProjectsModal" onclick="document.getElementById('manageProjectsModal').style.display='none'; console.log('❌ Modal cerrado via onclick');">&times;</span>
+      </div>
+      <div class="modal-body">
+        <div class="projects-toolbar">
+          <button id="refreshProjectsList" class="secondary-btn">
+            <i class="fas fa-sync-alt"></i>
+            Actualizar
+          </button>
+          <div class="search-container">
+            <input type="text" id="projectsSearch" placeholder="Buscar proyectos...">
+            <i class="fas fa-search"></i>
+          </div>
+        </div>
+        <div id="manageProjectsContainer">
+          <div class="loading-indicator">
+            <i class="fas fa-spinner fa-spin"></i>
+            <span>Cargando proyectos...</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal para vista detallada del proyecto -->
+  <div id="projectDetailModal" class="modal">
+    <div class="modal-content large-modal">
+      <div class="modal-header">
+        <h3 id="projectDetailTitle"><i class="fas fa-folder"></i> Detalles del Proyecto</h3>
+        <span class="close" data-modal="projectDetailModal" onclick="document.getElementById('projectDetailModal').style.display='none'; console.log('❌ Modal cerrado via onclick');">&times;</span>
+      </div>
+      <div class="modal-body">
+        <div id="projectDetailContent">
+          <!-- Contenido dinámico del proyecto -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal para confirmar eliminación -->
+  <div id="confirmDeleteModal" class="modal">
+    <div class="modal-content small-modal">
+      <div class="modal-header">
+        <h3><i class="fas fa-exclamation-triangle"></i> Confirmar Eliminación</h3>
+        <span class="close" data-modal="confirmDeleteModal" onclick="document.getElementById('confirmDeleteModal').style.display='none'; console.log('❌ Modal cerrado via onclick');">&times;</span>
+      </div>
+      <div class="modal-body">
+        <p id="deleteConfirmText">¿Estás seguro de que quieres eliminar este proyecto?</p>
+        <div class="button-group">
+          <button id="cancelDelete" class="secondary-btn">Cancelar</button>
+          <button id="confirmDelete" class="danger-btn">
+            <i class="fas fa-trash"></i>
+            Eliminar
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script src="script.js"></script>
+  
+  <!-- Script inline para forzar eventos de proyectos -->
+  <script>
+    console.log('🔧 Script inline cargado - configurando eventos...');
+    
+    function forceProjectEvents() {
+      console.log('🎯 Forzando eventos de proyecto...');
+      
+      const saveBtn = document.getElementById('saveProjectBtn');
+      const loadBtn = document.getElementById('loadProjectBtn');
+      const manageBtn = document.getElementById('manageProjectsBtn');
+      
+      console.log('Elementos encontrados:', {
+        saveBtn: !!saveBtn,
+        loadBtn: !!loadBtn,
+        manageBtn: !!manageBtn
+      });
+      
+      if (saveBtn) {
+        saveBtn.onclick = function(e) {
+          console.log('💾 CLICK DIRECTO: Guardar proyecto');
+          e.preventDefault();
+          if (typeof saveCurrentProject === 'function') {
+            saveCurrentProject();
+          }
+          return false;
+        };
+        console.log('✅ Evento onclick configurado para saveBtn');
+      }
+      
+      if (loadBtn) {
+        loadBtn.onclick = function(e) {
+          console.log('📂 CLICK DIRECTO: Cargar proyecto');
+          e.preventDefault();
+          if (typeof showLoadProjectModal === 'function') {
+            showLoadProjectModal();
+          }
+          return false;
+        };
+        console.log('✅ Evento onclick configurado para loadBtn');
+      }
+      
+      if (manageBtn) {
+        manageBtn.onclick = function(e) {
+          console.log('🔧 CLICK DIRECTO: Gestionar proyectos');
+          e.preventDefault();
+          if (typeof showManageProjectsModal === 'function') {
+            showManageProjectsModal();
+          }
+          return false;
+        };
+        console.log('✅ Evento onclick configurado para manageBtn');
+      }
+    }
+    
+    // Ejecutar inmediatamente
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', forceProjectEvents);
+    } else {
+      forceProjectEvents();
+    }
+    
+    // Backup después de 2 segundos
+    setTimeout(forceProjectEvents, 2000);
+    
+    console.log('🚀 Script inline completado');
+  </script>
 </body>
 </html>
