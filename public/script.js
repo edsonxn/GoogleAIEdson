@@ -1465,8 +1465,22 @@ function showCompletionMessage(sectionNum, totalSections, isComplete) {
         </div>
         <h3>¡Guión Completo de "Crónicas del Gaming"!</h3>
         <p>Has generado todas las ${totalSections} secciones del guión. Cada sección incluye su secuencia visual cronológica. Ahora puedes generar el audio de narración.</p>
+        <p style="color: #00ff7f; margin-top: 15px;"><i class="fas fa-youtube"></i> Generando metadatos de YouTube automáticamente...</p>
       </div>
     `;
+    
+    // 🎬 GENERAR METADATOS DE YOUTUBE AUTOMÁTICAMENTE CUANDO SE COMPLETA EL PROYECTO
+    console.log('🎬 Proyecto completado! Generando metadatos de YouTube automáticamente...');
+    setTimeout(() => {
+      generateYouTubeMetadata().then(() => {
+        console.log('✅ Metadatos de YouTube generados automáticamente al completar proyecto');
+        showNotification('🎬 Metadatos de YouTube generados automáticamente', 'success');
+      }).catch(error => {
+        console.error('❌ Error generando metadatos automáticos:', error);
+        showNotification('⚠️ Error generando metadatos automáticos', 'warning');
+      });
+    }, 2000); // Delay para que se muestre el mensaje de completación primero
+    
   } else {
     output.innerHTML = `
       <div class="completion-message">
@@ -5874,6 +5888,29 @@ async function loadProject(folderName) {
         loadProjectPrompts(window.currentProject);
       }
       
+      // 🎬 VERIFICAR Y MOSTRAR METADATOS DE YOUTUBE SI EXISTEN
+      if (window.currentProject.youtubeMetadata) {
+        console.log('🎬 Proyecto tiene metadatos de YouTube, mostrando automáticamente...');
+        const isProjectComplete = window.currentProject.completedSections.length >= window.currentProject.totalSections;
+        
+        if (isProjectComplete) {
+          // Mostrar metadatos automáticamente para proyectos completos
+          setTimeout(() => {
+            showYouTubeMetadataResults(window.currentProject.youtubeMetadata.content, window.currentProject.topic);
+            showNotification('🎬 Metadatos de YouTube cargados automáticamente', 'info');
+          }, 1500); // Delay para que se complete la carga del proyecto
+        } else {
+          console.log('📊 Proyecto incompleto, metadatos disponibles pero no se muestran automáticamente');
+          showNotification('📊 Este proyecto tiene metadatos de YouTube generados anteriormente', 'info');
+        }
+      } else {
+        const isProjectComplete = window.currentProject.completedSections.length >= window.currentProject.totalSections;
+        if (isProjectComplete) {
+          console.log('🎬 Proyecto completo sin metadatos, se pueden generar manualmente');
+          showNotification('🎬 Proyecto completo. Puedes generar metadatos de YouTube en el extractor de texto.', 'info');
+        }
+      }
+      
       // Actualizar estado de los botones según el progreso del proyecto
       updateProjectButtons(window.currentProject);
       
@@ -6064,6 +6101,15 @@ function showProjectDetails(project) {
             <div class="overview-value">${project.imageModel}</div>
           </div>
           ` : ''}
+          <div class="overview-item">
+            <div class="overview-label">Metadatos YouTube</div>
+            <div class="overview-value">${project.youtubeMetadata ? 
+              `✅ Generados ${project.youtubeMetadata.generatedAt ? 
+                `(${new Date(project.youtubeMetadata.generatedAt).toLocaleDateString()})` : ''
+              }` : 
+              (isComplete ? '⚠️ Disponibles para generar' : '❌ No disponibles')
+            }</div>
+          </div>
         </div>
       </div>
       
@@ -6114,6 +6160,13 @@ function showProjectDetails(project) {
               <i class="fas fa-play-circle"></i>
               Activar Proyecto Completo
             </button>
+            
+            ${isComplete ? `
+              <button class="btn btn-secondary btn-youtube-metadata" data-folder="${project.folderName}" data-topic="${project.topic}" data-has-metadata="${!!project.youtubeMetadata}">
+                <i class="fas fa-youtube"></i>
+                ${project.youtubeMetadata ? 'Ver Metadatos YouTube' : 'Generar Metadatos YouTube'}
+              </button>
+            ` : ''}
           </div>
         ` : `
           <div class="empty-state">
@@ -6130,7 +6183,8 @@ function showProjectDetails(project) {
   setTimeout(() => {
     const actionButtons = content.querySelectorAll('.section-action-btn');
     const activateButton = content.querySelector('.btn-activate-project');
-    console.log('🎯 Configurando event listeners para', actionButtons.length, 'botones de sección y', activateButton ? '1' : '0', 'botón de activar');
+    const youtubeMetadataButton = content.querySelector('.btn-youtube-metadata');
+    console.log('🎯 Configurando event listeners para', actionButtons.length, 'botones de sección,', activateButton ? '1' : '0', 'botón de activar y', youtubeMetadataButton ? '1' : '0', 'botón de metadatos');
     
     // Event listeners para botones de sección individuales
     actionButtons.forEach(button => {
@@ -6181,6 +6235,53 @@ function showProjectDetails(project) {
         }
         
         activateFullProject(projectObj);
+      });
+    }
+    
+    // Event listener para el botón de metadatos de YouTube
+    if (youtubeMetadataButton) {
+      const folder = youtubeMetadataButton.getAttribute('data-folder');
+      const topic = youtubeMetadataButton.getAttribute('data-topic');
+      const hasMetadata = youtubeMetadataButton.getAttribute('data-has-metadata') === 'true';
+      
+      youtubeMetadataButton.addEventListener('click', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        console.log('🎬 Click en metadatos YouTube:', { folder, topic, hasMetadata });
+        
+        if (hasMetadata && project.youtubeMetadata) {
+          // Mostrar metadatos existentes
+          console.log('📽️ Mostrando metadatos existentes');
+          closeModal('projectDetailModal');
+          showYouTubeMetadataResults(project.youtubeMetadata.content, topic);
+          showNotification('🎬 Metadatos de YouTube cargados', 'success');
+        } else {
+          // Generar nuevos metadatos
+          console.log('🎬 Generando nuevos metadatos de YouTube');
+          closeModal('projectDetailModal');
+          showNotification('🎬 Generando metadatos de YouTube...', 'info');
+          
+          // Establecer el tema en el campo para que generateYouTubeMetadata funcione
+          const promptElement = document.getElementById('prompt');
+          if (promptElement) {
+            promptElement.value = topic;
+          }
+          
+          // Cargar el proyecto primero para tener acceso a todas las secciones
+          loadProject(folder).then(() => {
+            setTimeout(() => {
+              generateYouTubeMetadata().then(() => {
+                showNotification('✅ Metadatos de YouTube generados exitosamente', 'success');
+              }).catch(error => {
+                console.error('❌ Error generando metadatos:', error);
+                showNotification('❌ Error generando metadatos de YouTube', 'error');
+              });
+            }, 1000);
+          }).catch(error => {
+            console.error('❌ Error cargando proyecto:', error);
+            showNotification('❌ Error cargando proyecto', 'error');
+          });
+        }
       });
     }
   }, 100);

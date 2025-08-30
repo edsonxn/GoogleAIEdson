@@ -251,6 +251,140 @@ function saveProjectState(projectData) {
   }
 }
 
+// Función para generar metadatos de YouTube automáticamente para un proyecto completo
+async function generateYouTubeMetadataForProject(projectState) {
+  try {
+    console.log(`🎬 Iniciando generación automática de metadatos para: ${projectState.topic}`);
+    
+    const safeFolderName = projectState.folderName;
+    const projectDir = path.join('./public/outputs', safeFolderName);
+    const projectStateFile = path.join(projectDir, 'project_state.json');
+    
+    // Recopilar todos los scripts de las secciones completadas
+    const allSections = [];
+    for (const section of projectState.completedSections.sort((a, b) => a.section - b.section)) {
+      if (section.script) {
+        allSections.push(section.script);
+      }
+    }
+    
+    if (allSections.length === 0) {
+      console.log(`⚠️ No hay secciones con script para generar metadatos`);
+      return;
+    }
+    
+    console.log(`📝 Generando metadatos con ${allSections.length} secciones`);
+    
+    // Combinar todas las secciones
+    const fullScript = allSections.join('\n\n--- SECCIÓN ---\n\n');
+    
+    // Obtener instrucciones de estilo de miniatura (usar default si no está especificado)
+    const thumbnailStyle = projectState.thumbnailStyle || 'default';
+    const thumbnailInstructions = getThumbnailStyleInstructions(thumbnailStyle);
+    
+    console.log(`🎨 Usando estilo de miniatura: ${thumbnailStyle}`);
+    
+    // Generar prompt para metadatos
+    const prompt = `
+Basándote en el siguiente tema y guión completo de un video de gaming, genera metadata optimizada para YouTube:
+
+**TEMA:** ${projectState.topic}
+
+**GUIÓN COMPLETO:**
+${fullScript}
+
+Por favor genera:
+
+1. **10 TÍTULOS CLICKBAIT** (cada uno en una línea, numerados):
+   - Usa palabras que generen curiosidad como "QUE PASA CUANDO", "POR QUE", "HICE ESTO Y PASO ESTO", "NO VAS A CREER", "ESTO CAMBIÓ TODO"
+   - Que sean polémicos pero relacionados al contenido
+   - maximo 15 palabras, minimo 10.
+
+2. **DESCRIPCIÓN PARA VIDEO** (optimizada para SEO):
+   - Entre 150-300 palabras
+   - Incluye palabras clave relevantes del gaming
+   - Menciona el contenido principal del video
+   - Incluye call-to-action para suscribirse
+   - Formato atractivo con emojis
+
+3. **25 ETIQUETAS** (separadas por comas):
+   - Palabras clave relacionadas al tema
+   - Tags de gaming populares
+   - Términos de búsqueda relevantes
+   - Sin espacios en tags compuestos (usar guiones o camelCase)
+
+4. **5 PROMPTS PARA MINIATURAS DE YOUTUBE** (cada uno en una línea, numerados):
+   
+   FORMATO OBLIGATORIO - DEBES SEGUIR ESTA ESTRUCTURA EXACTA PARA CADA UNO DE LOS 5 PROMPTS:
+   
+   "Miniatura de YouTube 16:9 mostrando [descripción visual muy detallada del contenido relacionado al tema, mínimo 15 palabras] con texto superpuesto '[frase clickbait específica relacionada al contenido]' con el texto aplicando el siguiente estilo: ${thumbnailInstructions}"
+   
+   REGLAS ESTRICTAS - NO GENERAR PROMPTS CORTOS O INCOMPLETOS:
+   - CADA prompt debe tener mínimo 25 palabras de descripción visual
+   - CADA prompt debe incluir una frase clickbait específica entre comillas
+   - CADA prompt debe terminar con la frase completa del estilo
+   - NO generar prompts como "el texto con contorno negro" - ESO ESTÁ PROHIBIDO
+   - TODOS los prompts deben seguir el formato completo
+
+REGLAS ESTRICTAS:
+- EXACTAMENTE 5 prompts numerados del 1 al 5
+- Cada prompt debe incluir la frase completa del estilo al final
+- NO hacer referencias a estilos anteriores
+`;
+
+    // Llamar a la IA para generar metadatos
+    const genAI = new GoogleGenAI(process.env.GEMINI_API_KEY);
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
+    
+    console.log(`🤖 Enviando request a Gemini para generar metadatos...`);
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const generatedMetadata = response.text();
+    
+    console.log(`✅ Metadatos generados exitosamente`);
+    
+    // Guardar metadatos en archivo separado
+    const metadataFile = path.join(projectDir, `${safeFolderName}_youtube_metadata.txt`);
+    const metadataContent = `METADATA DE YOUTUBE PARA: ${projectState.topic}
+Generado automáticamente: ${new Date().toLocaleString()}
+Proyecto: ${projectState.originalFolderName || projectState.topic}
+Secciones: ${projectState.completedSections.length}/${projectState.totalSections}
+
+====================================
+
+${generatedMetadata}
+
+====================================
+GUIÓN COMPLETO UTILIZADO:
+====================================
+
+${fullScript}`;
+    
+    fs.writeFileSync(metadataFile, metadataContent, 'utf8');
+    console.log(`💾 Metadatos guardados en: ${metadataFile}`);
+    
+    // Actualizar estado del proyecto con los metadatos
+    const updatedProjectState = JSON.parse(fs.readFileSync(projectStateFile, 'utf8'));
+    updatedProjectState.youtubeMetadata = {
+      generatedAt: new Date().toISOString(),
+      content: generatedMetadata,
+      thumbnailStyle: thumbnailStyle,
+      filename: `${safeFolderName}_youtube_metadata.txt`
+    };
+    updatedProjectState.lastModified = new Date().toISOString();
+    
+    fs.writeFileSync(projectStateFile, JSON.stringify(updatedProjectState, null, 2), 'utf8');
+    
+    console.log(`🎬 ¡Metadatos de YouTube generados automáticamente para el proyecto completado!`);
+    
+    return updatedProjectState;
+    
+  } catch (error) {
+    console.error(`❌ Error generando metadatos automáticos:`, error);
+    throw error;
+  }
+}
+
 // Función para actualizar sección completada
 function updateCompletedSection(projectData, sectionNumber, sectionData) {
   try {
@@ -295,6 +429,21 @@ function updateCompletedSection(projectData, sectionNumber, sectionData) {
       
       fs.writeFileSync(projectStateFile, JSON.stringify(projectState, null, 2), 'utf8');
       console.log(`✅ Sección ${sectionNumber} marcada como completada en el proyecto`);
+      
+      // 🎬 VERIFICAR SI EL PROYECTO ESTÁ COMPLETO Y GENERAR METADATOS DE YOUTUBE
+      const isProjectComplete = projectState.completedSections.length >= projectState.totalSections;
+      console.log(`📊 Progreso del proyecto: ${projectState.completedSections.length}/${projectState.totalSections} - Completo: ${isProjectComplete}`);
+      
+      if (isProjectComplete && !projectState.youtubeMetadata) {
+        console.log(`🎬 ¡Proyecto completo! Generando metadatos de YouTube automáticamente...`);
+        
+        // Generar metadatos automáticamente en background
+        setTimeout(() => {
+          generateYouTubeMetadataForProject(projectState).catch(error => {
+            console.error('❌ Error generando metadatos automáticos:', error);
+          });
+        }, 1000); // Pequeño delay para que la respuesta HTTP se complete primero
+      }
       
       return projectState;
     }
@@ -370,6 +519,32 @@ function loadProjectState(folderName) {
           file.endsWith('.png') || file.endsWith('.jpg') || file.endsWith('.jpeg')
         );
         section.imageFiles = imageFiles.map(file => `outputs/${folderName}/seccion_${section.section}/${file}`);
+      }
+    }
+    
+    // 🎬 CARGAR METADATOS DE YOUTUBE SI EXISTEN
+    const metadataFile = path.join('./public/outputs', folderName, `${folderName}_youtube_metadata.txt`);
+    if (fs.existsSync(metadataFile)) {
+      try {
+        const metadataContent = fs.readFileSync(metadataFile, 'utf8');
+        console.log(`📽️ Metadatos de YouTube encontrados para ${folderName}`);
+        
+        // Si no hay metadatos en el estado pero sí en archivo, agregarlos
+        if (!projectState.youtubeMetadata) {
+          projectState.youtubeMetadata = {
+            generatedAt: fs.statSync(metadataFile).mtime.toISOString(),
+            content: metadataContent,
+            filename: `${folderName}_youtube_metadata.txt`,
+            fileExists: true
+          };
+          
+          console.log(`✅ Metadatos cargados desde archivo para proyecto ${folderName}`);
+        } else {
+          // Asegurar que el flag de archivo existe esté presente
+          projectState.youtubeMetadata.fileExists = true;
+        }
+      } catch (error) {
+        console.error(`❌ Error cargando metadatos de YouTube:`, error);
       }
     }
     
