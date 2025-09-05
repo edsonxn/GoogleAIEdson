@@ -429,21 +429,18 @@
           <h3 class="column-title"><i class="fas fa-cog"></i> Configuración</h3>
           
           <div class="field-group">
-            <label for="sectionsSelect" class="field-label">
+            <label for="sectionsNumber" class="field-label">
               <i class="fas fa-list-ol"></i> Secciones:
             </label>
-            <select id="sectionsSelect" class="field-select">
-              <option value="1">1 Sección</option>
-              <option value="2">2 Secciones</option>
-              <option value="3" selected>3 Secciones</option>
-              <option value="4">4 Secciones</option>
-              <option value="5">5 Secciones</option>
-              <option value="6">6 Secciones</option>
-              <option value="7">7 Secciones</option>
-              <option value="8">8 Secciones</option>
-              <option value="9">9 Secciones</option>
-              <option value="10">10 Secciones</option>
-            </select>
+            <div class="number-input-group">
+              <button type="button" class="number-btn decrease-btn" onclick="changeSectionCount(-1)" title="Disminuir secciones">
+                <i class="fas fa-minus"></i>
+              </button>
+              <input type="number" id="sectionsNumber" class="number-input" value="3" min="1" max="150" placeholder="3">
+              <button type="button" class="number-btn increase-btn" onclick="changeSectionCount(1)" title="Aumentar secciones">
+                <i class="fas fa-plus"></i>
+              </button>
+            </div>
           </div>
 
           <div class="field-group">
@@ -493,56 +490,24 @@
               <option value="gemini2" selected>Gemini 2.0</option>
             </select>
           </div>
+
+          <div class="field-group">
+            <label for="llmModelSelect" class="field-label">
+              <i class="fas fa-brain"></i> Modelo LLM:
+            </label>
+            <select id="llmModelSelect" class="field-select">
+              <option value="gemini-2.5-pro" selected>Gemini 2.5 Pro</option>
+              <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+              <option value="gpt-5">GPT-5</option>
+              <option value="gpt-5-mini">GPT-5 Mini</option>
+              <option value="gpt-5-nano">GPT-5 Nano</option>
+            </select>
+          </div>
         </div>
 
         <!-- Columna 2: Audio y opciones -->
         <div class="config-column">
           <h3 class="column-title"><i class="fas fa-volume-up"></i> Audio</h3>
-          
-          <div class="field-group">
-            <label for="voiceSelect" class="field-label">
-              <i class="fas fa-microphone-alt"></i> Voz:
-            </label>
-            <select id="voiceSelect" class="field-select">
-              <option value="Zephyr">Zephyr</option>
-              <option value="Puck">Puck</option>
-              <option value="Charon">Charon</option>
-              <option value="Kore">Kore</option>
-              <option value="Fenrir">Fenrir</option>
-              <option value="Leda">Leda</option>
-              <option value="Orus" selected>Orus</option>
-              <option value="Aoede">Aoede</option>
-              <option value="Callirrhoe">Callirrhoe</option>
-              <option value="Enceladus">Enceladus</option>
-              <option value="Iapetus">Iapetus</option>
-              <option value="Umbriel">Umbriel</option>
-              <option value="Algeba">Algeba</option>
-              <option value="Despina">Despina</option>
-              <option value="Erinome">Erinome</option>
-              <option value="Algenib">Algenib</option>
-              <option value="Rasalgethi">Rasalgethi</option>
-              <option value="Laomedeia">Laomedeia</option>
-              <option value="Achernar">Achernar</option>
-              <option value="Alnilam">Alnilam</option>
-              <option value="Schedar">Schedar</option>
-              <option value="Gacrux">Gacrux</option>
-              <option value="Pulcherrima">Pulcherrima</option>
-              <option value="Achird">Achird</option>
-              <option value="Zubenelgenubi">Zubenelgenubi</option>
-              <option value="Vindematrix">Vindematrix</option>
-              <option value="Sadachbia">Sadachbia</option>
-              <option value="Sadaltager">Sadaltager</option>
-              <option value="Sulafat">Sulafat</option>
-              <option value="Autonoe">Autonoe</option>
-            </select>
-          </div>
-
-          <div class="field-group">
-            <label for="narrationStyle" class="field-label">
-              <i class="fas fa-theater-masks"></i> Estilo:
-            </label>
-            <input type="text" id="narrationStyle" class="field-input" placeholder="Ej: épico y dramático" />
-          </div>
 
           <div class="checkbox-group">
             <label class="checkbox-label">
@@ -571,6 +536,54 @@
             </label>
           </div>
 
+          <!-- Configuraciones de voz Google (inicialmente ocultas) -->
+          <div id="googleVoiceGroup" style="display: none; margin-top: 10px; margin-left: 20px;">
+            <div class="field-group">
+              <label for="voiceSelect" class="field-label">
+                <i class="fas fa-microphone-alt"></i> Voz Google:
+              </label>
+              <select id="voiceSelect" class="field-select">
+                <option value="Zephyr">Zephyr</option>
+                <option value="Puck">Puck</option>
+                <option value="Charon">Charon</option>
+                <option value="Kore">Kore</option>
+                <option value="Fenrir">Fenrir</option>
+                <option value="Leda">Leda</option>
+                <option value="Orus" selected>Orus</option>
+                <option value="Aoede">Aoede</option>
+                <option value="Callirrhoe">Callirrhoe</option>
+                <option value="Enceladus">Enceladus</option>
+                <option value="Iapetus">Iapetus</option>
+                <option value="Umbriel">Umbriel</option>
+                <option value="Algeba">Algeba</option>
+                <option value="Despina">Despina</option>
+                <option value="Erinome">Erinome</option>
+                <option value="Algenib">Algenib</option>
+                <option value="Rasalgethi">Rasalgethi</option>
+                <option value="Laomedeia">Laomedeia</option>
+                <option value="Achernar">Achernar</option>
+                <option value="Alnilam">Alnilam</option>
+                <option value="Schedar">Schedar</option>
+                <option value="Gacrux">Gacrux</option>
+                <option value="Pulcherrima">Pulcherrima</option>
+                <option value="Achird">Achird</option>
+                <option value="Zubenelgenubi">Zubenelgenubi</option>
+                <option value="Vindematrix">Vindematrix</option>
+                <option value="Sadachbia">Sadachbia</option>
+                <option value="Sadaltager">Sadaltager</option>
+                <option value="Sulafat">Sulafat</option>
+                <option value="Autonoe">Autonoe</option>
+              </select>
+            </div>
+
+            <div class="field-group">
+              <label for="narrationStyle" class="field-label">
+                <i class="fas fa-theater-masks"></i> Estilo:
+              </label>
+              <input type="text" id="narrationStyle" class="field-input" placeholder="Ej: épico y dramático" />
+            </div>
+          </div>
+
           <div class="checkbox-group">
             <label class="checkbox-label">
               <input type="checkbox" id="autoGenerateApplioAudio" class="checkbox-input">
@@ -578,6 +591,40 @@
               <i class="fas fa-microphone"></i>
               Incluir audio Applio
             </label>
+          </div>
+
+          <!-- Dropdown de voces de Applio (inicialmente oculto) -->
+          <div class="field-group" id="applioVoiceGroup" style="display: none; margin-top: 10px; margin-left: 20px;">
+            <label for="applioVoiceSelect" class="field-label">
+              <i class="fas fa-user-alt"></i> Voz Applio:
+            </label>
+            <select id="applioVoiceSelect" class="field-select">
+              <option value="logs\\VOCES\\RemyOriginal.pth">Cargando voces...</option>
+            </select>
+            
+            <!-- Control de Modelo TTS -->
+            <div class="field-group" style="margin-top: 15px;">
+              <label for="applioModelSelect" class="field-label">
+                <i class="fas fa-microphone"></i> Modelo TTS:
+              </label>
+              <select id="applioModelSelect" class="field-select">
+                <option value="fr-FR-RemyMultilingualNeural" selected>fr-FR-RemyMultilingualNeural</option>
+                <option value="es-VE-SebastianNeural">es-VE-SebastianNeural</option>
+              </select>
+            </div>
+            
+            <!-- Control de Pitch -->
+            <div class="field-group" style="margin-top: 15px;">
+              <label for="applioPitch" class="field-label">
+                <i class="fas fa-sliders-h"></i> Pitch: <span id="pitchValue">0</span>
+              </label>
+              <input type="range" id="applioPitch" class="pitch-slider" min="-20" max="20" value="0" step="1">
+              <div class="pitch-labels">
+                <span>-20</span>
+                <span>0</span>
+                <span>+20</span>
+              </div>
+            </div>
           </div>
 
           <div class="checkbox-group">
@@ -681,6 +728,19 @@
       <div class="script-container">
         <div class="script-header">
           <h3><i class="fas fa-file-alt"></i> Guión Generado - <span id="section-title">Sección 1</span></h3>
+          <div id="chapter-title-container" style="margin-top: 5px; margin-bottom: 10px; display: none;">
+            <h4 style="color: #666; font-weight: normal; margin: 0; font-size: 14px;">
+              <i class="fas fa-bookmark"></i> <span id="chapter-title"></span>
+            </h4>
+          </div>
+          <div id="token-usage-container" style="margin-top: 5px; margin-bottom: 10px; display: none;">
+            <div style="display: flex; gap: 15px; font-size: 12px; color: #666; background: #f8f9fa; padding: 8px 12px; border-radius: 6px; border-left: 3px solid #4299e1;">
+              <span><i class="fas fa-arrow-right" style="color: #38a169;"></i> <strong>Entrada:</strong> <span id="input-tokens">-</span> tokens</span>
+              <span><i class="fas fa-arrow-left" style="color: #e53e3e;"></i> <strong>Salida:</strong> <span id="output-tokens">-</span> tokens</span>
+              <span><i class="fas fa-calculator" style="color: #4299e1;"></i> <strong>Total:</strong> <span id="total-tokens">-</span> tokens</span>
+              <span><i class="fas fa-robot" style="color: #9f7aea;"></i> <strong>Modelo:</strong> <span id="model-used">-</span></span>
+            </div>
+          </div>
           <div class="script-navigation">
             <div class="section-nav-buttons">
               <button id="prevSectionBtn" class="nav-section-btn" title="Sección anterior" disabled>

@@ -3,6 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import bodyParser from 'body-parser';
 import { GoogleGenAI, Modality } from "@google/genai";
+import OpenAI from 'openai';
 import wav from 'wav';
 import fs from 'fs';
 import path from 'path';
@@ -59,6 +60,11 @@ const ai = new GoogleGenAI({
   apiKey: process.env.GOOGLE_API_KEY,
 });
 
+// Configurar cliente OpenAI
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
+
 // Almacén de conversaciones en memoria (historial por proyecto)
 const conversationStore = new Map();
 
@@ -84,6 +90,153 @@ async function generateContentWithRetry(ai, params, maxRetries = 3, delay = 2000
   }
 }
 
+// Función universal para generar contenido con múltiples proveedores LLM
+async function generateUniversalContent(model, promptOrHistory, systemInstruction = null, maxRetries = 3) {
+  console.log(`🤖 Generando contenido con modelo: ${model}`);
+  
+  // Determinar el proveedor basado en el modelo
+  const isOpenAI = model.includes('gpt') || model.includes('openai');
+  const isGoogle = model.includes('gemini') || model.includes('google');
+  
+  console.log(`🔍 Proveedor detectado: ${isOpenAI ? 'OpenAI' : 'Google AI'} para modelo "${model}"`);
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`🔄 Intento ${attempt}/${maxRetries} con ${isOpenAI ? 'OpenAI' : 'Google AI'}...`);
+      
+      if (isOpenAI) {
+        // Usar OpenAI
+        const messages = [];
+        
+        if (systemInstruction) {
+          messages.push({
+            role: "system",
+            content: systemInstruction
+          });
+        }
+        
+        // Si promptOrHistory es un array (historial de conversación)
+        if (Array.isArray(promptOrHistory)) {
+          // OPTIMIZACIÓN PARA OPENAI: Solo usar los últimos 2 mensajes para ahorrar tokens
+          const recentHistory = promptOrHistory.slice(-2);
+          console.log(`🔄 OPTIMIZACIÓN OpenAI - Usando solo los últimos ${recentHistory.length} mensajes de ${promptOrHistory.length} total`);
+          
+          recentHistory.forEach(h => {
+            if (h.role === 'user') {
+              messages.push({
+                role: "user",
+                content: h.parts[0].text
+              });
+            } else if (h.role === 'model') {
+              messages.push({
+                role: "assistant", 
+                content: h.parts[0].text
+              });
+            }
+          });
+        } else {
+          // Si es un string simple
+          messages.push({
+            role: "user", 
+            content: promptOrHistory
+          });
+        }
+        
+        // Configurar parámetros según el modelo
+        const requestConfig = {
+          model: model,
+          messages: messages
+        };
+        
+        // NO configurar max_completion_tokens - usar límites por defecto como Gemini
+        // Esto permite máxima memoria disponible para cada modelo
+        
+        // Solo agregar temperature si NO es un modelo GPT-5 (todos los GPT-5 solo soportan valor por defecto)
+        if (!model.startsWith('gpt-5')) {
+          requestConfig.temperature = 0.7;
+        }
+        
+        const response = await openai.chat.completions.create(requestConfig);
+        
+        console.log(`✅ Contenido generado exitosamente con OpenAI en intento ${attempt}`);
+        return {
+          text: response.choices[0].message.content
+        };
+        
+      } else {
+        // Usar Google AI (comportamiento existente)
+        const params = {
+          model: `models/${model}`
+        };
+        
+        // Si promptOrHistory es un array (historial de conversación)
+        if (Array.isArray(promptOrHistory)) {
+          params.contents = promptOrHistory;
+        } else {
+          params.contents = promptOrHistory;
+        }
+        
+        if (systemInstruction) {
+          params.config = { systemInstruction };
+        }
+        
+        const response = await ai.models.generateContent(params);
+        console.log(`✅ Contenido generado exitosamente con Google AI en intento ${attempt}`);
+        return response;
+      }
+      
+    } catch (error) {
+      console.error(`❌ Error en intento ${attempt}/${maxRetries}:`, error.message);
+      
+      const isRetryableError = (isOpenAI && error.status >= 500) || 
+                              (!isOpenAI && error.status === 503);
+      
+      if (isRetryableError && attempt < maxRetries) {
+        const delay = 2000 * Math.pow(1.5, attempt - 1);
+        console.log(`⏳ Esperando ${delay}ms antes del siguiente intento...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      } else {
+        throw error;
+      }
+    }
+  }
+}
+
+// Función para optimizar historial manteniendo continuidad narrativa
+function optimizeConversationHistory(conversation) {
+  const historialAntes = conversation.history.length;
+  
+  // No optimizar si el historial es pequeño
+  if (historialAntes <= 6) {
+    return;
+  }
+  
+  console.log(`🧠 OPTIMIZACIÓN INTELIGENTE - Manteniendo continuidad narrativa...`);
+  
+  if (historialAntes > 8) {
+    // Para series largas: mantener contexto inicial + contexto reciente
+    const contextoInicial = conversation.history.slice(0, 2); // Primer capítulo
+    const contextoReciente = conversation.history.slice(-6);   // Últimos 3 capítulos
+    
+    conversation.history = [...contextoInicial, ...contextoReciente];
+    
+    console.log(`🔄 OPTIMIZACIÓN - Historial reestructurado de ${historialAntes} a ${conversation.history.length} mensajes`);
+    console.log(`📚 ESTRATEGIA - Manteniendo: capítulo inicial (contexto base) + últimos 3 capítulos (continuidad)`);
+  } else {
+    // Para series medianas: mantener últimos 3 capítulos
+    conversation.history = conversation.history.slice(-6);
+    console.log(`🔄 OPTIMIZACIÓN - Historial reducido de ${historialAntes} a ${conversation.history.length} mensajes (últimos 3 capítulos)`);
+  }
+  
+  console.log(`💰 AHORRO DE TOKENS - Eliminados ${historialAntes - conversation.history.length} mensajes intermedios`);
+}
+
+// Función para estimar tokens aproximadamente (1 token ≈ 4 caracteres en español)
+function estimateTokens(text) {
+  if (!text || typeof text !== 'string') return 0;
+  return Math.ceil(text.length / 4);
+}
+
 // Función para obtener o crear una conversación
 function getOrCreateConversation(projectKey) {
   if (!conversationStore.has(projectKey)) {
@@ -92,6 +245,7 @@ function getOrCreateConversation(projectKey) {
       topic: '',
       totalSections: 0,
       currentSection: 0,
+      chapterStructure: [],
       createdAt: Date.now()
     });
   }
@@ -107,6 +261,57 @@ function cleanOldConversations() {
     if (now - conversation.createdAt > oneDayInMs) {
       conversationStore.delete(key);
     }
+  }
+}
+
+// Función para obtener las voces disponibles de Applio
+function getAvailableVoices() {
+  try {
+    const voicesPath = path.join('C:', 'applio2', 'Applio', 'logs', 'VOCES');
+    console.log(`🔍 Buscando voces en: ${voicesPath}`);
+    
+    if (!fs.existsSync(voicesPath)) {
+      console.warn(`⚠️ Carpeta de voces no encontrada: ${voicesPath}`);
+      return [{
+        name: 'RemyOriginal (Default)',
+        path: 'logs\\VOCES\\RemyOriginal.pth',
+        displayName: 'RemyOriginal'
+      }];
+    }
+    
+    const files = fs.readdirSync(voicesPath);
+    const voiceFiles = files.filter(file => file.endsWith('.pth'));
+    
+    console.log(`📂 Archivos .pth encontrados: ${voiceFiles.length}`);
+    
+    const voices = voiceFiles.map(file => {
+      const baseName = path.basename(file, '.pth');
+      return {
+        name: baseName,
+        path: `logs\\VOCES\\${file}`,
+        displayName: baseName
+      };
+    });
+    
+    // Si no hay voces, agregar la por defecto
+    if (voices.length === 0) {
+      voices.push({
+        name: 'RemyOriginal (Default)',
+        path: 'logs\\VOCES\\RemyOriginal.pth',
+        displayName: 'RemyOriginal'
+      });
+    }
+    
+    console.log(`✅ Voces disponibles: ${voices.map(v => v.displayName).join(', ')}`);
+    return voices;
+    
+  } catch (error) {
+    console.error('❌ Error leyendo voces:', error);
+    return [{
+      name: 'RemyOriginal (Default)',
+      path: 'logs\\VOCES\\RemyOriginal.pth',
+      displayName: 'RemyOriginal'
+    }];
   }
 }
 
@@ -144,13 +349,8 @@ const defaultThumbnailStyles = {
 
 // Función para obtener instrucciones de estilo de miniatura
 function getThumbnailStyleInstructions(styleId) {
-  console.log(`🔍 DEBUG - getThumbnailStyleInstructions recibió:`, styleId);
-  console.log(`🔍 DEBUG - tipo de styleId:`, typeof styleId);
-  
   // Si es un estilo personalizado (enviado desde el frontend)
   if (typeof styleId === 'object' && styleId) {
-    console.log(`✅ DEBUG - Usando estilo personalizado:`, styleId.name);
-    
     // Construir instrucciones completas usando los colores específicos
     const primaryColor = styleId.primaryColor || 'amarillo';
     const secondaryColor = styleId.secondaryColor || 'blanco';
@@ -158,18 +358,15 @@ function getThumbnailStyleInstructions(styleId) {
     
     const fullInstructions = `El texto debe tener la frase principal en color ${primaryColor} brillante y la frase secundaria en color ${secondaryColor}, ambas con contorno negro grueso, letras brillosas con efecto luminoso y resplandor. Estilo visual: ${customInstructions}`;
     
-    console.log(`🎨 DEBUG - Instrucciones construidas:`, fullInstructions);
     return fullInstructions;
   }
   
   // Si es un estilo predeterminado
   if (typeof styleId === 'string' && defaultThumbnailStyles[styleId]) {
-    console.log(`✅ DEBUG - Usando estilo predeterminado:`, styleId);
     return defaultThumbnailStyles[styleId].instructions;
   }
   
   // Fallback al estilo predeterminado
-  console.log(`⚠️ DEBUG - Usando fallback al estilo default`);
   return defaultThumbnailStyles.default.instructions;
 }
 
@@ -195,7 +392,8 @@ function saveProjectState(projectData) {
       promptModifier,
       imageCount,
       skipImages,
-      googleImages
+      googleImages,
+      applioVoice
     } = projectData;
     
     const safeFolderName = folderName && folderName.trim() 
@@ -229,6 +427,7 @@ function saveProjectState(projectData) {
       imageCount: imageCount || 3,
       skipImages: skipImages || false,
       googleImages: googleImages || false,
+      applioVoice: applioVoice || 'logs\\VOCES\\RemyOriginal.pth',
       createdAt: new Date().toISOString(),
       lastModified: new Date().toISOString(),
       completedSections: []
@@ -286,7 +485,7 @@ async function generateYouTubeMetadataForProject(projectState) {
     
     // Generar prompt para metadatos
     const prompt = `
-Basándote en el siguiente tema y guión completo de un video de gaming, genera metadata optimizada para YouTube:
+Basándote en el siguiente tema y guión completo del video, genera metadata optimizada para YouTube:
 
 **TEMA:** ${projectState.topic}
 
@@ -302,14 +501,14 @@ Por favor genera:
 
 2. **DESCRIPCIÓN PARA VIDEO** (optimizada para SEO):
    - Entre 150-300 palabras
-   - Incluye palabras clave relevantes del gaming
+   - Incluye palabras clave relevantes del tema
    - Menciona el contenido principal del video
    - Incluye call-to-action para suscribirse
    - Formato atractivo con emojis
 
 3. **25 ETIQUETAS** (separadas por comas):
    - Palabras clave relacionadas al tema
-   - Tags de gaming populares
+   - Tags populares del nicho correspondiente
    - Términos de búsqueda relevantes
    - Sin espacios en tags compuestos (usar guiones o camelCase)
 
@@ -566,6 +765,12 @@ function createSafeFolderName(topic) {
 
 // Función para limpiar el texto del guión de contenido no deseado
 function cleanScriptText(text) {
+  // Validar que text sea una string
+  if (!text || typeof text !== 'string') {
+    console.log(`⚠️ WARNING - cleanScriptText recibió:`, typeof text, text);
+    return String(text || '').trim();
+  }
+  
   let cleanText = text.trim();
   
   // Remover patrones comunes de texto no deseado
@@ -774,10 +979,6 @@ guardado para referencia futura.
 
 // Función para generar imágenes con diferentes modelos
 async function generateImageWithModel(ai, prompt, modelType) {
-  console.log(`🔍 DEBUG - generateImageWithModel llamada con modelType: "${modelType}"`);
-  console.log(`🔍 DEBUG - Tipo de modelType: ${typeof modelType}`);
-  console.log(`🔍 DEBUG - ¿Es igual a 'gemini2'?: ${modelType === 'gemini2'}`);
-  
   if (modelType === 'gemini2') {
     console.log(`🤖 Usando Gemini 2.0 Flash nativo...`);
     // Usar Gemini 2.0 nativo con responseModalities
@@ -818,28 +1019,126 @@ async function generateImageWithModel(ai, prompt, modelType) {
 }
 
 // Función para generar prompts según el estilo seleccionado
-function generateScriptPrompt(style, topic, sections, section, customStyleInstructions = null) {
-  console.log(`🎨 DEBUG BACKEND - generateScriptPrompt llamada:`);
-  console.log(`🎨 DEBUG BACKEND - style: "${style}"`);
-  console.log(`🎨 DEBUG BACKEND - customStyleInstructions: "${customStyleInstructions}"`);
-  console.log(`🎨 DEBUG BACKEND - style.startsWith('custom_'): ${style && style.startsWith('custom_')}`);
-  
+function generateScriptPrompt(style, topic, sections, section, customStyleInstructions = null, chapterStructure = null, previousChapterContent = null) {
   if (style === 'comedy') {
-    console.log(`🎨 DEBUG BACKEND - Usando estilo comedy`);
-    return generateComedyPrompt(topic, sections, section);
+    return generateComedyPrompt(topic, sections, section, chapterStructure, previousChapterContent);
   } else if (style && style.startsWith('custom_') && customStyleInstructions) {
-    console.log(`🎨 DEBUG BACKEND - Usando estilo personalizado: ${style}`);
-    return generateCustomPrompt(topic, sections, section, customStyleInstructions);
+    return generateCustomPrompt(topic, sections, section, customStyleInstructions, chapterStructure, previousChapterContent);
   } else {
-    console.log(`🎨 DEBUG BACKEND - Usando estilo profesional (default)`);
-    return generateProfessionalPrompt(topic, sections, section);
+    return generateProfessionalPrompt(topic, sections, section, chapterStructure, previousChapterContent);
   }
 }
 
 // Función para generar prompt con estilo personalizado
-function generateCustomPrompt(topic, sections, section, customInstructions) {
+function generateCustomPrompt(topic, sections, section, customInstructions, chapterStructure = null, previousChapterContent = null) {
   const currentSection = section;
   const totalSections = sections;
+  
+  // Generar texto de estructura de capítulos si está disponible
+  let chapterContext = '';
+  if (chapterStructure && chapterStructure.length > 0) {
+    chapterContext = `
+
+ESTRUCTURA COMPLETA DE CAPÍTULOS:
+${chapterStructure.map((title, index) => `${index + 1}. ${title}`).join('\n')}
+
+CAPÍTULO ACTUAL: ${chapterStructure[section - 1] || `Capítulo ${section}`}`;
+  }
+
+  // Generar contexto de capítulos anteriores si está disponible
+  let previousContext = '';
+  if (previousChapterContent && previousChapterContent.length > 0) {
+    previousContext = `
+
+CONTEXTO DE CAPÍTULOS ANTERIORES (para continuidad narrativa):
+${previousChapterContent.map((content, index) => {
+      const chapterTitle = chapterStructure && chapterStructure[index] ? chapterStructure[index] : `Capítulo ${index + 1}`;
+      const preview = content.length > 200 ? content.substring(0, 200) + '...' : content;
+      return `📚 ${chapterTitle}:\n${preview}`;
+    }).join('\n\n')}
+
+IMPORTANTE: TOMA EN CUENTA EL CONTEXTO ANTERIOR para mantener continuidad narrativa, referencias y coherencia en el desarrollo del tema.`;
+  }
+  
+  if (currentSection === 1) {
+    // Primera sección
+    return `${customInstructions}
+
+TEMA SOLICITADO: "${topic}"
+TOTAL DE SECCIONES: ${sections}${chapterContext}
+
+Vamos a crear un guión de YouTube dividido en ${sections} capítulos sobre el tema que el usuario ha solicitado.
+
+POR FAVOR, DAME SOLO EL CAPÍTULO 1 DE ${sections}.
+
+INSTRUCCIONES GENERALES:
+- Crea contenido basado exactamente en lo que el usuario ha pedido en el tema
+- Si es sobre ficción, enfócate en los elementos narrativos y creativos
+- Si es sobre desarrollo/creación, enfócate en los aspectos reales de producción
+- Si es sobre historia, enfócate en hechos históricos y datos
+- Adapta tu estilo narrativo al tipo de contenido solicitado
+- APLICA ESTRICTAMENTE el estilo personalizado especificado arriba
+- NO REPITAS IDEAS, SI ES NECESARIO SALTE UN POCO DEL TEMA PARA EXPLORAR NUEVAS PERSPECTIVAS, PUEDES EXPLORAR CURIOSIDADES TAMBIEN, EASTER EGGS, ETC.
+${chapterStructure ? `- ENFÓCATE en el contenido específico del CAPÍTULO 1: "${chapterStructure[0] || 'Sin título'}"` : ''}
+
+ESTRUCTURA REQUERIDA PARA EL CAPÍTULO 1:
+- Exactamente 3 párrafos detallados
+- Máximo 300 palabras en total para este capítulo
+- Mínimo 250 palabras por capítulo
+- Mantén el estilo personalizado establecido arriba
+- Establece las bases del tema para los siguientes capítulos
+${chapterStructure ? `- Desarrolla el tema específico del capítulo: "${chapterStructure[0] || 'Sin título'}"` : ''}
+
+FORMATO DE RESPUESTA OBLIGATORIO:
+- Responde ÚNICAMENTE con el texto del guión
+- NO incluyas explicaciones, comentarios, ni texto adicional
+- NO incluyas etiquetas como "Capítulo 1:", "Guión:", etc.
+- NO incluyas notas, aclaraciones o pensamientos
+- El texto debe estar listo para ser usado directamente en TTS
+- Comienza directamente con el contenido del guión
+- APLICA FIELMENTE el estilo personalizado: ${customInstructions}
+
+IMPORTANTE: 
+- Este es el PRIMER capítulo, establece los fundamentos del tema, da una bienvenida al canal
+- NO incluyas despedida ya que habrá más capítulos
+- Basa tu contenido completamente en lo que el usuario solicita en el tema
+- RESPONDE SOLO CON EL TEXTO DEL GUIÓN, NADA MÁS`;
+  } else {
+    // Secciones posteriores
+    return `Ahora dame el capítulo ${currentSection} de ${totalSections} del mismo tema.${chapterContext}
+
+MANTÉN EXACTAMENTE EL MISMO ESTILO PERSONALIZADO: ${customInstructions}
+
+ESTRUCTURA REQUERIDA PARA EL CAPÍTULO ${currentSection}:
+- Exactamente 3 párrafos detallados
+- Máximo 300 palabras en total para este capítulo
+- Mínimo 250 palabras por capítulo
+- Mantén continuidad narrativa con los capítulos anteriores
+- Progresa de manera lógica en el desarrollo del tema
+- Sigue el mismo estilo y enfoque que estableciste en los capítulos anteriores
+- APLICA ESTRICTAMENTE el estilo personalizado: ${customInstructions}
+${chapterStructure ? `- ENFÓCATE en el contenido específico del CAPÍTULO ${currentSection}: "${chapterStructure[currentSection - 1] || 'Sin título'}"` : ''}
+
+FORMATO DE RESPUESTA OBLIGATORIO:
+- Responde ÚNICAMENTE con el texto del guión
+- NO incluyas explicaciones, comentarios, ni texto adicional
+- NO incluyas etiquetas como "Capítulo ${currentSection}:", "Guión:", etc.
+- NO incluyas notas, aclaraciones o pensamientos
+- El texto debe estar listo para ser usado directamente en TTS
+- Comienza directamente con el contenido del guión
+
+${currentSection === totalSections ? `IMPORTANTE: Como este es el ÚLTIMO capítulo (${currentSection}/${totalSections}), DEBES incluir una despedida profesional al final que invite a:
+- Comentar sus opiniones sobre el tema presentado
+- Suscribirse al canal para más contenido  
+- Dar like si disfrutaron el contenido
+- Sugerir futuros temas que les gustaría ver
+
+Ejemplo de despedida: "Y así concluye este episodio sobre [tema]... Si este contenido te ha resultado interesante, déjanos un like y suscríbete al canal para más contenido. Compártenos en los comentarios qué otros temas te gustaría que cubramos..."` : 'NO incluyas despedida ya que este no es el último capítulo.'}
+
+🎯 RECORDATORIO CRÍTICO: Debes seguir fielmente este estilo: ${customInstructions}
+
+RECUERDA: RESPONDE SOLO CON EL TEXTO DEL GUIÓN, SIN COMENTARIOS NI EXPLICACIONES ADICIONALES.`;
+  }
   
   if (currentSection === 1) {
     // Primera sección
@@ -854,9 +1153,9 @@ POR FAVOR, DAME SOLO LA SECCIÓN 1 DE ${sections}.
 
 INSTRUCCIONES GENERALES:
 - Crea contenido basado exactamente en lo que el usuario ha pedido en el tema
-- Si es sobre lore de videojuegos, enfócate en la historia interna del juego
-- Si es sobre desarrollo/creación de videojuegos, enfócate en los aspectos reales de producción
-- Si es sobre historia de la industria, enfócate en hechos históricos y datos
+- Si es sobre ficción, enfócate en los elementos narrativos y creativos
+- Si es sobre desarrollo/creación, enfócate en los aspectos reales de producción
+- Si es sobre historia, enfócate en hechos históricos y datos
 - Adapta tu estilo narrativo al tipo de contenido solicitado
 - APLICA ESTRICTAMENTE el estilo personalizado especificado arriba
 - NO REPITAS IDEAS, SI ES NECESARIO SALTE UN POCO DEL TEMA PARA EXPLORAR NUEVAS PERSPECTIVAS, PUEDES EXPLORAR CURIOSIDADES TAMBIEN, EASTER EGGS, ETC.
@@ -886,7 +1185,7 @@ IMPORTANTE:
     // Secciones posteriores
     return `Ahora dame la sección ${currentSection} de ${totalSections} del mismo tema.
 
-MANTÉN EXACTAMENTE EL MISMO ESTILO PERSONALIZADO: ${customInstructions}
+MANTÉN EXACTAMENTE EL MISMO ESTILO PERSONALIZADO: ${customInstructions}${chapterContext}${previousContext}
 
 ESTRUCTURA REQUERIDA PARA LA SECCIÓN ${currentSection}:
 - Exactamente 3 párrafos detallados
@@ -895,6 +1194,8 @@ ESTRUCTURA REQUERIDA PARA LA SECCIÓN ${currentSection}:
 - Mantén continuidad narrativa con las secciones anteriores
 - Progresa de manera lógica en el desarrollo del tema
 - Sigue el mismo estilo y enfoque que estableciste en las secciones anteriores
+- CONECTA directamente con el contenido de los capítulos anteriores
+- Haz referencias sutiles a información ya mencionada cuando sea relevante
 - APLICA ESTRICTAMENTE el estilo personalizado: ${customInstructions}
 
 FORMATO DE RESPUESTA OBLIGATORIO:
@@ -920,105 +1221,165 @@ RECUERDA: RESPONDE SOLO CON EL TEXTO DEL GUIÓN, SIN COMENTARIOS NI EXPLICACIONE
 }
 
 // Función para generar prompt estilo profesional (original)
-function generateProfessionalPrompt(topic, sections, section) {
+function generateProfessionalPrompt(topic, sections, section, chapterStructure = null, previousChapterContent = null) {
+  // Generar texto de estructura de capítulos si está disponible
+  let chapterContext = '';
+  if (chapterStructure && chapterStructure.length > 0) {
+    chapterContext = `
+
+ESTRUCTURA COMPLETA DE CAPÍTULOS:
+${chapterStructure.map((title, index) => `${index + 1}. ${title}`).join('\n')}
+
+CAPÍTULO ACTUAL: ${chapterStructure[section - 1] || `Capítulo ${section}`}`;
+  }
+
+  // Generar contexto de capítulos anteriores si está disponible
+  let previousContext = '';
+  if (previousChapterContent && previousChapterContent.length > 0) {
+    previousContext = `
+
+CONTEXTO DE CAPÍTULOS ANTERIORES (para continuidad narrativa):
+${previousChapterContent.map((content, index) => {
+      const chapterTitle = chapterStructure && chapterStructure[index] ? chapterStructure[index] : `Capítulo ${index + 1}`;
+      const preview = content.length > 200 ? content.substring(0, 200) + '...' : content;
+      return `📚 ${chapterTitle}:\n${preview}`;
+    }).join('\n\n')}
+
+IMPORTANTE: TOMA EN CUENTA EL CONTEXTO ANTERIOR para mantener continuidad narrativa, referencias y coherencia en el desarrollo del tema.`;
+  }
+  
   if (section === 1) {
-    return `Eres un escritor profesional especializado en guiones para YouTube del canal que el usuario indique, si no indica entonces es para "Crónicas del Gaming".
+    return `Eres un escritor profesional especializado en guiones para YouTube.
 
 TEMA SOLICITADO: "${topic}"
-TOTAL DE SECCIONES: ${sections}
+TOTAL DE CAPÍTULOS: ${sections}${chapterContext}
 
-Vamos a crear un guión de YouTube dividido en ${sections} secciones sobre el tema que el usuario ha solicitado.
+Vamos a crear un guión de YouTube dividido en ${sections} capítulos sobre el tema que el usuario ha solicitado.
 
-POR FAVOR, DAME SOLO LA SECCIÓN 1 DE ${sections}.
-
+POR FAVOR, DAME SOLO EL CAPÍTULO 1 DE ${sections}.
+al ser este el primer capítulo, da una bienvenida al canal y presenta el tema de manera atractiva.
 INSTRUCCIONES GENERALES:
 - Crea contenido basado exactamente en lo que el usuario ha pedido en el tema
-- Si es sobre lore de videojuegos, enfócate en la historia interna del juego
-- Si es sobre desarrollo/creación de videojuegos, enfócate en los aspectos reales de producción
-- Si es sobre historia de la industria, enfócate en hechos históricos y datos
+- Si es sobre ficción, enfócate en los elementos narrativos y creativos
+- Si es sobre desarrollo/creación, enfócate en los aspectos reales de producción
+- Si es sobre historia, enfócate en hechos históricos y datos
 - Adapta tu estilo narrativo al tipo de contenido solicitado
+${chapterStructure ? `- ENFÓCATE en el contenido específico del CAPÍTULO 1: "${chapterStructure[0] || 'Sin título'}"` : ''}
 
-ESTRUCTURA REQUERIDA PARA LA SECCIÓN 1:
+ESTRUCTURA REQUERIDA PARA EL CAPÍTULO 1:
 - Exactamente 3 párrafos detallados
-- Máximo 300 palabras en total para esta sección
-- Mínimo 250 palabras por sección
+- Máximo 300 palabras en total para este capítulo
+- Mínimo 250 palabras por capítulo
 - Mantén un tono profesional y enganchante
-- Establece las bases del tema para las siguientes secciones
+- Establece las bases del tema para los siguientes capítulos
+${chapterStructure ? `- Desarrolla el tema específico del capítulo: "${chapterStructure[0] || 'Sin título'}"` : ''}
 
 FORMATO DE RESPUESTA OBLIGATORIO:
 - Responde ÚNICAMENTE con el texto del guión
 - NO incluyas explicaciones, comentarios, ni texto adicional
-- NO incluyas etiquetas como "Sección 1:", "Guión:", etc.
+- NO incluyas etiquetas como "Capítulo 1:", "Guión:", etc.
 - NO incluyas notas, aclaraciones o pensamientos
 - El texto debe estar listo para ser usado directamente en TTS
 - Comienza directamente con el contenido del guión
 
 IMPORTANTE: 
-- Esta es la PRIMERA sección, establece los fundamentos del tema
-- NO incluyas despedida ya que habrá más secciones
+- Este es el PRIMER capítulo, establece los fundamentos del tema
+- NO incluyas despedida ya que habrá más capítulos
 - Basa tu contenido completamente en lo que el usuario solicita en el tema
 - RESPONDE SOLO CON EL TEXTO DEL GUIÓN, NADA MÁS`;
   } else {
-    return `Ahora dame la sección ${section} de ${sections} del mismo tema.
+    return `Ahora dame el capítulo ${section} de ${sections} del mismo tema.${chapterContext}${previousContext}
 
-ESTRUCTURA REQUERIDA PARA LA SECCIÓN ${section}:
+ESTRUCTURA REQUERIDA PARA EL CAPÍTULO ${section}:
 - Exactamente 3 párrafos detallados
-- Máximo 300 palabras en total para esta sección
-- Mínimo 250 palabras por sección
-- Mantén continuidad narrativa con las secciones anteriores
+- Máximo 300 palabras en total para este capítulo
+- Mínimo 250 palabras por capítulo
+- Mantén continuidad narrativa con los capítulos anteriores
 - Progresa de manera lógica en el desarrollo del tema
-- Sigue el mismo estilo y enfoque que estableciste en las secciones anteriores
+- Sigue el mismo estilo y enfoque que estableciste en los capítulos anteriores
+- CONECTA directamente con el contenido de los capítulos anteriores
+- Haz referencias sutiles a información ya mencionada cuando sea relevante
+${chapterStructure ? `- ENFÓCATE en el contenido específico del CAPÍTULO ${section}: "${chapterStructure[section - 1] || 'Sin título'}"` : ''}
 
 FORMATO DE RESPUESTA OBLIGATORIO:
 - Responde ÚNICAMENTE con el texto del guión
 - NO incluyas explicaciones, comentarios, ni texto adicional
-- NO incluyas etiquetas como "Sección ${section}:", "Guión:", etc.
+- NO incluyas etiquetas como "Capítulo ${section}:", "Guión:", etc.
 - NO incluyas notas, aclaraciones o pensamientos
 - El texto debe estar listo para ser usado directamente en TTS
 - Comienza directamente con el contenido del guión
 
-${section === sections ? `IMPORTANTE: Como esta es la ÚLTIMA sección (${section}/${sections}), DEBES incluir una despedida profesional al final que invite a:
+${section === sections ? `IMPORTANTE: Como este es el ÚLTIMO capítulo (${section}/${sections}), DEBES incluir una despedida profesional al final que invite a:
 - Comentar sus opiniones sobre el tema presentado
 - Suscribirse al canal para más contenido  
 - Dar like si disfrutaron el contenido
 - Sugerir futuros temas que les gustaría ver
 
-Ejemplo de despedida: "Y así concluye este episodio sobre [tema]... Si este contenido te ha resultado interesante, déjanos un like y suscríbete a al canal para más contenido. Compártenos en los comentarios qué otros temas te gustaría que cubramos..."` : 'NO incluyas despedida ya que esta no es la última sección.'}
+Ejemplo de despedida: "Y así concluye este episodio sobre [tema]... Si este contenido te ha resultado interesante, déjanos un like y suscríbete a al canal para más contenido. Compártenos en los comentarios qué otros temas te gustaría que cubramos..."` : 'NO incluyas despedida ya que este no es el último capítulo.'}
 
 RECUERDA: RESPONDE SOLO CON EL TEXTO DEL GUIÓN, SIN COMENTARIOS NI EXPLICACIONES ADICIONALES.`;
   }
 }
 
 // Función para generar prompt estilo cómico/sarcástico
-function generateComedyPrompt(topic, sections, section) {
+function generateComedyPrompt(topic, sections, section, chapterStructure = null, previousChapterContent = null) {
+  // Generar texto de estructura de capítulos si está disponible
+  let chapterContext = '';
+  if (chapterStructure && chapterStructure.length > 0) {
+    chapterContext = `
+
+ESTRUCTURA COMPLETA DE CAPÍTULOS:
+${chapterStructure.map((title, index) => `${index + 1}. ${title}`).join('\n')}
+
+CAPÍTULO ACTUAL: ${chapterStructure[section - 1] || `Capítulo ${section}`}`;
+  }
+
+  // Generar contexto de capítulos anteriores si está disponible
+  let previousContext = '';
+  if (previousChapterContent && previousChapterContent.length > 0) {
+    previousContext = `
+
+CONTEXTO DE CAPÍTULOS ANTERIORES (para continuidad narrativa):
+${previousChapterContent.map((content, index) => {
+      const chapterTitle = chapterStructure && chapterStructure[index] ? chapterStructure[index] : `Capítulo ${index + 1}`;
+      const preview = content.length > 200 ? content.substring(0, 200) + '...' : content;
+      return `📚 ${chapterTitle}:\n${preview}`;
+    }).join('\n\n')}
+
+IMPORTANTE: TOMA EN CUENTA EL CONTEXTO ANTERIOR para mantener continuidad narrativa, referencias y coherencia en el desarrollo del tema.`;
+  }
+  
   if (section === 1) {
-    return `Eres un escritor de guiones para gameplays del canal de YouTube Crónicas del Gaming.
+    return `Eres un escritor de guiones creativo para contenido de YouTube.
 
 Tu tarea es construir guiones con un tono sarcástico, irónico, con humor negro, muchas groserías y un chingo de humor absurdo.
 
 TEMA SOLICITADO: "${topic}"
-TOTAL DE SECCIONES: ${sections}
+TOTAL DE CAPÍTULOS: ${sections}${chapterContext}
 
-Vamos a crear un guión de YouTube dividido en ${sections} secciones sobre el tema que el usuario ha solicitado.
+Vamos a crear un guión de YouTube dividido en ${sections} capítulos sobre el tema que el usuario ha solicitado.
 
-POR FAVOR, DAME SOLO LA SECCIÓN 1 DE ${sections}.
+POR FAVOR, DAME SOLO EL CAPÍTULO 1 DE ${sections}.
 
 🎭 FORMATO DEL GUION:
 
 El guion debe leerse como una actuación, además de una narración cronológica.
-
+como es el primer capitulo usa una introducción llamativa para captar la atención del espectador.
 Usa múltiples voces indicadas con corchetes, por ejemplo:
 [voz de narrador serio], [voz sarcástica], [grito desesperado], [voz de niña loca], [voz de viejita], etc.
 
 Las escenas deben sentirse teatrales, exageradas, bizarras y alucinantes.
 en algunas ocasiones interpreta lo que los personajes en el guion podrian decir o pensar.
+${chapterStructure ? `
+🎯 ENFOQUE DEL CAPÍTULO: Centra todo el contenido en desarrollar específicamente "${chapterStructure[0] || 'Sin título'}"` : ''}
 
-ESTRUCTURA REQUERIDA PARA LA SECCIÓN 1:
+ESTRUCTURA REQUERIDA PARA EL CAPÍTULO 1:
 - Exactamente 3 párrafos detallados
-- Máximo 300 palabras en total para esta sección
-- Mínimo 250 palabras por sección
+- Máximo 300 palabras en total para este capítulo
+- Mínimo 250 palabras por capítulo
 - Mantén un tono sarcástico, irónico y absurdo y muy ácido.
-- Establece las bases del tema para las siguientes secciones
+- Establece las bases del tema para los siguientes capítulos
+${chapterStructure ? `- Desarrolla el tema específico del capítulo: "${chapterStructure[0] || 'Sin título'}"` : ''}
 
 PALABRAS Y EXPRESIONES A USAR:
 Usas algunas veces palabras como: pinche, wey, pendejo, cabrón, verga, chinga tu madre, me vale verga, come verga, hijo de la verga.
@@ -1030,27 +1391,35 @@ RESTRICCIONES:
 FORMATO DE RESPUESTA OBLIGATORIO:
 - Responde ÚNICAMENTE con el texto del guión
 - NO incluyas explicaciones, comentarios, ni texto adicional
-- NO incluyas etiquetas como "Sección 1:", "Guión:", etc.
+- NO incluyas etiquetas como "Capítulo 1:", "Guión:", etc.
 - El texto debe estar listo para ser usado directamente en TTS
 - Comienza directamente con el contenido del guión
 
 IMPORTANTE: 
-- Esta es la PRIMERA sección, establece los fundamentos del tema
-- NO incluyas despedida ya que habrá más secciones
+- Este es el PRIMER capítulo, establece los fundamentos del tema
+- NO incluyas despedida ya que habrá más capítulos
 - Basa tu contenido completamente en lo que el usuario solicita en el tema
 - RESPONDE SOLO CON EL TEXTO DEL GUIÓN, NADA MÁS`;
   } else {
-    return `Ahora dame la sección ${section} de ${sections} del mismo tema.
+    return `Ahora dame el capítulo ${section} de ${sections} del mismo tema.${chapterContext}${previousContext}
 
 Mantén el mismo estilo sarcástico, irónico, con humor negro y groserías.
 
-ESTRUCTURA REQUERIDA PARA LA SECCIÓN ${section}:
+ESTRUCTURA REQUERIDA PARA EL CAPÍTULO ${section}:
 - Exactamente 3 párrafos detallados
-- Máximo 300 palabras en total para esta sección
-- Mínimo 250 palabras por sección
-- Mantén continuidad narrativa con las secciones anteriores
+- Máximo 300 palabras en total para este capítulo
+- Mínimo 250 palabras por capítulo
+- Mantén continuidad narrativa con los capítulos anteriores
+- Progresa de manera lógica en el desarrollo del tema
+- Sigue el mismo estilo y enfoque que estableciste en los capítulos anteriores
+- CONECTA directamente con el contenido de los capítulos anteriores
+- Haz referencias sutiles a información ya mencionada cuando sea relevante
+${chapterStructure ? `- ENFÓCATE en el contenido específico del CAPÍTULO ${section}: "${chapterStructure[section - 1] || 'Sin título'}"` : ''}
+- Mínimo 250 palabras por capítulo
+- Mantén continuidad narrativa con los capítulos anteriores
 - Progresa de manera lógica en el desarrollo del tema
 - Sigue el mismo estilo cómico y absurdo que estableciste
+${chapterStructure ? `- ENFÓCATE en el contenido específico del CAPÍTULO ${section}: "${chapterStructure[section - 1] || 'Sin título'}"` : ''}
 
 🎭 FORMATO DEL GUION:
 - Usa múltiples voces indicadas con corchetes al menos 4 en cada párrafo
@@ -1063,17 +1432,17 @@ Usa muchas palabras como: pinche, wey, pendejo, cabrón, verga, chinga tu madre,
 FORMATO DE RESPUESTA OBLIGATORIO:
 - Responde ÚNICAMENTE con el texto del guión
 - NO incluyas explicaciones, comentarios, ni texto adicional
-- NO incluyas etiquetas como "Sección ${section}:", "Guión:", etc.
+- NO incluyas etiquetas como "Capítulo ${section}:", "Guión:", etc.
 - El texto debe estar listo para ser usado directamente en TTS
 - Comienza directamente con el contenido del guión
 
-${section === sections ? `IMPORTANTE: Como esta es la ÚLTIMA sección (${section}/${sections}), DEBES incluir una despedida cómica al final que invite a:
+${section === sections ? `IMPORTANTE: Como este es el ÚLTIMO capítulo (${section}/${sections}), DEBES incluir una despedida cómica al final que invite a:
 - Comentar sus opiniones sobre el tema presentado
 - Suscribirse al canal para más contenido  
 - Dar like si disfrutaron el contenido
 - Sugerir futuros temas que les gustaría ver
 
-Ejemplo de despedida cómica: "Y así concluye este pinche episodio sobre [tema]... Si te cagaste de risa, déjanos un like y suscríbete al canal para más contenido cabrón. Compártenos en los comentarios qué otros temas te gustaría que cubramos, wey..."` : 'NO incluyas despedida ya que esta no es la última sección.'}
+Ejemplo de despedida cómica: "Y así concluye este pinche episodio sobre [tema]... Si te cagaste de risa, déjanos un like y suscríbete al canal para más contenido cabrón. Compártenos en los comentarios qué otros temas te gustaría que cubramos, wey..."` : 'NO incluyas despedida ya que este no es el último capítulo.'}
 
 RECUERDA: RESPONDE SOLO CON EL TEXTO DEL GUIÓN, SIN COMENTARIOS NI EXPLICACIONES ADICIONALES.`;
   }
@@ -1081,16 +1450,7 @@ RECUERDA: RESPONDE SOLO CON EL TEXTO DEL GUIÓN, SIN COMENTARIOS NI EXPLICACIONE
 
 app.post('/generate', async (req, res) => {
   try {
-    const { topic, folderName, voice, totalSections, currentSection, previousSections, imageCount, promptModifier, imageModel, skipImages, googleImages, scriptStyle, customStyleInstructions } = req.body;
-    
-    console.log(`🔍 DEBUG REQUEST - Datos recibidos en /generate:`);
-    console.log(`🔍 DEBUG REQUEST - topic: "${topic}"`);
-    console.log(`🔍 DEBUG REQUEST - scriptStyle: "${scriptStyle}"`);
-    console.log(`🔍 DEBUG REQUEST - customStyleInstructions: "${customStyleInstructions || 'N/A'}"`);
-    console.log(`🔍 DEBUG REQUEST - skipImages: ${skipImages} (tipo: ${typeof skipImages})`);
-    console.log(`🔍 DEBUG REQUEST - googleImages: ${googleImages} (tipo: ${typeof googleImages})`);
-    console.log(`🔍 DEBUG REQUEST - imageCount: ${imageCount}`);
-    console.log(`🔍 DEBUG REQUEST - Cuerpo completo:`, req.body);
+    const { topic, folderName, voice, totalSections, currentSection, previousSections, imageCount, promptModifier, imageModel, llmModel, skipImages, googleImages, scriptStyle, customStyleInstructions, applioVoice, applioModel, applioPitch } = req.body;
     
     const selectedVoice = voice || 'Orus';
     const sections = totalSections || 3;
@@ -1098,29 +1458,12 @@ app.post('/generate', async (req, res) => {
     const selectedStyle = scriptStyle || 'professional'; // Default al estilo profesional
     const numImages = imageCount || 5; // Default a 5 imágenes si no se especifica
     const additionalInstructions = promptModifier || ''; // Instrucciones adicionales para imágenes
-    const selectedImageModel = imageModel || 'gemini2'; // Default a gemini2 si no se especifica
-    let shouldSkipImages = skipImages === true; // Verificar explícitamente si es true
-    let shouldUseGoogleImages = googleImages === true; // Verificar explícitamente si es true
-    
-    // 🔧 VALIDACIÓN BACKEND: skipImages=true y googleImages=true es válido 
-    // (significa: solo guión + generar keywords para Google Images)
-    if (shouldSkipImages && shouldUseGoogleImages) {
-      console.log('✅ BACKEND: Configuración detectada: skipImages=true y googleImages=true');
-      console.log('� BACKEND: Modo "solo guión + keywords": se generará guión y keywords de Google Images (sin imágenes)');
-    }
+    const selectedImageModel = imageModel || 'gemini2';
+    const selectedLlmModel = llmModel || 'gemini-2.5-pro';
+    let shouldSkipImages = skipImages === true;
+    let shouldUseGoogleImages = googleImages === true;
     
     console.log(`🎯 Solicitud recibida: ${shouldUseGoogleImages ? 'ENLACES GOOGLE' : shouldSkipImages ? 'SIN IMÁGENES' : numImages + ' imágenes'} para la sección ${section}`);
-    console.log(`📁 Nombre de carpeta personalizado: ${folderName || 'auto-generado'}`);
-    console.log(`� Estilo de guión seleccionado: ${selectedStyle}`);
-    console.log(`�🎨 Instrucciones adicionales recibidas:`, additionalInstructions);
-    console.log(`📊 Tipo de dato additionalInstructions:`, typeof additionalInstructions);
-    console.log(`🤖 Modelo de imagen seleccionado: ${selectedImageModel}`);
-    console.log(`📏 Longitud additionalInstructions:`, additionalInstructions ? additionalInstructions.length : 0);
-    console.log(`✅ ¿Hay instrucciones adicionales?:`, !!additionalInstructions);
-    console.log(`🚫 ¿Omitir imágenes?:`, shouldSkipImages);
-    console.log(`� ¿Usar Google Images?:`, shouldUseGoogleImages);
-    console.log(`�🔍 DEBUG - skipImages original: ${skipImages}, shouldSkipImages procesado: ${shouldSkipImages}`);
-    console.log(`🔍 DEBUG - googleImages original: ${googleImages}, shouldUseGoogleImages procesado: ${shouldUseGoogleImages}`);
     
     if (!topic) {
       return res.status(400).json({ error: 'Tema requerido' });
@@ -1131,10 +1474,12 @@ app.post('/generate', async (req, res) => {
     console.log(`📁 Estructura de carpetas creada: ${folderStructure.sectionDir}`);
 
     // Crear clave única para la conversación (proyecto)
-    const projectKey = folderName ? createSafeFolderName(folderName) : createSafeFolderName(topic);
+    // Usar siempre el tema como clave de conversación para mantener continuidad
+    // incluso si cambia el nombre de la carpeta
+    const projectKey = createSafeFolderName(topic);
     const conversation = getOrCreateConversation(projectKey);
     
-    console.log(`💬 Usando conversación: ${projectKey}`);
+    console.log(`💬 Usando conversación: ${projectKey} (basada en tema: "${topic}")`);
     console.log(`📝 Historial actual: ${conversation.history.length} mensajes`);
 
     // Paso 1: Generar guión usando conversación continua
@@ -1142,15 +1487,129 @@ app.post('/generate', async (req, res) => {
     console.log(`🎭 Usando estilo: ${selectedStyle === 'comedy' ? 'Cómico/Sarcástico' : 'Profesional'}`);
     
     let promptContent;
+    let chapterStructure = null;
     
     if (section === 1) {
-      // Primera sección: Configurar la conversación inicial
+      // Primera sección: Generar estructura completa de capítulos primero
       conversation.topic = topic;
       conversation.totalSections = sections;
       conversation.currentSection = 1;
       conversation.history = []; // Limpiar historial para nueva conversación
 
-      promptContent = generateScriptPrompt(selectedStyle, topic, sections, section, customStyleInstructions);
+      console.log(`📋 PASO 1: Generando estructura de ${sections} capítulos para el tema: ${topic}...`);
+      
+      // Generar estructura de capítulos
+      let chapterPrompt;
+      
+      // Detectar si se está usando un estilo personalizado
+      if (selectedStyle && selectedStyle.startsWith('custom_') && customStyleInstructions) {
+        // Prompt especializado para estilos personalizados
+        chapterPrompt = `Eres un experto en crear estructuras narrativas personalizadas.
+
+TEMA SOLICITADO: "${topic}"
+TOTAL DE CAPÍTULOS: ${sections}
+ESTILO PERSONALIZADO: ${customStyleInstructions}
+
+Tu tarea es crear una ESTRUCTURA NARRATIVA que respete completamente el estilo personalizado definido.
+
+INSTRUCCIONES ESPECÍFICAS PARA ESTE ESTILO:
+- Analiza cuidadosamente las instrucciones del estilo personalizado
+- Crea títulos que reflejen EXACTAMENTE lo que pide el estilo
+- Si el estilo menciona "situaciones cotidianas", crea capítulos sobre actividades diarias del personaje
+- Si el estilo habla de "progresión del día", organiza los capítulos cronológicamente  
+- Si pide "técnicas de hipnotización", enfócate en momentos relajantes del personaje
+- IGNORA formatos educativos genéricos, sigue SOLO el estilo personalizado
+
+PARA "${topic}" CON ESTE ESTILO ESPECÍFICO:
+Genera títulos que narren momentos, actividades y situaciones del personaje, no información educativa sobre la serie.
+
+FORMATO DE RESPUESTA OBLIGATORIO:
+Debes responder ÚNICAMENTE con los títulos separados por "||CAPITULO||"
+
+VERIFICACIÓN: Tu respuesta debe tener exactamente ${sections - 1} delimitadores "||CAPITULO||" para generar ${sections} títulos.
+
+RESPONDE SOLO CON LOS TÍTULOS SEPARADOS POR "||CAPITULO||", NADA MÁS.`;
+      } else {
+        // Prompt estándar para estilos no personalizados  
+        chapterPrompt = `Eres un experto en narrativa para YouTube especializado en contenido educativo y entretenimiento.
+
+TEMA SOLICITADO: "${topic}"
+TOTAL DE CAPÍTULOS: ${sections}
+
+Tu tarea es crear una ESTRUCTURA NARRATIVA completa dividiendo el tema en ${sections} capítulos/secciones coherentes y bien organizadas.
+
+INSTRUCCIONES:
+- Crea EXACTAMENTE ${sections} títulos de capítulos
+- Cada capítulo debe tener un título descriptivo y atractivo
+- Los capítulos deben seguir un hilo narrativo lógico
+- Progresión natural del tema de inicio a conclusión
+- Títulos que generen curiosidad y mantengan el interés
+
+FORMATO DE RESPUESTA OBLIGATORIO:
+Debes responder ÚNICAMENTE con los títulos separados por "||CAPITULO||"
+
+EJEMPLO PARA 3 CAPÍTULOS:
+Capítulo 1: El Origen de la Leyenda||CAPITULO||Capítulo 2: Los Secretos Revelados||CAPITULO||Capítulo 3: El Legado Eterno
+
+VERIFICACIÓN: Tu respuesta debe tener exactamente ${sections - 1} delimitadores "||CAPITULO||" para generar ${sections} títulos.
+
+RESPONDE SOLO CON LOS TÍTULOS SEPARADOS POR "||CAPITULO||", NADA MÁS.`;
+      }
+
+      console.log(`🔄 Enviando prompt de capítulos al modelo ${selectedLlmModel}...`);
+      
+      try {
+        const chapterResponse = await generateUniversalContent(
+          selectedLlmModel,
+          chapterPrompt,
+          "Eres un experto en estructura narrativa. Tu ÚNICA tarea es crear títulos de capítulos separados por '||CAPITULO||'. NUNCA generes texto adicional fuera de los títulos."
+        );
+
+        console.log(`✅ Respuesta de capítulos recibida exitosamente`);
+
+        const chaptersText = chapterResponse.text || '';
+        console.log(`📝 Respuesta de estructura: ${chaptersText ? chaptersText.substring(0, 200) + '...' : 'RESPUESTA VACÍA'}`);
+        
+        const chapterTitles = chaptersText.split('||CAPITULO||').filter(title => title.trim()).slice(0, sections);
+        console.log(`📚 Capítulos generados: ${chapterTitles.length} de ${sections} solicitados`);
+        console.log(`📖 Títulos: ${chapterTitles.join(', ')}`);
+        
+        // 📋 MOSTRAR ESTRUCTURA COMPLETA DE CAPÍTULOS
+        console.log('\n' + '='.repeat(60));
+        console.log('📖 ESTRUCTURA COMPLETA DE CAPÍTULOS GENERADA');
+        console.log('='.repeat(60));
+        console.log(`🎯 Tema: "${topic}"`);
+        console.log(`📊 Total de capítulos: ${sections}`);
+        console.log(`🧠 Modelo LLM usado: ${selectedLlmModel}`);
+        console.log('─'.repeat(60));
+        
+        if (chapterTitles.length > 0) {
+          chapterTitles.forEach((title, index) => {
+            const chapterNumber = index + 1;
+            const cleanTitle = title.trim();
+            console.log(`📚 Capítulo ${chapterNumber}: ${cleanTitle}`);
+          });
+        } else {
+          console.log('⚠️ No se generaron títulos de capítulos');
+        }
+        
+        console.log('='.repeat(60) + '\n');
+        
+        // Guardar estructura en la conversación
+        conversation.chapterStructure = chapterTitles;
+        chapterStructure = chapterTitles;
+        
+      } catch (chapterError) {
+        console.error('❌ ERROR generando estructura de capítulos:', chapterError);
+        console.log('⚠️ Continuando sin estructura de capítulos...');
+        chapterStructure = [];
+        conversation.chapterStructure = [];
+      }
+
+      console.log(`📝 PASO 2: Generando contenido del Capítulo 1: ${chapterStructure[0] || 'Sin título'}...`);
+      
+      // Ahora generar el contenido de la primera sección con contexto de estructura
+      promptContent = generateScriptPrompt(selectedStyle, topic, sections, section, customStyleInstructions, chapterStructure, null);
 
       // Limpiar historial y agregar mensaje inicial
       conversation.history = [
@@ -1158,8 +1617,50 @@ app.post('/generate', async (req, res) => {
       ];
       
     } else {
-      // Secciones posteriores: Continuar la conversación
-      promptContent = generateScriptPrompt(selectedStyle, topic, sections, section, customStyleInstructions);
+      // Secciones posteriores: Usar estructura existente
+      chapterStructure = conversation.chapterStructure || [];
+      console.log(`📖 Usando estructura existente: ${chapterStructure.length} capítulos`);
+      console.log(`📝 Generando Capítulo ${section}: ${chapterStructure[section - 1] || 'Sin título'}...`);
+      
+      // � EXTRAER CONTEXTO DE CAPÍTULOS ANTERIORES
+      console.log(`🔗 Extrayendo contexto de ${section - 1} capítulos anteriores...`);
+      const previousChapterContent = [];
+      
+      // Obtener el contenido de las respuestas anteriores del asistente
+      conversation.history.forEach((message, index) => {
+        if (message.role === 'model' && message.parts && message.parts[0] && message.parts[0].text) {
+          const content = message.parts[0].text.trim();
+          if (content.length > 50) { // Solo incluir respuestas con contenido sustancial
+            previousChapterContent.push(content);
+          }
+        }
+      });
+      
+      console.log(`📚 Capítulos anteriores encontrados: ${previousChapterContent.length}`);
+      if (previousChapterContent.length > 0) {
+        console.log(`📖 Último capítulo preview: ${previousChapterContent[previousChapterContent.length - 1].substring(0, 100)}...`);
+      }
+      
+      // 📋 MOSTRAR PROGRESO DE CAPÍTULOS
+      console.log('\n' + '─'.repeat(50));
+      console.log(`📚 CAPÍTULO ${section} DE ${sections}`);
+      console.log('─'.repeat(50));
+      console.log(`🎯 Tema: "${topic}"`);
+      console.log(`📖 Capítulo actual: ${chapterStructure[section - 1] || 'Sin título'}`);
+      console.log(`🧠 Modelo LLM: ${selectedLlmModel}`);
+      
+      // Mostrar contexto de todos los capítulos
+      console.log('\n📋 Estructura completa:');
+      chapterStructure.forEach((title, index) => {
+        const chapterNumber = index + 1;
+        const isCurrentChapter = chapterNumber === section;
+        const statusIcon = chapterNumber < section ? '✅' : isCurrentChapter ? '🔄' : '⏳';
+        const cleanTitle = title.trim();
+        console.log(`${statusIcon} Capítulo ${chapterNumber}: ${cleanTitle}`);
+      });
+      console.log('─'.repeat(50) + '\n');
+      
+      promptContent = generateScriptPrompt(selectedStyle, topic, sections, section, customStyleInstructions, chapterStructure, previousChapterContent);
 
       // Agregar nueva pregunta al historial
       conversation.history.push({ role: 'user', parts: [{ text: promptContent }] });
@@ -1178,24 +1679,57 @@ app.post('/generate', async (req, res) => {
       systemInstruction = "Eres un escritor profesional de guiones para YouTube. IMPORTANTE: Responde ÚNICAMENTE con el texto del guión, sin explicaciones, comentarios, etiquetas o texto adicional. El texto debe estar listo para TTS. No incluyas pensamientos, notas o aclaraciones. ESTRUCTURA OBLIGATORIA: Exactamente 3 párrafos detallados, máximo 300 palabras total, mínimo 200 palabras. Solo el guión puro.";
     }
 
-    const scriptResponse = await generateContentWithRetry(ai, {
-      model: "models/gemini-2.5-flash",
-      contents: conversation.history,
-      config: {
-        systemInstruction: systemInstruction,
-      },
-    });
+    const scriptResponse = await generateUniversalContent(
+      selectedLlmModel,
+      conversation.history,
+      systemInstruction
+    );
 
-    const script = scriptResponse.text;
+    console.log(`🔍 scriptResponse:`, typeof scriptResponse, scriptResponse);
+    const script = scriptResponse.text || scriptResponse.message?.content || scriptResponse;
+    console.log(`🔍 script extraído:`, typeof script);
+    console.log(`🔍 script preview:`, script && typeof script === 'string' && script.length > 0 ? script.substring(0, 100) + '...' : 'VACÍO O INVÁLIDO');
+    
+    // Validar que tenemos contenido válido
+    if (!script || typeof script !== 'string' || script.trim().length === 0) {
+      throw new Error(`No se pudo extraer contenido válido de la respuesta. Response: ${JSON.stringify(scriptResponse)}`);
+    }
     
     // Limpiar el script de cualquier texto adicional no deseado
     const cleanScript = cleanScriptText(script);
     
+    // Calcular tokens de entrada y salida
+    const inputTokens = estimateTokens(promptContent + (systemInstruction || ''));
+    const outputTokens = estimateTokens(cleanScript);
+    const totalTokens = inputTokens + outputTokens;
+    
+    console.log(`📊 TOKENS - Entrada: ${inputTokens}, Salida: ${outputTokens}, Total: ${totalTokens}`);
+    
     // Agregar respuesta al historial
     conversation.history.push({ role: 'model', parts: [{ text: cleanScript }] });
     
+    // Optimizar historial manteniendo continuidad narrativa
+    optimizeConversationHistory(conversation);
+    
+    // OPTIMIZACIÓN: Mantener solo los últimos 4 mensajes (2 intercambios: pregunta+respuesta anteriores)
+    // Esto ahorra tokens manteniendo solo el contexto del capítulo anterior
+    const historialAntes = conversation.history.length;
+    if (conversation.history.length > 10) { // Activar optimización más tarde
+      conversation.history = conversation.history.slice(-8); // Mantener más contexto para continuidad
+      console.log(`� OPTIMIZACIÓN - Historial reducido de ${historialAntes} a ${conversation.history.length} mensajes`);
+      console.log(`💰 AHORRO DE TOKENS - Eliminados ${historialAntes - conversation.history.length} mensajes antiguos`);
+    }
+    
     console.log(`✅ Guión de la sección ${section} generado usando conversación continua`);
     console.log(`💾 Historial actualizado: ${conversation.history.length} mensajes`);
+    
+    // Mostrar información de ahorro de tokens
+    if (historialAntes > 4) {
+      const tokensActuales = conversation.history.reduce((total, msg) => {
+        return total + estimateTokens(msg.parts[0].text);
+      }, 0);
+      console.log(`📊 MÉTRICAS - Tokens actuales en historial: ~${tokensActuales} (optimizado vs ~${tokensActuales * (historialAntes / 4)} sin optimización)`);
+    }
 
     // Guardar el guión como archivo de texto en la carpeta de la sección
     try {
@@ -1236,9 +1770,9 @@ Generado automáticamente por el sistema de creación de contenido
       
       if (shouldUseGoogleImages) {
         console.log(`🔍 Generando palabras clave para búsquedas de Google de ${numImages} términos...`);
-        const keywordsResponse = await ai.models.generateContent({
-          model: "models/gemini-2.5-flash",
-          contents: `Analiza este guión de la sección ${section} sobre "${topic}": "${cleanScript}"
+        const keywordsResponse = await generateUniversalContent(
+          selectedLlmModel,
+          `Analiza este guión de la sección ${section} sobre "${topic}": "${cleanScript}"
 
           Extrae EXACTAMENTE ${numImages} frases descriptivas EN INGLÉS (entre 1 y 4 palabras cada una) que sean perfectas para búsquedas de imágenes en Google Images y que den contexto específico al contenido. 
 
@@ -1261,8 +1795,7 @@ Generado automáticamente por el sistema de creación de contenido
           Hyrule Castle medieval fantasy||KEYWORD||Golden Triforce glowing symbol||KEYWORD||Link Master Sword ocarina time
 
           VERIFICACIÓN: Tu respuesta debe tener exactamente ${numImages - 1} delimitadores "||KEYWORD||" para generar ${numImages} términos.`,
-          config: {
-            systemInstruction: `Eres un experto en extraer palabras clave para búsquedas visuales. Tu ÚNICA tarea es devolver términos separados por "||KEYWORD||".
+          `Eres un experto en extraer palabras clave para búsquedas visuales. Tu ÚNICA tarea es devolver términos separados por "||KEYWORD||".
 
 REGLAS CRÍTICAS:
 1. SIEMPRE usa el delimitador exacto "||KEYWORD||" (sin espacios adicionales)
@@ -1271,9 +1804,8 @@ REGLAS CRÍTICAS:
 4. Cada término debe ser específico y visual
 5. Máximo 3-4 palabras por término
 
-Si te piden N términos, tu respuesta debe tener exactamente (N-1) delimitadores "||KEYWORD||".`,
-          },
-        });
+Si te piden N términos, tu respuesta debe tener exactamente (N-1) delimitadores "||KEYWORD||".`
+        );
 
         const keywordsText = keywordsResponse.text || '';
         console.log(`📝 DEBUG GOOGLE - Respuesta del modelo: ${keywordsText ? keywordsText.substring(0, 200) + '...' : 'RESPUESTA VACÍA'}`);
@@ -1288,9 +1820,9 @@ Si te piden N términos, tu respuesta debe tener exactamente (N-1) delimitadores
         enhancedPrompts = keywords.map(keyword => keyword.trim());
       } else {
         console.log(`🎨 Generando prompts para secuencia de ${numImages} imágenes (solo texto)...`);
-        const promptsResponse = await ai.models.generateContent({
-          model: "models/gemini-2.5-flash",
-          contents: `Basándote en este guión de la sección ${section} sobre "${topic}": "${cleanScript}", crea EXACTAMENTE ${numImages} prompts detallados para generar una SECUENCIA de ${numImages} imágenes que ilustren visualmente el contenido del guión en orden cronológico.
+        const promptsResponse = await generateUniversalContent(
+          selectedLlmModel,
+          `Basándote en este guión de la sección ${section} sobre "${topic}": "${cleanScript}", crea EXACTAMENTE ${numImages} prompts detallados para generar una SECUENCIA de ${numImages} imágenes que ilustren visualmente el contenido del guión en orden cronológico.
 
           IMPORTANTE: Debes crear EXACTAMENTE ${numImages} prompts, ni más ni menos.
 
@@ -1322,8 +1854,7 @@ Si te piden N términos, tu respuesta debe tener exactamente (N-1) delimitadores
           Un bosque oscuro con árboles ancianos||PROMPT||Una batalla épica entre guerreros||PROMPT||Un castillo en ruinas bajo la luna
           
           VERIFICACIÓN FINAL: Tu respuesta debe contener exactamente ${numImages - 1} ocurrencias del delimitador "||PROMPT||" para generar ${numImages} prompts.`,
-          config: {
-            systemInstruction: `Eres un experto en arte conceptual y narrativa visual. Tu ÚNICA tarea es crear prompts separados por "||PROMPT||". 
+          `Eres un experto en arte conceptual y narrativa visual. Tu ÚNICA tarea es crear prompts separados por "||PROMPT||". 
 
 REGLAS CRÍTICAS:
 1. SIEMPRE usa el delimitador exacto "||PROMPT||" (sin espacios adicionales)
@@ -1332,9 +1863,8 @@ REGLAS CRÍTICAS:
 4. DIVIDE el contenido equitativamente entre todos los prompts
 5. Cada prompt debe ser independiente y descriptivo
 
-Si te piden N prompts, tu respuesta debe tener exactamente (N-1) delimitadores "||PROMPT||".`,
-          },
-        });
+Si te piden N prompts, tu respuesta debe tener exactamente (N-1) delimitadores "||PROMPT||".`
+        );
 
         const promptsText = promptsResponse.text || '';
         console.log(`📝 DEBUG SKIP - Respuesta del modelo: ${promptsText ? promptsText.substring(0, 200) + '...' : 'RESPUESTA VACÍA'}`);
@@ -1437,7 +1967,14 @@ Generado automáticamente por el sistema de creación de contenido
         sectionFolder: `seccion_${section}`,
         folderPath: path.relative('./public', folderStructure.sectionDir).replace(/\\/g, '/'),
         imagesSkipped: shouldSkipImages && !shouldUseGoogleImages,
-        googleImagesMode: shouldUseGoogleImages
+        googleImagesMode: shouldUseGoogleImages,
+        chapterStructure: chapterStructure,
+        tokenUsage: {
+          inputTokens: inputTokens,
+          outputTokens: outputTokens,
+          totalTokens: totalTokens,
+          model: selectedLlmModel
+        }
       });
 
       // Guardar estado del proyecto automáticamente
@@ -1449,12 +1986,17 @@ Generado automáticamente por el sistema de creación de contenido
           currentSection: section,
           voice: selectedVoice,
           imageModel: selectedImageModel,
+          llmModel: selectedLlmModel,
           scriptStyle: scriptStyle,
           customStyleInstructions: customStyleInstructions,
           promptModifier: promptModifier,
           imageCount: imageCount,
           skipImages: shouldSkipImages,
-          googleImages: shouldUseGoogleImages
+          googleImages: shouldUseGoogleImages,
+          applioVoice: applioVoice,
+          applioModel: applioModel || 'fr-FR-RemyMultilingualNeural',
+          applioPitch: applioPitch || 0,
+          chapterStructure: chapterStructure
         };
         
         const savedState = saveProjectState(projectData);
@@ -1492,7 +2034,7 @@ Generado automáticamente por el sistema de creación de contenido
     // Paso 2: Crear prompts para imágenes secuenciales basadas en el guión
     console.log(`🎨 Generando prompts para secuencia de ${numImages} imágenes...`);
     const promptsResponse = await ai.models.generateContent({
-      model: "models/gemini-2.5-flash",
+      model: `models/${selectedLlmModel}`,
       contents: `Basándote en este guión de la sección ${section} sobre "${topic}" ": "${cleanScript}", crea EXACTAMENTE ${numImages} prompts detallados para generar una SECUENCIA de ${numImages} imágenes que ilustren visualmente el contenido del guión en orden cronológico.
 
       IMPORTANTE: Debes crear EXACTAMENTE ${numImages} prompts, ni más ni menos.
@@ -1644,7 +2186,8 @@ Si te piden N prompts, tu respuesta debe tener exactamente (N-1) delimitadores "
       isComplete: section >= sections,
       projectFolder: folderStructure.safeTopicName,
       sectionFolder: `seccion_${section}`,
-      folderPath: path.relative('./public', folderStructure.sectionDir).replace(/\\/g, '/')
+      folderPath: path.relative('./public', folderStructure.sectionDir).replace(/\\/g, '/'),
+      chapterStructure: chapterStructure
     });
 
     // Guardar estado del proyecto automáticamente
@@ -1656,12 +2199,14 @@ Si te piden N prompts, tu respuesta debe tener exactamente (N-1) delimitadores "
         currentSection: section,
         voice: selectedVoice,
         imageModel: selectedImageModel,
+        llmModel: selectedLlmModel,
         scriptStyle: scriptStyle,
         customStyleInstructions: customStyleInstructions,
         promptModifier: promptModifier,
         imageCount: imageCount,
         skipImages: shouldSkipImages,
-        googleImages: shouldUseGoogleImages
+        googleImages: shouldUseGoogleImages,
+        chapterStructure: chapterStructure
       };
       
       const savedState = saveProjectState(projectData);
@@ -1945,7 +2490,7 @@ app.post('/regenerate-image', async (req, res) => {
 // Nueva ruta para generar audio de sección específica usando cliente Applio Node.js
 app.post('/generate-section-audio', async (req, res) => {
   try {
-    const { script, topic, folderName, currentSection, voice } = req.body;
+    const { script, topic, folderName, currentSection, voice, applioVoice, applioModel, applioPitch } = req.body;
     
     if (!script || !topic || !currentSection) {
       return res.status(400).json({ 
@@ -1954,11 +2499,17 @@ app.post('/generate-section-audio', async (req, res) => {
     }
 
     const section = parseInt(currentSection);
+    const selectedApplioVoice = applioVoice || "logs\\VOCES\\RemyOriginal.pth";
+    const selectedApplioModel = applioModel || "fr-FR-RemyMultilingualNeural";
+    const selectedPitch = parseInt(applioPitch) || 0;
     
     // Crear estructura de carpetas
     const folderStructure = createProjectStructure(topic, section, folderName);
     
     console.log(`🎵 Generando audio con Applio Node.js para sección ${section}...`);
+    console.log(`🎤 Voz de Applio seleccionada: ${selectedApplioVoice}`);
+    console.log(`🎛️ Modelo TTS seleccionado: ${selectedApplioModel}`);
+    console.log(`🎵 Pitch seleccionado: ${selectedPitch}`);
     
     try {
       // Verificar conexión con Applio primero
@@ -1976,9 +2527,10 @@ app.post('/generate-section-audio', async (req, res) => {
       
       // Generar audio con Applio
       const result = await applioClient.textToSpeech(script, filePath, {
-        model: "fr-FR-RemyMultilingualNeural",
+        model: selectedApplioModel,
         speed: 0,
-        pitch: 0
+        pitch: selectedPitch,
+        voicePath: selectedApplioVoice
       });
       
       if (!result.success) {
@@ -2306,6 +2858,33 @@ if __name__ == '__main__':
   }
 });
 
+// Ruta para obtener las voces disponibles de Applio
+app.get('/api/applio-voices', (req, res) => {
+  try {
+    console.log('🎤 Solicitando lista de voces de Applio...');
+    const voices = getAvailableVoices();
+    
+    res.json({
+      success: true,
+      voices: voices,
+      count: voices.length
+    });
+    
+    console.log(`✅ Enviadas ${voices.length} voces al cliente`);
+  } catch (error) {
+    console.error('❌ Error obteniendo voces:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Error al obtener las voces disponibles',
+      voices: [{
+        name: 'RemyOriginal (Default)',
+        path: 'logs\\VOCES\\RemyOriginal.pth',
+        displayName: 'RemyOriginal'
+      }]
+    });
+  }
+});
+
 // Ruta para obtener información del modelo local
 app.get('/whisper-local-info', async (req, res) => {
   try {
@@ -2422,11 +3001,11 @@ app.post('/generate-youtube-metadata', async (req, res) => {
     // Obtener instrucciones de estilo de miniatura
     const thumbnailInstructions = getThumbnailStyleInstructions(thumbnailStyle || 'default');
     
-    console.log(`🎨 DEBUG - thumbnailStyle recibido:`, thumbnailStyle);
-    console.log(`📝 DEBUG - thumbnailInstructions generadas:`, thumbnailInstructions);
+    console.log(`🎨 thumbnailStyle recibido:`, thumbnailStyle);
+    console.log(`📝 thumbnailInstructions generadas:`, thumbnailInstructions);
 
     const prompt = `
-Basándote en el siguiente tema y guión completo de un video de gaming, genera metadata optimizada para YouTube:
+Basándote en el siguiente tema y guión completo del video, genera metadata optimizada para YouTube:
 
 **TEMA:** ${topic}
 
@@ -2442,14 +3021,14 @@ Por favor genera:
 
 2. **DESCRIPCIÓN PARA VIDEO** (optimizada para SEO):
    - Entre 150-300 palabras
-   - Incluye palabras clave relevantes del gaming
+   - Incluye palabras clave relevantes del tema
    - Menciona el contenido principal del video
    - Incluye call-to-action para suscribirse
    - Formato atractivo con emojis
 
 3. **25 ETIQUETAS** (separadas por comas):
    - Palabras clave relacionadas al tema
-   - Tags de gaming populares
+   - Tags populares del nicho correspondiente
    - Términos de búsqueda relevantes
    - Sin espacios en tags compuestos (usar guiones o camelCase)
 

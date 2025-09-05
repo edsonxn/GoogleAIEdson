@@ -21,11 +21,14 @@ class ApplioClient {
         const {
             model = "fr-FR-RemyMultilingualNeural",
             speed = 0,
-            pitch = 0
+            pitch = 0,
+            voicePath = "logs\\VOCES\\RemyOriginal.pth"
         } = options;
 
         console.log(`\n🎬 Iniciando TTS: «${text.substring(0, 100)}...»`);
         console.log(`🎛️ Modelo: ${model}`);
+        console.log(`🎤 Voz: ${voicePath}`);
+        console.log(`🎵 Pitch: ${pitch}`);
         console.log(`🔑 Session: ${this.sessionHash}\n`);
 
         try {
@@ -46,7 +49,7 @@ class ApplioClient {
                 "rmvpe",                        // f0_method
                 "C:\\applio2\\Applio\\assets\\audios\\tts_output.wav",
                 "C:\\applio2\\Applio\\assets\\audios\\tts_rvc_output.wav",
-                "logs\\VOCES\\RemyOriginal.pth",
+                voicePath,                      // Usar la voz seleccionada dinámicamente
                 "logs\\VOCES\\esponja.index",
                 false,                          // split_audio
                 false,                          // autotune

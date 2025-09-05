@@ -205,6 +205,87 @@ h1::after {
   gap: 5px;
 }
 
+/* Estilos para el selector numérico de secciones */
+.number-input-group {
+  display: flex;
+  align-items: center;
+  background: rgba(10, 14, 39, 0.8);
+  border: 1px solid rgba(0, 191, 255, 0.3);
+  border-radius: 8px;
+  overflow: hidden;
+  transition: all 0.3s ease;
+  height: 40px; /* Altura fija para consistencia */
+}
+
+.number-input-group:focus-within {
+  border-color: #00bfff;
+  box-shadow: 0 0 10px rgba(0, 191, 255, 0.3);
+}
+
+.number-btn {
+  background: rgba(0, 191, 255, 0.1);
+  border: none;
+  color: #00bfff;
+  width: 36px;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-size: 0.85rem;
+  flex-shrink: 0; /* No permitir que se reduzcan */
+}
+
+.number-btn:hover:not(:disabled) {
+  background: rgba(0, 191, 255, 0.2);
+  color: #ffffff;
+}
+
+.number-btn:active:not(:disabled) {
+  background: rgba(0, 191, 255, 0.3);
+  transform: scale(0.95);
+}
+
+.number-btn:disabled {
+  background: rgba(100, 100, 100, 0.1);
+  color: rgba(100, 100, 100, 0.5);
+  cursor: not-allowed;
+}
+
+.number-input {
+  background: transparent;
+  border: none;
+  color: #ffffff;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.9rem;
+  text-align: center;
+  width: 60px;
+  padding: 8px 4px;
+  outline: none;
+  appearance: textfield; /* Standard */
+  -moz-appearance: textfield; /* Firefox */
+  flex-grow: 1; /* Permite que crezca para llenar el espacio */
+  min-width: 50px; /* Ancho mínimo */
+  transition: all 0.2s ease;
+}
+
+.number-input:focus {
+  background: rgba(0, 191, 255, 0.05);
+  border-radius: 4px;
+}
+
+.number-input::placeholder {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+/* Ocultar flechas en navegadores WebKit */
+.number-input::-webkit-outer-spin-button,
+.number-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
 .field-label {
   color: #cbd5e1;
   font-size: 0.85rem;
@@ -239,6 +320,62 @@ h1::after {
 .field-textarea {
   resize: vertical;
   min-height: 80px;
+}
+
+/* Estilos para el slider de pitch */
+.pitch-slider {
+  width: 100%;
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(to right, 
+    #ff6b6b 0%, 
+    #4ecdc4 50%, 
+    #45b7d1 100%);
+  outline: none;
+  opacity: 0.8;
+  -webkit-transition: opacity 0.2s;
+  transition: opacity 0.2s;
+  margin: 8px 0;
+}
+
+.pitch-slider:hover {
+  opacity: 1;
+}
+
+.pitch-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #00bfff;
+  cursor: pointer;
+  border: 2px solid #ffffff;
+  box-shadow: 0 2px 8px rgba(0, 191, 255, 0.4);
+}
+
+.pitch-slider::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #00bfff;
+  cursor: pointer;
+  border: 2px solid #ffffff;
+  box-shadow: 0 2px 8px rgba(0, 191, 255, 0.4);
+}
+
+.pitch-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  color: #94a3b8;
+  margin-top: 2px;
+}
+
+#pitchValue {
+  color: #00bfff;
+  font-weight: bold;
+  font-size: 0.9rem;
 }
 
 .checkbox-group {

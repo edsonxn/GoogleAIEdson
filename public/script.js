@@ -1,6 +1,275 @@
 // Función simple para verificar que el script se carga
 console.log('🚀 Script.js cargado correctamente');
 
+// Variable global para almacenar la estructura de capítulos
+let globalChapterStructure = [];
+
+// ================================
+// FUNCIÓN PARA MANEJAR SELECTOR NUMÉRICO DE SECCIONES
+// ================================
+function changeSectionCount(change) {
+  const input = document.getElementById('sectionsNumber');
+  if (!input) {
+    console.error('❌ No se encontró el campo sectionsNumber');
+    return;
+  }
+  
+  // Si el campo está vacío, usar valor por defecto
+  const currentValue = parseInt(input.value) || 3;
+  const newValue = currentValue + change;
+  
+  // Verificar límites
+  if (newValue < 1 || newValue > 150) {
+    console.log(`⚠️ Valor fuera de rango: ${newValue}. Rango permitido: 1-150`);
+    return;
+  }
+  
+  // Actualizar valor
+  input.value = newValue;
+  console.log(`📊 Secciones actualizadas via botones: ${newValue}`);
+  
+  // Actualizar estado de botones
+  updateSectionButtons();
+}
+
+function updateSectionButtons() {
+  const input = document.getElementById('sectionsNumber');
+  const decreaseBtn = document.querySelector('.decrease-btn');
+  const increaseBtn = document.querySelector('.increase-btn');
+  
+  if (!input || !decreaseBtn || !increaseBtn) {
+    console.error('❌ No se encontraron elementos del selector numérico');
+    return;
+  }
+  
+  const inputValue = input.value.trim();
+  const currentValue = parseInt(inputValue) || 3; // Default a 3 si no es válido
+  
+  // Si el campo está vacío, permitir ambos botones pero con restricciones lógicas
+  const isEmpty = inputValue === '';
+  
+  // Deshabilitar botones según límites
+  decreaseBtn.disabled = !isEmpty && currentValue <= 1;
+  increaseBtn.disabled = !isEmpty && currentValue >= 150;
+  
+  // Actualizar títulos de botones
+  if (isEmpty) {
+    decreaseBtn.title = 'Disminuir secciones';
+    increaseBtn.title = 'Aumentar secciones';
+  } else {
+    decreaseBtn.title = currentValue <= 1 ? 'Mínimo 1 sección' : 'Disminuir secciones';
+    increaseBtn.title = currentValue >= 150 ? 'Máximo 150 secciones' : 'Aumentar secciones';
+  }
+}
+
+// Inicializar estado de botones cuando se carga la página
+document.addEventListener('DOMContentLoaded', function() {
+  console.log('🎯 Inicializando selector numérico de secciones...');
+  updateSectionButtons();
+  
+  // También agregar listener para cambios manuales en el input
+  const input = document.getElementById('sectionsNumber');
+  if (input) {
+    // Evento para validar mientras el usuario escribe
+    input.addEventListener('input', function(e) {
+      let value = parseInt(this.value);
+      
+      // Permitir campo vacío temporalmente mientras el usuario escribe
+      if (this.value === '') {
+        updateSectionButtons();
+        return;
+      }
+      
+      // Validar rango y corregir si es necesario
+      if (isNaN(value) || value < 1) {
+        console.log('⚠️ Valor corregido a mínimo: 1');
+        this.value = 1;
+        value = 1;
+      } else if (value > 150) {
+        console.log('⚠️ Valor corregido a máximo: 150');
+        this.value = 150;
+        value = 150;
+      }
+      
+      updateSectionButtons();
+      console.log(`📊 Secciones actualizadas via input: ${value}`);
+    });
+    
+    // Evento para manejar cuando el usuario sale del campo
+    input.addEventListener('blur', function(e) {
+      // Si el campo está vacío al salir, establecer valor por defecto
+      if (this.value === '' || isNaN(parseInt(this.value))) {
+        console.log('⚠️ Campo vacío, estableciendo valor por defecto: 3');
+        this.value = 3;
+        updateSectionButtons();
+      }
+    });
+    
+    // Evento para manejar Enter
+    input.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') {
+        this.blur(); // Quitar focus para trigger el evento blur
+      }
+    });
+    
+    console.log('✅ Selector numérico de secciones inicializado');
+  }
+});
+
+// ================================
+// FUNCIONES PARA MANEJO DE VOCES DE APPLIO
+// ================================
+
+// Variable global para almacenar las voces disponibles
+let availableApplioVoices = [];
+
+// Función para cargar las voces disponibles de Applio
+async function loadApplioVoices() {
+  try {
+    console.log('🎤 Cargando voces de Applio...');
+    const response = await fetch('/api/applio-voices');
+    const data = await response.json();
+    
+    if (data.success && data.voices) {
+      availableApplioVoices = data.voices;
+      console.log(`✅ Cargadas ${data.voices.length} voces de Applio`);
+      
+      // Actualizar el dropdown
+      updateApplioVoicesDropdown();
+      
+      return true;
+    } else {
+      console.error('❌ Error en respuesta de voces:', data);
+      return false;
+    }
+  } catch (error) {
+    console.error('❌ Error cargando voces de Applio:', error);
+    return false;
+  }
+}
+
+// Función para actualizar el dropdown de voces
+function updateApplioVoicesDropdown() {
+  const select = document.getElementById('applioVoiceSelect');
+  if (!select) {
+    console.error('❌ No se encontró el dropdown de voces de Applio');
+    return;
+  }
+  
+  // Limpiar opciones existentes
+  select.innerHTML = '';
+  
+  // Agregar voces disponibles
+  if (availableApplioVoices.length > 0) {
+    availableApplioVoices.forEach(voice => {
+      const option = document.createElement('option');
+      option.value = voice.path;
+      option.textContent = voice.displayName;
+      select.appendChild(option);
+    });
+    console.log(`📝 Dropdown actualizado con ${availableApplioVoices.length} voces`);
+  } else {
+    // Opción por defecto si no hay voces
+    const option = document.createElement('option');
+    option.value = 'logs\\VOCES\\RemyOriginal.pth';
+    option.textContent = 'RemyOriginal (Default)';
+    select.appendChild(option);
+    console.log('📝 Dropdown con voz por defecto');
+  }
+}
+
+// Función para mostrar/ocultar el dropdown de voces según la casilla de Applio
+function toggleApplioVoiceDropdown() {
+  const checkbox = document.getElementById('autoGenerateApplioAudio');
+  const voiceGroup = document.getElementById('applioVoiceGroup');
+  
+  if (!checkbox || !voiceGroup) {
+    console.error('❌ No se encontraron elementos de Applio');
+    return;
+  }
+  
+  if (checkbox.checked) {
+    console.log('🎤 Activando selector de voces de Applio...');
+    voiceGroup.style.display = 'flex';
+    
+    // Cargar voces si no se han cargado aún
+    if (availableApplioVoices.length === 0) {
+      loadApplioVoices();
+    }
+  } else {
+    console.log('🔇 Ocultando selector de voces de Applio...');
+    voiceGroup.style.display = 'none';
+  }
+}
+
+// Función para mostrar/ocultar las configuraciones de voz Google según la casilla correspondiente
+function toggleGoogleVoiceDropdown() {
+  const checkbox = document.getElementById('autoGenerateAudio');
+  const voiceGroup = document.getElementById('googleVoiceGroup');
+  
+  if (!checkbox || !voiceGroup) {
+    console.error('❌ No se encontraron elementos de Google Voice');
+    return;
+  }
+  
+  if (checkbox.checked) {
+    console.log('🎵 Activando configuraciones de voz Google...');
+    voiceGroup.style.display = 'block';
+  } else {
+    console.log('🔇 Ocultando configuraciones de voz Google...');
+    voiceGroup.style.display = 'none';
+  }
+}
+
+// Inicializar eventos para Applio cuando se carga la página
+document.addEventListener('DOMContentLoaded', function() {
+  console.log('🎤 Inicializando controles de Applio...');
+  
+  const applioCheckbox = document.getElementById('autoGenerateApplioAudio');
+  if (applioCheckbox) {
+    // Agregar evento para mostrar/ocultar dropdown
+    applioCheckbox.addEventListener('change', toggleApplioVoiceDropdown);
+    
+    // Verificar estado inicial
+    toggleApplioVoiceDropdown();
+    
+    console.log('✅ Controles de Applio inicializados');
+  } else {
+    console.error('❌ No se encontró la casilla de Applio');
+  }
+
+  // Inicializar control de pitch
+  const pitchSlider = document.getElementById('applioPitch');
+  const pitchValue = document.getElementById('pitchValue');
+  
+  if (pitchSlider && pitchValue) {
+    pitchSlider.addEventListener('input', function() {
+      pitchValue.textContent = this.value;
+      console.log(`🎵 Pitch ajustado a: ${this.value}`);
+    });
+    
+    console.log('✅ Control de pitch inicializado');
+  } else {
+    console.error('❌ No se encontraron elementos del pitch slider');
+  }
+
+  // Inicializar controles de Google Voice
+  console.log('🎵 Inicializando controles de Google Voice...');
+  
+  const googleCheckbox = document.getElementById('autoGenerateAudio');
+  if (googleCheckbox) {
+    // Agregar evento para mostrar/ocultar configuraciones de voz Google
+    googleCheckbox.addEventListener('change', toggleGoogleVoiceDropdown);
+    
+    // Verificar estado inicial
+    toggleGoogleVoiceDropdown();
+    
+    console.log('✅ Controles de Google Voice inicializados');
+  } else {
+    console.error('❌ No se encontró la casilla de Google Audio');
+  }
+});
+
 // ================================
 // VARIABLES GLOBALES PARA PROYECTOS - INICIALIZACIÓN INMEDIATA
 // ================================
@@ -118,7 +387,7 @@ let currentVoice = '';
 let currentTopic = '';
 let currentSectionNumber = 1;
 let totalSections = 3;
-let allSections = []; // Almacenar todas las secciones generadas (solo texto del guión)
+let allSections = []; // Almacenar todas las secciones generadas con datos completos (script, título, tokens)
 let imagePrompts = []; // Almacenar los prompts de las imágenes
 let isAutoGenerating = false; // Bandera para la generación automática
 let isLoadingProject = false; // Bandera para evitar validaciones durante la carga de proyectos
@@ -167,15 +436,19 @@ async function runAutoGeneration() {
   const topic = promptInput.value.trim();
   const folderName = document.getElementById("folderName").value.trim();
   const selectedVoice = document.getElementById("voiceSelect").value;
-  const selectedSections = document.getElementById("sectionsSelect").value;
+  const selectedSections = document.getElementById("sectionsNumber").value;
   const selectedStyle = document.getElementById("styleSelect").value;
   const imageCount = parseInt(document.getElementById("imagesSelect").value);
   const promptModifier = document.getElementById("promptModifier").value.trim();
   const selectedImageModel = document.getElementById("modelSelect").value;
+  const selectedLlmModel = document.getElementById("llmModelSelect").value;
   let skipImages = document.getElementById("skipImages").checked;
   let googleImages = document.getElementById("googleImages").checked;
   const generateAudio = document.getElementById("autoGenerateAudio").checked;
   const generateApplioAudio = document.getElementById("autoGenerateApplioAudio").checked;
+  const selectedApplioVoice = document.getElementById("applioVoiceSelect").value;
+  const selectedApplioModel = document.getElementById("applioModelSelect").value;
+  const applioPitch = parseInt(document.getElementById("applioPitch").value) || 0;
   
   // 🔧 VALIDACIÓN: No se puede omitir imágenes Y usar Google Images al mismo tiempo
   // PERO solo aplicar esta validación si NO estamos cargando un proyecto
@@ -231,7 +504,7 @@ async function runAutoGeneration() {
       // Generar guión e imágenes
       const scriptResult = await generateSectionContent(section, {
         topic, folderName, selectedVoice, selectedStyle, 
-        imageCount, promptModifier, selectedImageModel, skipImages, googleImages
+        imageCount, promptModifier, selectedImageModel, selectedLlmModel, skipImages, googleImages, selectedApplioVoice, selectedApplioModel, applioPitch
       });
       
       if (!scriptResult.success) {
@@ -355,8 +628,12 @@ async function generateSectionContent(section, params) {
         imageCount: params.imageCount,
         promptModifier: params.promptModifier,
         imageModel: params.selectedImageModel,
+        llmModel: params.selectedLlmModel,
         skipImages: params.skipImages,
         googleImages: params.googleImages,
+        applioVoice: params.selectedApplioVoice,
+        applioModel: params.selectedApplioModel,
+        applioPitch: params.applioPitch,
         allSections: allSections
       })
     });
@@ -364,8 +641,20 @@ async function generateSectionContent(section, params) {
     const data = await response.json();
     
     if (data.script) {
-      // Guardar la sección en el historial
-      allSections.push(data.script);
+      // Preparar datos completos de la sección
+      let chapterTitle = null;
+      if (globalChapterStructure && globalChapterStructure.length > 0 && section <= globalChapterStructure.length) {
+        chapterTitle = globalChapterStructure[section - 1];
+      }
+      
+      // Guardar la sección completa en el historial
+      allSections.push({
+        script: data.script,
+        chapterTitle: chapterTitle,
+        tokenUsage: data.tokenUsage,
+        voiceUsed: null,
+        scriptFileInfo: null
+      });
       currentSectionNumber = section;
       return { success: true, data };
     } else {
@@ -385,15 +674,29 @@ async function generateSectionApplioAudio(section) {
       throw new Error(`No hay guión disponible para la sección ${section}`);
     }
     
+    // Obtener el script de la sección (compatible con formato nuevo y antiguo)
+    const sectionData = allSections[section - 1];
+    const script = typeof sectionData === 'string' ? sectionData : sectionData.script;
+    
+    const selectedApplioVoice = document.getElementById("applioVoiceSelect").value;
+    const selectedApplioModel = document.getElementById("applioModelSelect").value;
+    const applioPitch = parseInt(document.getElementById("applioPitch").value) || 0;
+    console.log(`🎤 Usando voz de Applio: ${selectedApplioVoice}`);
+    console.log(`🎛️ Usando modelo de Applio: ${selectedApplioModel}`);
+    console.log(`🎵 Usando pitch: ${applioPitch}`);
+    
     const response = await fetch("/generate-section-audio", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        script: allSections[section - 1], // Usar el guión de la sección actual
+        script: script, // Usar el guión de la sección actual
         topic: currentTopic,
         folderName: document.getElementById("folderName").value.trim(),
         currentSection: section,
-        voice: "fr-FR-RemyMultilingualNeural" // Voz fija de Applio
+        voice: "fr-FR-RemyMultilingualNeural", // Voz de TTS (se mantiene)
+        applioVoice: selectedApplioVoice, // Voz del modelo de Applio
+        applioModel: selectedApplioModel, // Modelo TTS de Applio
+        applioPitch: applioPitch // Pitch para Applio
       })
     });
 
@@ -433,6 +736,10 @@ async function generateSectionAudio(section, voice) {
     
     const narrationStyle = document.getElementById("narrationStyle").value.trim();
     
+    // Obtener el script de la sección (compatible con formato nuevo y antiguo)
+    const sectionData = allSections[section - 1];
+    const script = typeof sectionData === 'string' ? sectionData : sectionData.script;
+    
     const response = await fetch("/generate-audio", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -441,7 +748,7 @@ async function generateSectionAudio(section, voice) {
         currentSection: section,
         topic: currentTopic,
         folderName: document.getElementById("folderName").value.trim(),
-        script: allSections[section - 1], // Usar el guión de la sección actual
+        script: script, // Usar el guión de la sección actual
         narrationStyle: narrationStyle
       })
     });
@@ -468,8 +775,13 @@ async function generateSectionAudio(section, voice) {
 // Función para mostrar contenido de una sección
 async function displaySectionContent(data, section) {
   return new Promise((resolve) => {
+    // Almacenar estructura de capítulos si está disponible
+    if (data.chapterStructure) {
+      storeChapterStructure(data.chapterStructure);
+    }
+    
     // Mostrar guión
-    showScript(data.script, section, totalSections, data.voice, data.scriptFile);
+    showScript(data.script, section, totalSections, data.voice, data.scriptFile, data.tokenUsage);
     
     setTimeout(() => {
       // Usar los datos del servidor en lugar de leer los checkboxes
@@ -580,8 +892,8 @@ async function showAutoGenerationComplete() {
 // Función para habilitar/deshabilitar controles
 function disableControls(disable) {
   const controls = [
-    'prompt', 'folderName', 'voiceSelect', 'sectionsSelect', 
-    'styleSelect', 'imagesSelect', 'promptModifier', 'modelSelect', 
+    'prompt', 'folderName', 'voiceSelect', 'sectionsNumber', 
+    'styleSelect', 'imagesSelect', 'promptModifier', 'modelSelect', 'llmModelSelect',
     'skipImages', 'autoGenerate', 'autoGenerateAudio', 'autoGenerateApplioAudio', 'googleImages'
   ];
   
@@ -1019,7 +1331,7 @@ async function regenerateImage(imageIndex, newPrompt) {
 }
 
 // Función para mostrar guión (sin audio inicialmente)
-function showScript(script, sectionNum, totalSections, voiceUsed = null, scriptFileInfo = null) {
+function showScript(script, sectionNum, totalSections, voiceUsed = null, scriptFileInfo = null, tokenUsage = null) {
   const scriptSection = document.getElementById("script-section");
   const scriptContent = document.getElementById("script-content");
   const audioControls = document.getElementById("audio-controls");
@@ -1031,15 +1343,37 @@ function showScript(script, sectionNum, totalSections, voiceUsed = null, scriptF
   currentVoice = voiceUsed || document.getElementById("voiceSelect").value;
   currentSectionNumber = sectionNum;
   
-  // Guardar la sección en el array de secciones
-  allSections[sectionNum - 1] = script;
+  // Obtener el título del capítulo actual
+  let chapterTitle = null;
+  if (globalChapterStructure && globalChapterStructure.length > 0 && sectionNum <= globalChapterStructure.length) {
+    chapterTitle = globalChapterStructure[sectionNum - 1];
+  }
   
-  console.log(`Guardando sección ${sectionNum}:`, script.substring(0, 100) + '...');
+  // Guardar la sección completa en el array de secciones
+  allSections[sectionNum - 1] = {
+    script: script,
+    chapterTitle: chapterTitle,
+    tokenUsage: tokenUsage,
+    voiceUsed: voiceUsed,
+    scriptFileInfo: scriptFileInfo
+  };
+  
+  console.log(`Guardando sección ${sectionNum} completa:`, {
+    script: script.substring(0, 100) + '...',
+    chapterTitle: chapterTitle,
+    tokenUsage: tokenUsage
+  });
   
   // Actualizar títulos y contadores
   sectionTitle.textContent = `Sección ${sectionNum}`;
   currentSectionSpan.textContent = sectionNum;
   totalSectionsSpan.textContent = totalSections;
+  
+  // Actualizar título del capítulo si está disponible
+  updateChapterTitle(sectionNum);
+  
+  // Actualizar información de tokens si está disponible
+  updateTokenUsage(tokenUsage);
   
   // Crear contenido del script con información del archivo guardado
   let scriptHTML = `
@@ -1114,8 +1448,9 @@ function showAudio(audioFileName, voiceUsed) {
 
 // Función para copiar el texto del guión al portapapeles
 function copyScriptText() {
-  // Obtener el script de la sección actual que se está mostrando
-  const scriptText = allSections[currentSectionNumber - 1];
+  // Obtener el script de la sección actual que se está mostrando (compatible con formato nuevo y antiguo)
+  const sectionData = allSections[currentSectionNumber - 1];
+  const scriptText = typeof sectionData === 'string' ? sectionData : (sectionData ? sectionData.script : null);
   
   if (!scriptText) {
     console.log(`❌ No hay texto del guión para la sección ${currentSectionNumber}`);
@@ -1511,13 +1846,17 @@ generateBtn.addEventListener("click", async () => {
   const topic = promptInput.value.trim();
   const folderName = document.getElementById("folderName").value.trim();
   const selectedVoice = document.getElementById("voiceSelect").value;
-  const selectedSections = document.getElementById("sectionsSelect").value;
+  const selectedSections = document.getElementById("sectionsNumber").value;
   const selectedStyle = document.getElementById("styleSelect").value;
   const imageCount = parseInt(document.getElementById("imagesSelect").value);
   const promptModifier = document.getElementById("promptModifier").value.trim();
   const selectedImageModel = document.getElementById("modelSelect").value;
+  const selectedLlmModel = document.getElementById("llmModelSelect").value;
   const skipImages = document.getElementById("skipImages").checked;
   const googleImages = document.getElementById("googleImages").checked;
+  const selectedApplioVoice = document.getElementById("applioVoiceSelect").value;
+  const selectedApplioModel = document.getElementById("applioModelSelect").value;
+  const applioPitch = parseInt(document.getElementById("applioPitch").value) || 0;
   
   console.log("Topic:", topic);
   console.log("Folder Name:", folderName);
@@ -1529,6 +1868,9 @@ generateBtn.addEventListener("click", async () => {
   console.log("Image Model:", selectedImageModel);
   console.log("Skip Images:", skipImages);
   console.log("Google Images:", googleImages);
+  console.log("Applio Voice:", selectedApplioVoice);
+  console.log("Applio Model:", selectedApplioModel);
+  console.log("Applio Pitch:", applioPitch);
   
   if (!topic) {
     console.log("Tema vacío, mostrando error");
@@ -1587,12 +1929,22 @@ generateBtn.addEventListener("click", async () => {
         imageCount: imageCount,
         promptModifier: promptModifier,
         imageModel: selectedImageModel,
+        llmModel: selectedLlmModel,
         skipImages: skipImages,
-        googleImages: googleImages
+        googleImages: googleImages,
+        applioVoice: selectedApplioVoice,
+        applioModel: selectedApplioModel,
+        applioPitch: applioPitch
       })
     });
 
     const data = await response.json();
+
+    // Almacenar estructura de capítulos si está disponible (función principal)
+    if (data.chapterStructure) {
+      storeChapterStructure(data.chapterStructure);
+      console.log('📚 Estructura de capítulos recibida:', data.chapterStructure.length, 'capítulos');
+    }
 
     if (data.script) {
       // Actualizar etapas completadas
@@ -1605,7 +1957,7 @@ generateBtn.addEventListener("click", async () => {
         
         // Mostrar guión primero
         setTimeout(() => {
-          showScript(data.script, data.currentSection, data.totalSections, data.voice, data.scriptFile);
+          showScript(data.script, data.currentSection, data.totalSections, data.voice, data.scriptFile, data.tokenUsage);
         }, 500);
         
         // Mostrar carrusel de imágenes
@@ -1616,7 +1968,7 @@ generateBtn.addEventListener("click", async () => {
         // Sin imágenes (omitidas)
         // Mostrar solo el guión
         setTimeout(() => {
-          showScript(data.script, data.currentSection, data.totalSections, data.voice, data.scriptFile);
+          showScript(data.script, data.currentSection, data.totalSections, data.voice, data.scriptFile, data.tokenUsage);
           // Ocultar el carrusel de imágenes
           document.getElementById("carousel-container").style.display = "none";
           
@@ -1694,6 +2046,7 @@ continueBtn.addEventListener("click", async () => {
   const selectedStyle = document.getElementById("styleSelect").value;
   const promptModifier = document.getElementById("promptModifier").value.trim();
   const selectedImageModel = document.getElementById("modelSelect").value;
+  const selectedLlmModel = document.getElementById("llmModelSelect").value;
   let skipImages = document.getElementById("skipImages").checked;
   let googleImages = document.getElementById("googleImages").checked;
   
@@ -1724,6 +2077,7 @@ continueBtn.addEventListener("click", async () => {
     console.log(`Enviando llamada API para sección ${nextSection}`);
     const skipImages = document.getElementById("skipImages").checked;
     const googleImages = document.getElementById("googleImages").checked;
+    const currentApplioVoice = document.getElementById("applioVoiceSelect").value;
     console.log(`Omitir imágenes: ${skipImages}`);
     const customStyleInstructions = getCustomStyleInstructions(selectedStyle);
     
@@ -1741,8 +2095,10 @@ continueBtn.addEventListener("click", async () => {
         imageCount: imageCount,
         promptModifier: promptModifier,
         imageModel: selectedImageModel,
+        llmModel: selectedLlmModel,
         skipImages: skipImages,
-        googleImages: googleImages
+        googleImages: googleImages,
+        applioVoice: currentApplioVoice
       })
     });
 
@@ -3730,7 +4086,11 @@ function showStoredSection(sectionNum) {
     return;
   }
   
-  const script = allSections[sectionNum - 1];
+  const sectionData = allSections[sectionNum - 1];
+  const script = typeof sectionData === 'string' ? sectionData : sectionData.script;
+  const chapterTitle = typeof sectionData === 'object' ? sectionData.chapterTitle : null;
+  const tokenUsage = typeof sectionData === 'object' ? sectionData.tokenUsage : null;
+  
   const sectionTitle = document.getElementById("section-title");
   const currentSectionSpan = document.getElementById("current-section");
   const scriptContent = document.getElementById("script-content");
@@ -3742,10 +4102,27 @@ function showStoredSection(sectionNum) {
   
   // Actualizar número de sección actual
   currentSectionNumber = sectionNum;
+  currentScript = script;
   
   // Actualizar títulos y contadores
   sectionTitle.textContent = `Sección ${sectionNum}`;
   currentSectionSpan.textContent = sectionNum;
+  
+  // Actualizar título del capítulo específico de esta sección
+  if (chapterTitle) {
+    const chapterTitleContainer = document.getElementById('chapter-title-container');
+    const chapterTitleSpan = document.getElementById('chapter-title');
+    if (chapterTitleContainer && chapterTitleSpan) {
+      chapterTitleSpan.textContent = chapterTitle.trim();
+      chapterTitleContainer.style.display = 'block';
+    }
+  } else {
+    // Si no hay título específico, usar la función general
+    updateChapterTitle(sectionNum);
+  }
+  
+  // Actualizar información de tokens específica de esta sección
+  updateTokenUsage(tokenUsage);
   
   // Mostrar el contenido del script
   const scriptHTML = `
@@ -5556,22 +5933,22 @@ async function saveCurrentProject() {
     
     const topicElement = document.getElementById('topic');
     const folderNameElement = document.getElementById('folderName');
-    const sectionsSelectElement = document.getElementById('sectionsSelect');
+    const sectionsNumberElement = document.getElementById('sectionsNumber');
     
     console.log('🔍 Elementos encontrados:', {
       topic: !!topicElement,
       folderName: !!folderNameElement,
-      sectionsSelect: !!sectionsSelectElement
+      sectionsNumber: !!sectionsNumberElement
     });
     
-    if (!topicElement || !folderNameElement || !sectionsSelectElement) {
+    if (!topicElement || !folderNameElement || !sectionsNumberElement) {
       showNotification('⚠️ No se encontraron los elementos del formulario. Asegúrate de haber configurado un proyecto.', 'warning');
       return;
     }
     
     const topic = topicElement.value.trim();
     const folderName = folderNameElement.value.trim();
-    const totalSections = parseInt(sectionsSelectElement.value);
+    const totalSections = parseInt(sectionsNumberElement.value);
     
     if (!topic) {
       showNotification('⚠️ Ingresa un tema para guardar el proyecto', 'warning');
@@ -5775,16 +6152,18 @@ async function loadProject(folderName) {
       // Verificar y llenar formulario con datos del proyecto
       const topicElement = document.getElementById('prompt'); // Cambiado de 'topic' a 'prompt'
       const folderNameElement = document.getElementById('folderName');
-      const sectionsSelectElement = document.getElementById('sectionsSelect');
+      const sectionsNumberElement = document.getElementById('sectionsNumber');
       const voiceSelectElement = document.getElementById('voiceSelect');
       const modelSelectElement = document.getElementById('modelSelect');
+      const llmModelSelectElement = document.getElementById('llmModelSelect');
       
       console.log('🔍 Elementos del formulario encontrados:', {
         prompt: !!topicElement, // Cambiado de topic a prompt
         folderName: !!folderNameElement,
-        sectionsSelect: !!sectionsSelectElement,
+        sectionsNumber: !!sectionsNumberElement,
         voiceSelect: !!voiceSelectElement,
-        modelSelect: !!modelSelectElement
+        modelSelect: !!modelSelectElement,
+        llmModelSelect: !!llmModelSelectElement
       });
       
       if (topicElement) {
@@ -5800,10 +6179,11 @@ async function loadProject(folderName) {
         console.warn('⚠️ Elemento folderName no encontrado');
       }
       
-      if (sectionsSelectElement) {
-        sectionsSelectElement.value = window.currentProject.totalSections;
+      if (sectionsNumberElement) {
+        sectionsNumberElement.value = window.currentProject.totalSections;
+        updateSectionButtons(); // Actualizar estado de botones
       } else {
-        console.warn('⚠️ Elemento sectionsSelect no encontrado');
+        console.warn('⚠️ Elemento sectionsNumber no encontrado');
       }
       
       if (voiceSelectElement) {
@@ -5816,6 +6196,12 @@ async function loadProject(folderName) {
         modelSelectElement.value = window.currentProject.imageModel;
       }
       
+      // Cargar modelo LLM
+      if (llmModelSelectElement && window.currentProject.llmModel) {
+        llmModelSelectElement.value = window.currentProject.llmModel;
+        console.log('🧠 Modelo LLM cargado:', window.currentProject.llmModel);
+      }
+      
       // 🔧 CARGAR CONFIGURACIONES ADICIONALES DEL PROYECTO
       console.log('🔧 Cargando configuraciones adicionales del proyecto...');
       
@@ -5824,6 +6210,31 @@ async function loadProject(folderName) {
       if (styleSelectElement && window.currentProject.scriptStyle) {
         styleSelectElement.value = window.currentProject.scriptStyle;
         console.log('📝 Estilo de narración cargado:', window.currentProject.scriptStyle);
+      }
+      
+      // Cargar voz de Applio
+      const applioVoiceSelectElement = document.getElementById('applioVoiceSelect');
+      if (applioVoiceSelectElement && window.currentProject.applioVoice) {
+        applioVoiceSelectElement.value = window.currentProject.applioVoice;
+        console.log('🎤 Voz de Applio cargada:', window.currentProject.applioVoice);
+      }
+      
+      // Cargar modelo de Applio
+      const applioModelSelectElement = document.getElementById('applioModelSelect');
+      if (applioModelSelectElement && window.currentProject.applioModel) {
+        applioModelSelectElement.value = window.currentProject.applioModel;
+        console.log('🎛️ Modelo de Applio cargado:', window.currentProject.applioModel);
+      }
+      
+      // Cargar pitch de Applio
+      const applioPitchElement = document.getElementById('applioPitch');
+      const pitchValueElement = document.getElementById('pitchValue');
+      if (applioPitchElement && typeof window.currentProject.applioPitch !== 'undefined') {
+        applioPitchElement.value = window.currentProject.applioPitch;
+        if (pitchValueElement) {
+          pitchValueElement.textContent = window.currentProject.applioPitch;
+        }
+        console.log('🎵 Pitch de Applio cargado:', window.currentProject.applioPitch);
       }
       
       // Cargar modificador de prompts (instrucciones para imágenes)
@@ -7212,3 +7623,63 @@ window.loadProjectSection = loadProjectSection;
 window.autoResize = autoResize;
 window.initializeSectionNavigation = initializeSectionNavigation;
 window.updateNavigationButtons = updateNavigationButtons;
+
+// Función para actualizar el título del capítulo
+function updateChapterTitle(sectionNum) {
+  const chapterTitleContainer = document.getElementById('chapter-title-container');
+  const chapterTitleSpan = document.getElementById('chapter-title');
+  
+  if (!chapterTitleContainer || !chapterTitleSpan) {
+    return;
+  }
+  
+  if (globalChapterStructure && globalChapterStructure.length > 0 && sectionNum <= globalChapterStructure.length) {
+    const chapterTitle = globalChapterStructure[sectionNum - 1];
+    if (chapterTitle && chapterTitle.trim()) {
+      chapterTitleSpan.textContent = chapterTitle.trim();
+      chapterTitleContainer.style.display = 'block';
+      return;
+    }
+  }
+  
+  // Ocultar si no hay título disponible
+  chapterTitleContainer.style.display = 'none';
+}
+
+// Función para almacenar la estructura de capítulos cuando se recibe del servidor
+function storeChapterStructure(chapterStructure) {
+  globalChapterStructure = chapterStructure || [];
+  console.log('📚 Estructura de capítulos almacenada:', globalChapterStructure.length, 'capítulos');
+}
+
+// Función para actualizar la información de tokens
+function updateTokenUsage(tokenUsage) {
+  const tokenContainer = document.getElementById('token-usage-container');
+  const inputTokensSpan = document.getElementById('input-tokens');
+  const outputTokensSpan = document.getElementById('output-tokens');
+  const totalTokensSpan = document.getElementById('total-tokens');
+  const modelUsedSpan = document.getElementById('model-used');
+  
+  if (!tokenContainer || !inputTokensSpan || !outputTokensSpan || !totalTokensSpan || !modelUsedSpan) {
+    return;
+  }
+  
+  if (tokenUsage) {
+    inputTokensSpan.textContent = tokenUsage.inputTokens.toLocaleString();
+    outputTokensSpan.textContent = tokenUsage.outputTokens.toLocaleString();
+    totalTokensSpan.textContent = tokenUsage.totalTokens.toLocaleString();
+    modelUsedSpan.textContent = tokenUsage.model || 'N/A';
+    tokenContainer.style.display = 'block';
+    
+    console.log('📊 Información de tokens actualizada:', tokenUsage);
+  } else {
+    tokenContainer.style.display = 'none';
+  }
+}
+
+// Exponer función globalmente
+window.updateTokenUsage = updateTokenUsage;
+
+// Exponer funciones globalmente
+window.updateChapterTitle = updateChapterTitle;
+window.storeChapterStructure = storeChapterStructure;
