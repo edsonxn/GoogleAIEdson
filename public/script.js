@@ -1,8 +1,11 @@
 // Función simple para verificar que el script se carga
-console.log('🚀 Script.js cargado correctamente');
+console.log('🚀 Script.js cargado correctamente - VERSIÓN CON FIX DE KEYWORDS v2');
 
 // Variable global para almacenar la estructura de capítulos
 let globalChapterStructure = [];
+
+// Variable global para almacenar las keywords de cada imagen para el botón de refresh
+let currentImageKeywords = [];
 
 // ================================
 // FUNCIÓN PARA MANEJAR SELECTOR NUMÉRICO DE SECCIONES
@@ -786,23 +789,49 @@ async function displaySectionContent(data, section) {
     setTimeout(() => {
       // Usar los datos del servidor en lugar de leer los checkboxes
       const skipImages = data.imagesSkipped || false;
-      const googleImages = data.googleImagesMode || false;
+      const bingImages = data.bingImagesMode || false;
+      const downloadedImages = data.downloadedImages || [];
       
       console.log(`🔍 DEBUG displaySectionContent - skipImages: ${skipImages}`);
-      console.log(`🔍 DEBUG displaySectionContent - googleImages: ${googleImages}`);
+      console.log(`🔍 DEBUG displaySectionContent - bingImages: ${bingImages}`);
+      console.log(`🔍 DEBUG displaySectionContent - downloadedImages.length: ${downloadedImages.length}`);
       console.log(`🔍 DEBUG displaySectionContent - data.imagesSkipped: ${data.imagesSkipped}`);
-      console.log(`🔍 DEBUG displaySectionContent - data.googleImagesMode: ${data.googleImagesMode}`);
+      console.log(`🔍 DEBUG displaySectionContent - data.bingImagesMode: ${data.bingImagesMode}`);
       console.log(`🔍 DEBUG displaySectionContent - data.images: ${data.images ? data.images.length : 'null'}`);
       console.log(`🔍 DEBUG displaySectionContent - data.imagePrompts: ${data.imagePrompts ? data.imagePrompts.length : 'null'}`);
       
-      if (!skipImages && !googleImages && data.images && data.images.length > 0) {
+      console.log(`🔍 DEBUG displaySectionContent - EVALUANDO CONDICIONES:`);
+      console.log(`🔍 DEBUG - Condición 1 (Bing): bingImages=${bingImages} && downloadedImages.length=${downloadedImages.length} > 0 = ${bingImages && downloadedImages.length > 0}`);
+      console.log(`🔍 DEBUG - Condición 2 (Normal): !skipImages=${!skipImages} && !bingImages=${!bingImages} && data.images=${data.images ? 'exists' : 'null'} = ${!skipImages && !bingImages && data.images && data.images.length > 0}`);
+      
+      if (bingImages && downloadedImages.length > 0) {
+        // Mostrar carrusel con imágenes descargadas de Bing
+        console.log(`🖼️ Mostrando carrusel con ${downloadedImages.length} imágenes de Bing`);
+        console.log(`🖼️ DEBUG - Datos de la primera imagen:`, downloadedImages[0]);
+        console.log(`🔍 DEBUG - data.imageKeywords:`, data.imageKeywords);
+        console.log(`🔍 DEBUG - data completa:`, data);
+        
+        // Almacenar las keywords para el botón de refresh
+        if (data.imageKeywords && data.imageKeywords.length > 0) {
+          currentImageKeywords = data.imageKeywords;
+          console.log(`🎯 Keywords almacenadas para refresh (bloque principal):`, currentImageKeywords);
+        } else {
+          console.warn(`⚠️ No se recibieron keywords para refresh (bloque principal)`);
+          console.warn(`⚠️ DEBUG - data.imageKeywords:`, data.imageKeywords);
+          currentImageKeywords = [];
+        }
+        
+        console.log(`🖼️ DEBUG - Llamando a createCarousel...`);
+        createCarousel(downloadedImages, section, []);
+        console.log(`🖼️ DEBUG - createCarousel ejecutado`);
+      } else if (!skipImages && !bingImages && data.images && data.images.length > 0) {
         // Mostrar carrusel de imágenes normales
         console.log(`📷 Mostrando carrusel de imágenes normales`);
         createCarousel(data.images, section, data.imagePrompts);
-      } else if (googleImages && data.imagePrompts && data.imagePrompts.length > 0) {
-        // Crear enlaces de Google Images y mostrarlos en el panel lateral
-        console.log(`🔗🔗🔗 EJECUTANDO createGoogleImageLinks 🔗🔗🔗`);
-        createGoogleImageLinks(data.imagePrompts, section);
+      } else if (bingImages && data.imagePrompts && data.imagePrompts.length > 0) {
+        // Fallback: mostrar prompts si falló la descarga de Bing
+        console.log(`⚠️ Descarga de Bing falló, mostrando prompts como fallback`);
+        addPromptsToSidebar(data.imagePrompts, section);
       } else if (data.imagePrompts && data.imagePrompts.length > 0) {
         // Mostrar prompts de imágenes en el panel lateral
         console.log(`📋 Mostrando prompts en el panel lateral`);
@@ -949,7 +978,20 @@ function showLoadingStages(sectionNum, imageCount = 5, skipImages = false, googl
 // Función para actualizar etapa
 function updateStage(stageId, status) {
   const stage = document.getElementById(stageId);
+  
+  // Validar que el elemento existe antes de continuar
+  if (!stage) {
+    console.warn(`⚠️ updateStage: Elemento con ID '${stageId}' no encontrado`);
+    return;
+  }
+  
   const icon = stage.querySelector('.stage-icon i');
+  
+  // Validar que el icono existe
+  if (!icon) {
+    console.warn(`⚠️ updateStage: Icono no encontrado en elemento '${stageId}'`);
+    return;
+  }
   
   if (status === 'active') {
     stage.className = 'stage active';
@@ -968,12 +1010,23 @@ function updateStage(stageId, status) {
 
 // Función para crear el carrusel de imágenes cronológicas
 function createCarousel(images, sectionNum, receivedPrompts = []) {
+  console.log(`🎠 DEBUG - createCarousel llamada con ${images.length} imágenes para sección ${sectionNum}`);
+  
   const carouselContainer = document.getElementById("carousel-container");
   const carouselTrack = document.getElementById("carouselTrack");
   const carouselIndicators = document.getElementById("carouselIndicators");
   const currentImageSpan = document.getElementById("current-image");
   const totalImagesSpan = document.getElementById("total-images");
   const carouselSectionTitle = document.getElementById("carousel-section-title");
+  
+  console.log(`🎠 DEBUG - Elementos encontrados:`, {
+    carouselContainer: !!carouselContainer,
+    carouselTrack: !!carouselTrack,
+    carouselIndicators: !!carouselIndicators,
+    currentImageSpan: !!currentImageSpan,
+    totalImagesSpan: !!totalImagesSpan,
+    carouselSectionTitle: !!carouselSectionTitle
+  });
   
   // Limpiar contenido anterior
   carouselTrack.innerHTML = '';
@@ -986,6 +1039,9 @@ function createCarousel(images, sectionNum, receivedPrompts = []) {
   imagePrompts = images.map((img, index) => {
     if (img.prompt) {
       return img.prompt;
+    } else if (img.caption) {
+      // Para imágenes de Bing, usar el caption como prompt
+      return img.caption;
     } else if (img.originalPromptIndex !== undefined && receivedPrompts && receivedPrompts[img.originalPromptIndex]) {
       // Si la imagen tiene un índice de prompt original, usar ese prompt
       return receivedPrompts[img.originalPromptIndex];
@@ -1013,12 +1069,61 @@ function createCarousel(images, sectionNum, receivedPrompts = []) {
     imageContainer.className = 'slide-content';
     
     const img = document.createElement('img');
-    img.src = "data:image/png;base64," + imageData.image;
-    img.alt = `Imagen ${index + 1} de la Sección ${sectionNum}`;
+    
+    // Verificar si la imagen es una URL de Bing o datos base64
+    if (imageData.url) {
+      // Imagen de Bing (URL)
+      img.src = imageData.url;
+      img.alt = imageData.caption || `Imagen ${index + 1} de la Sección ${sectionNum}`;
+    } else if (imageData.image) {
+      // Imagen generada con IA (base64)
+      img.src = "data:image/png;base64," + imageData.image;
+      img.alt = `Imagen ${index + 1} de la Sección ${sectionNum}`;
+    } else {
+      // Fallback para formato no reconocido
+      console.warn('Formato de imagen no reconocido:', imageData);
+      img.src = "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZjBmMGYwIi8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxNiIgZmlsbD0iIzk5OSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZHk9Ii4zZW0iPkltYWdlbiBubyBkaXNwb25pYmxlPC90ZXh0Pjwvc3ZnPg==";
+      img.alt = `Error cargando imagen ${index + 1}`;
+    }
+    
     img.style.opacity = "0";
     img.style.transition = "opacity 0.5s ease";
     
+    // Agregar manejo de errores para imágenes de Bing
+    img.onerror = function() {
+      this.src = "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZjBmMGYwIi8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxNiIgZmlsbD0iIzk5OSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZHk9Ii4zZW0iPkVycm9yIGNhcmdhbmRvIGltYWdlbjwvdGV4dD48L3N2Zz4=";
+      this.alt = "Error cargando imagen";
+    };
+    
     imageContainer.appendChild(img);
+    
+    // Agregar botones de acción para imágenes de Bing
+    if (imageData.url) {
+      // Obtener keyword para esta imagen
+      const imageKeyword = (currentImageKeywords && currentImageKeywords[index]) ? currentImageKeywords[index] : '';
+      
+      const actionButtons = document.createElement('div');
+      actionButtons.className = 'bing-image-actions';
+      actionButtons.innerHTML = `
+        <div class="keyword-editor">
+          <label for="keyword-${index}-${sectionNum}">Término de búsqueda:</label>
+          <input type="text" id="keyword-${index}-${sectionNum}" class="keyword-input" value="${imageKeyword}" placeholder="Ingresa términos de búsqueda...">
+        </div>
+        <div class="action-buttons">
+          <button class="btn-bing-download" onclick="downloadBingImage('${imageData.url}', '${imageData.filename || 'bing_image.jpg'}')" title="Descargar imagen">
+            <i class="fas fa-download"></i>
+          </button>
+          <button class="btn-bing-fullscreen" onclick="showBingImageFullscreen('${imageData.url}', '${imageData.caption || 'Imagen de Bing'}')" title="Ver en tamaño completo">
+            <i class="fas fa-expand"></i>
+          </button>
+          <button class="btn-bing-refresh" onclick="refreshBingImageWithCustomKeyword(${index}, ${sectionNum})" title="Renovar imagen">
+            <i class="fas fa-sync-alt"></i>
+          </button>
+        </div>
+      `;
+      imageContainer.appendChild(actionButtons);
+    }
+    
     slide.appendChild(imageContainer);
     carouselTrack.appendChild(slide);
     
@@ -1042,7 +1147,15 @@ function createCarousel(images, sectionNum, receivedPrompts = []) {
   });
   
   // Mostrar carrusel
+  console.log(`🎠 DEBUG - Mostrando carrusel: ${carouselContainer ? 'elemento encontrado' : 'elemento NO encontrado'}`);
+  console.log(`🎠 DEBUG - Display antes:`, carouselContainer ? carouselContainer.style.display : 'N/A');
+  
   carouselContainer.style.display = "block";
+  
+  console.log(`🎠 DEBUG - Display después:`, carouselContainer ? carouselContainer.style.display : 'N/A');
+  console.log(`🎠 DEBUG - Computed display:`, carouselContainer ? getComputedStyle(carouselContainer).display : 'N/A');
+  console.log(`🎠 DEBUG - Visibility:`, carouselContainer ? getComputedStyle(carouselContainer).visibility : 'N/A');
+  console.log(`🎠 DEBUG - OffsetHeight:`, carouselContainer ? carouselContainer.offsetHeight : 'N/A');
   
   // Configurar controles del carrusel
   setupCarouselControls();
@@ -1947,13 +2060,17 @@ generateBtn.addEventListener("click", async () => {
     }
 
     if (data.script) {
-      // Actualizar etapas completadas
-      updateStage('stage-script', 'completed');
+      // Actualizar etapas completadas (con pequeño delay para asegurar que los elementos existen)
+      setTimeout(() => {
+        updateStage('stage-script', 'completed');
+      }, 100);
       
-      if (!skipImages && data.images && data.images.length > 0) {
-        // Con imágenes
-        updateStage('stage-prompt', 'completed');
-        updateStage('stage-image', 'completed');
+      if (!skipImages && ((data.images && data.images.length > 0) || (data.downloadedImages && data.downloadedImages.length > 0))) {
+        // Con imágenes (IA generadas o descargadas de Bing)
+        setTimeout(() => {
+          updateStage('stage-prompt', 'completed');
+          updateStage('stage-image', 'completed');
+        }, 200);
         
         // Mostrar guión primero
         setTimeout(() => {
@@ -1962,36 +2079,73 @@ generateBtn.addEventListener("click", async () => {
         
         // Mostrar carrusel de imágenes
         setTimeout(() => {
-          createCarousel(data.images, data.currentSection, data.imagePrompts);
+          if (data.downloadedImages && data.downloadedImages.length > 0) {
+            // Imágenes de Bing descargadas
+            console.log(`🖼️ Mostrando carrusel con ${data.downloadedImages.length} imágenes de Bing`);
+            
+            // Almacenar las keywords para el botón de refresh (función principal)
+            if (data.imageKeywords && data.imageKeywords.length > 0) {
+              currentImageKeywords = data.imageKeywords;
+              console.log(`🎯 Keywords almacenadas para refresh (función principal):`, currentImageKeywords);
+            } else {
+              console.warn(`⚠️ No se recibieron keywords para refresh (función principal)`);
+              console.warn(`⚠️ DEBUG - data.imageKeywords:`, data.imageKeywords);
+              console.warn(`⚠️ DEBUG - data completa:`, data);
+              currentImageKeywords = [];
+            }
+            
+            createCarousel(data.downloadedImages, data.currentSection, []);
+          } else if (data.images && data.images.length > 0) {
+            // Imágenes generadas con IA
+            console.log(`📷 Mostrando carrusel de imágenes IA`);
+            createCarousel(data.images, data.currentSection, data.imagePrompts);
+          }
         }, 1000);
       } else {
-        // Sin imágenes (omitidas)
+        // Sin imágenes generadas o descargadas
         // Mostrar solo el guión
         setTimeout(() => {
           showScript(data.script, data.currentSection, data.totalSections, data.voice, data.scriptFile, data.tokenUsage);
-          // Ocultar el carrusel de imágenes
-          document.getElementById("carousel-container").style.display = "none";
           
-          // Mostrar prompts de imágenes si están disponibles
-          console.log(`🔍 DEBUG FRONTEND - Verificando prompts de imágenes...`);
+          // Solo ocultar el carrusel si NO hay imágenes de Bing
+          if (!data.downloadedImages || data.downloadedImages.length === 0) {
+            document.getElementById("carousel-container").style.display = "none";
+          }
+          
+          // Verificar si hay imágenes descargadas de Bing o prompts tradicionales
+          console.log(`🔍 DEBUG FRONTEND - Verificando imágenes/prompts...`);
+          console.log(`🔍 DEBUG FRONTEND - data.downloadedImages:`, data.downloadedImages);
+          console.log(`🔍 DEBUG FRONTEND - data.bingImagesMode:`, data.bingImagesMode);
           console.log(`🔍 DEBUG FRONTEND - data.imagePrompts:`, data.imagePrompts);
-          console.log(`🔍 DEBUG FRONTEND - data.imagePrompts existe:`, !!data.imagePrompts);
-          console.log(`🔍 DEBUG FRONTEND - data.imagePrompts.length:`, data.imagePrompts ? data.imagePrompts.length : 'undefined');
-          console.log(`🔍 DEBUG FRONTEND - data.imagesSkipped:`, data.imagesSkipped);
           console.log(`🔍 DEBUG FRONTEND - data.googleImagesMode:`, data.googleImagesMode);
-          console.log(`🔍 DEBUG FRONTEND - Objeto data completo:`, data);
+          console.log(`🔍 DEBUG FRONTEND - data.mode:`, data.mode);
           
-          if (data.imagePrompts && data.imagePrompts.length > 0) {
+          // Mostrar imágenes de Bing en carrusel si están disponibles
+          if (data.downloadedImages && data.downloadedImages.length > 0 && data.bingImagesMode) {
+            console.log(`🖼️ Mostrando carrusel tardío con ${data.downloadedImages.length} imágenes de Bing`);
+            
+            // Almacenar las keywords para el botón de refresh
+            if (data.imageKeywords && data.imageKeywords.length > 0) {
+              currentImageKeywords = data.imageKeywords;
+              console.log(`🎯 Keywords almacenadas para refresh:`, currentImageKeywords);
+            } else {
+              console.warn(`⚠️ No se recibieron keywords para refresh`);
+              currentImageKeywords = [];
+            }
+            
+            createCarousel(data.downloadedImages, data.currentSection, []);
+          }
+          // Solo mostrar en panel lateral si NO hay imágenes de Bing y SÍ hay prompts tradicionales
+          else if (data.imagePrompts && data.imagePrompts.length > 0 && !data.bingImagesMode) {
             if (data.googleImagesMode) {
-              console.log(`🔗🔗🔗 DEBUG FRONTEND - Ejecutando createGoogleImageLinks con ${data.imagePrompts.length} keywords`);
+              console.log(`🔗 DEBUG FRONTEND - Ejecutando createGoogleImageLinks con ${data.imagePrompts.length} keywords`);
               createGoogleImageLinks(data.imagePrompts, data.currentSection);
             } else {
               console.log(`📋 DEBUG FRONTEND - Ejecutando addPromptsToSidebar con ${data.imagePrompts.length} prompts`);
-              console.log(`📋 DEBUG FRONTEND - data.googleImagesMode es:`, data.googleImagesMode);
               addPromptsToSidebar(data.imagePrompts, data.currentSection);
             }
           } else {
-            console.log(`❌ DEBUG FRONTEND - No se encontraron prompts de imágenes válidos`);
+            console.log(`❌ DEBUG FRONTEND - No se encontraron imágenes ni prompts válidos`);
           }
         }, 500);
       }
@@ -2105,8 +2259,10 @@ continueBtn.addEventListener("click", async () => {
     const data = await response.json();
 
     if (data.script) {
-      // Actualizar etapas completadas
-      updateStage('stage-script', 'completed');
+      // Actualizar etapas completadas (con pequeño delay para asegurar que los elementos existen)
+      setTimeout(() => {
+        updateStage('stage-script', 'completed');
+      }, 100);
       
       // Usar los datos del servidor en lugar de leer los checkboxes
       const serverSkipImages = data.imagesSkipped || false;
@@ -2124,8 +2280,10 @@ continueBtn.addEventListener("click", async () => {
       if (!serverSkipImages && !serverGoogleImages && data.images && data.images.length > 0) {
         // Con imágenes normales
         console.log(`📷 continueGeneration - Mostrando carrusel de imágenes normales`);
-        updateStage('stage-prompt', 'completed');
-        updateStage('stage-image', 'completed');
+        setTimeout(() => {
+          updateStage('stage-prompt', 'completed');
+          updateStage('stage-image', 'completed');
+        }, 200);
         
         // Actualizar número de sección actual
         currentSectionNumber = data.currentSection;
@@ -2142,7 +2300,9 @@ continueBtn.addEventListener("click", async () => {
       } else if (serverGoogleImages && data.imagePrompts && data.imagePrompts.length > 0) {
         // Modo Google Images
         console.log(`🔗🔗🔗 continueGeneration - EJECUTANDO createGoogleImageLinks 🔗🔗🔗`);
-        updateStage('stage-prompt', 'completed');
+        setTimeout(() => {
+          updateStage('stage-prompt', 'completed');
+        }, 200);
         
         // Actualizar número de sección actual
         currentSectionNumber = data.currentSection;
@@ -7683,3 +7843,325 @@ window.updateTokenUsage = updateTokenUsage;
 // Exponer funciones globalmente
 window.updateChapterTitle = updateChapterTitle;
 window.storeChapterStructure = storeChapterStructure;
+
+// =====================================
+// FUNCIONES ADICIONALES PARA IMÁGENES DE BING
+// =====================================
+
+function downloadBingImage(imageUrl, filename) {
+  console.log(`📥 Descargando imagen: ${filename}`);
+  
+  const link = document.createElement('a');
+  link.href = imageUrl;
+  link.download = filename || 'bing_image.jpg';
+  link.target = '_blank';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+function showBingImageFullscreen(imageUrl, caption) {
+  console.log(`🖼️ Mostrando imagen en pantalla completa: ${caption}`);
+  
+  // Crear modal para imagen completa
+  const modal = document.createElement('div');
+  modal.className = 'bing-image-modal';
+  modal.innerHTML = `
+    <div class="modal-overlay" onclick="closeBingImageModal()">
+      <div class="modal-content" onclick="event.stopPropagation()">
+        <button class="modal-close" onclick="closeBingImageModal()">
+          <i class="fas fa-times"></i>
+        </button>
+        <img src="${imageUrl}" alt="${caption}" />
+        <div class="modal-caption">${caption}</div>
+      </div>
+    </div>
+  `;
+  
+  document.body.appendChild(modal);
+  modal.style.display = 'flex';
+}
+
+function closeBingImageModal() {
+  const modal = document.querySelector('.bing-image-modal');
+  if (modal) {
+    modal.remove();
+  }
+}
+
+// Exponer funciones globalmente
+window.downloadBingImage = downloadBingImage;
+window.showBingImageFullscreen = showBingImageFullscreen;
+window.closeBingImageModal = closeBingImageModal;
+window.refreshBingImageWithCustomKeyword = refreshBingImageWithCustomKeyword;
+
+// Función para refrescar una imagen específica
+async function refreshBingImage(imageIndex, sectionNum) {
+  console.log(`🔄 Refrescando imagen ${imageIndex} de la sección ${sectionNum}`);
+  
+  // Verificar que tenemos keywords para esta imagen
+  if (!currentImageKeywords || !currentImageKeywords[imageIndex]) {
+    console.error(`❌ No hay keywords disponibles para la imagen ${imageIndex}`);
+    console.log(`🔍 DEBUG - currentImageKeywords:`, currentImageKeywords);
+    console.log(`🔍 DEBUG - imageIndex:`, imageIndex);
+    alert('No se pueden obtener nuevas keywords para esta imagen. Por favor, genera el contenido nuevamente.');
+    return;
+  }
+  
+  // Obtener el nombre de la carpeta actual
+  const folderNameElement = document.getElementById('folderName');
+  if (!folderNameElement) {
+    console.error('❌ No se pudo obtener el nombre del proyecto');
+    alert('Error: No se pudo obtener el nombre del proyecto');
+    return;
+  }
+  
+  const folderName = folderNameElement.value.trim();
+  
+  // Obtener las imágenes actuales del carrusel para mantener mapeo correcto
+  const currentImages = [];
+  const carouselSlides = document.querySelectorAll('.carousel-slide img');
+  carouselSlides.forEach(img => {
+    currentImages.push({
+      url: img.src.split('?')[0], // Remover query params para obtener URL limpia
+      alt: img.alt
+    });
+  });
+  
+  console.log(`🎯 Imágenes actuales detectadas:`, currentImages.map((img, i) => `${i}: ${img.url.split('/').pop()}`));
+  console.log(`🎯 Refrescando imagen en posición visual ${imageIndex}: ${currentImages[imageIndex]?.url.split('/').pop()}`);
+  
+  try {
+    // Mostrar indicador de carga en el botón
+    const refreshButton = document.querySelector(`[onclick="refreshBingImage(${imageIndex}, ${sectionNum})"]`);
+    if (refreshButton) {
+      refreshButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+      refreshButton.disabled = true;
+    }
+    
+    // Hacer petición al backend para refrescar la imagen
+    const response = await fetch('/api/refresh-image', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        folderName: folderName,
+        imageIndex: imageIndex,
+        sectionNum: sectionNum,
+        keywords: currentImageKeywords[imageIndex],
+        currentImages: currentImages // Enviar mapeo actual de imágenes
+      })
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Error del servidor: ${response.status}`);
+    }
+    
+    const result = await response.json();
+    
+    if (result.success) {
+      console.log(`✅ Nueva imagen descargada: ${result.newImage.filename}`);
+      console.log(`🎯 Mapeo confirmado: posición visual ${imageIndex} → ${result.newImage.filename}`);
+      
+      // Actualizar la imagen en el carrusel con efecto visual
+      const currentSlideImg = document.querySelector('.carousel-slide:nth-child(' + (imageIndex + 1) + ') img');
+      if (currentSlideImg) {
+        // Añadir efecto de transición suave
+        currentSlideImg.style.opacity = '0.3';
+        currentSlideImg.style.transition = 'opacity 0.3s ease';
+        
+        // Crear nueva imagen para precargar
+        const newImg = new Image();
+        newImg.onload = function() {
+          // Una vez cargada la nueva imagen, actualizar con timestamp para evitar cache
+          currentSlideImg.src = result.newImage.url + '?t=' + Date.now();
+          currentSlideImg.alt = `Nueva imagen ${imageIndex + 1} de la Sección ${sectionNum}`;
+          
+          // Restaurar opacidad con efecto suave
+          setTimeout(() => {
+            currentSlideImg.style.opacity = '1';
+          }, 100);
+        };
+        
+        newImg.onerror = function() {
+          // Si hay error cargando la imagen, restaurar opacidad
+          currentSlideImg.style.opacity = '1';
+        };
+        
+        // Iniciar precarga de la nueva imagen
+        newImg.src = result.newImage.url + '?t=' + Date.now();
+      }
+      
+      // Mostrar notificación de éxito
+      showNotification('✅ Imagen renovada exitosamente', 'success');
+      
+    } else {
+      throw new Error(result.error || 'Error desconocido');
+    }
+    
+  } catch (error) {
+    console.error(`❌ Error refrescando imagen:`, error);
+    showNotification(`❌ Error renovando imagen: ${error.message}`, 'error');
+  } finally {
+    // Restaurar el botón
+    const refreshButton = document.querySelector(`[onclick="refreshBingImage(${imageIndex}, ${sectionNum})"]`);
+    if (refreshButton) {
+      refreshButton.innerHTML = '<i class="fas fa-sync-alt"></i>';
+      refreshButton.disabled = false;
+    }
+  }
+}
+
+// Función para refrescar una imagen con keyword personalizado
+async function refreshBingImageWithCustomKeyword(imageIndex, sectionNum) {
+  console.log(`🔄 Refrescando imagen ${imageIndex} de la sección ${sectionNum} con keyword personalizado`);
+  
+  // Obtener el keyword del input field
+  const keywordInput = document.getElementById(`keyword-${imageIndex}-${sectionNum}`);
+  if (!keywordInput) {
+    console.error(`❌ No se encontró el input de keyword para imagen ${imageIndex}`);
+    alert('Error: No se pudo obtener el término de búsqueda');
+    return;
+  }
+  
+  const customKeyword = keywordInput.value.trim();
+  if (!customKeyword) {
+    alert('Por favor, ingresa un término de búsqueda antes de refrescar la imagen');
+    return;
+  }
+  
+  // Obtener el nombre de la carpeta actual
+  const folderNameElement = document.getElementById('folderName');
+  if (!folderNameElement) {
+    console.error('❌ No se pudo obtener el nombre del proyecto');
+    alert('Error: No se pudo obtener el nombre del proyecto');
+    return;
+  }
+  
+  const folderName = folderNameElement.value.trim();
+  
+  // Obtener las imágenes actuales del carrusel para mantener mapeo correcto
+  const carouselTrack = document.querySelector('.carousel-track');
+  const currentImages = Array.from(carouselTrack.querySelectorAll('.carousel-slide img')).map((img, index) => {
+    const filename = img.src.split('/').pop().split('?')[0]; // Extraer filename de la URL
+    return {
+      url: img.src,
+      alt: img.alt,
+      index: index,
+      filename: filename
+    };
+  });
+  
+  console.log(`🎯 Imágenes actuales detectadas:`, currentImages.map((img, i) => `${i}: ${img.filename}`));
+  console.log(`🎯 Refrescando imagen en posición visual ${imageIndex}: ${currentImages[imageIndex]?.filename}`);
+  
+  try {
+    // Mostrar indicador de carga en el botón
+    const refreshButton = document.querySelector(`[onclick="refreshBingImageWithCustomKeyword(${imageIndex}, ${sectionNum})"]`);
+    if (refreshButton) {
+      refreshButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+      refreshButton.disabled = true;
+    }
+    
+    const response = await fetch('/api/refresh-image', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        folderName: folderName,
+        imageIndex: imageIndex,
+        sectionNum: sectionNum,
+        keywords: customKeyword, // Usar keyword personalizado
+        currentImages: currentImages
+      })
+    });
+    
+    if (response.ok) {
+      const result = await response.json();
+      console.log(`✅ Nueva imagen descargada: ${result.filename}`);
+      console.log(`🎯 Mapeo confirmado: posición visual ${imageIndex} → ${result.filename}`);
+      
+      // Actualizar la imagen en el carrusel
+      const currentSlide = document.querySelectorAll('.carousel-slide')[imageIndex];
+      if (currentSlide) {
+        const img = currentSlide.querySelector('img');
+        if (img) {
+          // Agregar timestamp para evitar caché
+          const timestamp = new Date().getTime();
+          img.src = `${result.newImageUrl}?t=${timestamp}`;
+          
+          // Actualizar el keyword almacenado
+          if (currentImageKeywords && currentImageKeywords[imageIndex]) {
+            currentImageKeywords[imageIndex] = customKeyword;
+            console.log(`🎯 Keyword actualizado: posición ${imageIndex} → "${customKeyword}"`);
+          }
+        }
+      }
+      
+      showNotification(`✅ Imagen ${imageIndex + 1} renovada exitosamente con "${customKeyword}"`, 'success');
+    } else {
+      throw new Error(`Error del servidor: ${response.status}`);
+    }
+    
+  } catch (error) {
+    console.error(`❌ Error refrescando imagen:`, error);
+    showNotification(`❌ Error renovando imagen: ${error.message}`, 'error');
+  } finally {
+    // Restaurar el botón
+    const refreshButton = document.querySelector(`[onclick="refreshBingImageWithCustomKeyword(${imageIndex}, ${sectionNum})"]`);
+    if (refreshButton) {
+      refreshButton.innerHTML = '<i class="fas fa-sync-alt"></i>';
+      refreshButton.disabled = false;
+    }
+  }
+}
+
+// Función para mostrar notificaciones
+function showNotification(message, type = 'info') {
+  const notification = document.createElement('div');
+  notification.className = `notification notification-${type}`;
+  notification.textContent = message;
+  
+  // Estilos inline para la notificación
+  notification.style.cssText = `
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    padding: 15px 20px;
+    border-radius: 5px;
+    color: white;
+    font-weight: bold;
+    z-index: 10000;
+    animation: slideInRight 0.3s ease;
+    max-width: 400px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  `;
+  
+  // Colores según el tipo
+  if (type === 'success') {
+    notification.style.backgroundColor = '#4CAF50';
+  } else if (type === 'error') {
+    notification.style.backgroundColor = '#f44336';
+  } else {
+    notification.style.backgroundColor = '#2196F3';
+  }
+  
+  document.body.appendChild(notification);
+  
+  // Eliminar automáticamente después de 4 segundos
+  setTimeout(() => {
+    notification.style.animation = 'slideOutRight 0.3s ease';
+    setTimeout(() => {
+      if (notification.parentNode) {
+        notification.parentNode.removeChild(notification);
+      }
+    }, 300);
+  }, 4000);
+}
+
+// Exponer la nueva función globalmente
+window.refreshBingImage = refreshBingImage;
+window.showBingImageFullscreen = showBingImageFullscreen;
+window.closeBingImageModal = closeBingImageModal;

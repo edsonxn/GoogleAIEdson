@@ -1475,6 +1475,10 @@ h1::after {
   border-radius: 15px;
   position: relative;
   background: rgba(0, 0, 0, 0.3);
+  /* Establecer altura fija para el carrusel */
+  height: 450px;
+  max-width: 800px;
+  margin: 0 auto;
 }
 
 .carousel-track {
@@ -1485,6 +1489,7 @@ h1::after {
 
 .carousel-slide {
   min-width: 100%;
+  height: 100%;
   display: flex;
   justify-content: center;
   align-items: center;
@@ -1494,9 +1499,11 @@ h1::after {
 .slide-content {
   position: relative;
   width: 100%;
+  height: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
 }
 
 .sequence-label {
@@ -1517,15 +1524,18 @@ h1::after {
 }
 
 .carousel-slide img {
-  width: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
   height: auto;
-  max-height: 400px;
   object-fit: contain;
   border-radius: 10px;
   box-shadow: 
     0 10px 25px rgba(0, 0, 0, 0.5),
     0 0 15px rgba(0, 255, 127, 0.1);
   transition: opacity 0.3s ease;
+  /* Asegurar que la imagen se centre y mantenga proporción */
+  display: block;
 }
 
 .carousel-btn {
@@ -6926,4 +6936,423 @@ body.prompts-panel-active .container {
 .btn-activate-project i {
   margin-right: 10px;
   font-size: 18px;
+}
+
+/* =====================================
+   ESTILOS PARA CARRUSEL DE IMÁGENES DE BING
+   ===================================== */
+
+.bing-images-section {
+  background: linear-gradient(135deg, rgba(0, 191, 255, 0.1), rgba(0, 255, 127, 0.1));
+  border: 1px solid rgba(0, 191, 255, 0.3);
+  margin-bottom: 15px;
+}
+
+.bing-images-section .prompt-header {
+  padding: 12px 15px;
+}
+
+.bing-images-section .prompt-header h4 {
+  color: #00bfff;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.bing-images-section .prompt-header i {
+  color: #00ff7f;
+  margin-right: 8px;
+}
+
+/* Botones de acción para imágenes de Bing en el carrusel principal */
+.bing-image-actions {
+  position: absolute;
+  top: 15px;
+  right: 15px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  z-index: 10;
+  max-width: 250px;
+}
+
+.slide-content:hover .bing-image-actions {
+  opacity: 1;
+}
+
+/* Editor de keywords */
+.keyword-editor {
+  background: rgba(0, 0, 0, 0.85);
+  border-radius: 8px;
+  padding: 10px;
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(0, 255, 127, 0.3);
+}
+
+.keyword-editor label {
+  display: block;
+  color: #00ff7f;
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 5px;
+}
+
+.keyword-input {
+  width: 100%;
+  background: rgba(26, 26, 46, 0.9);
+  border: 1px solid rgba(0, 255, 127, 0.4);
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: #fff;
+  font-size: 13px;
+  font-family: 'Inter', sans-serif;
+  transition: all 0.3s ease;
+}
+
+.keyword-input:focus {
+  outline: none;
+  border-color: #00ff7f;
+  box-shadow: 0 0 8px rgba(0, 255, 127, 0.3);
+  background: rgba(26, 26, 46, 1);
+}
+
+.keyword-input::placeholder {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+/* Contenedor de botones de acción */
+.action-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.btn-bing-download,
+.btn-bing-fullscreen,
+.btn-bing-refresh {
+  background: rgba(0, 0, 0, 0.7);
+  border: none;
+  color: #fff;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  transition: all 0.3s ease;
+  backdrop-filter: blur(10px);
+}
+
+.btn-bing-download:hover {
+  background: rgba(0, 255, 127, 0.8);
+  transform: scale(1.1);
+}
+
+.btn-bing-fullscreen:hover {
+  background: rgba(0, 191, 255, 0.8);
+  transform: scale(1.1);
+}
+
+.btn-bing-refresh:hover {
+  background: rgba(255, 193, 7, 0.8);
+  transform: scale(1.1);
+}
+
+.btn-bing-refresh:disabled {
+  background: rgba(108, 117, 125, 0.8);
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* Animación de rotación para el ícono de refresh */
+.btn-bing-refresh .fa-spinner {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.bing-images-carousel {
+  margin: 15px 0;
+  background: rgba(16, 33, 62, 0.8);
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid rgba(0, 255, 127, 0.2);
+}
+
+.carousel-container {
+  position: relative;
+  width: 100%;
+  height: 250px;
+  overflow: hidden;
+}
+
+.carousel-track {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  transition: transform 0.3s ease;
+}
+
+.carousel-slide {
+  min-width: 100%;
+  height: 100%;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.carousel-slide img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 8px;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+}
+
+.image-caption {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  right: 10px;
+  background: rgba(0, 0, 0, 0.8);
+  color: #fff;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  text-align: center;
+  backdrop-filter: blur(10px);
+}
+
+.image-actions {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  gap: 8px;
+}
+
+.image-actions button {
+  background: rgba(0, 0, 0, 0.7);
+  border: none;
+  color: #fff;
+  width: 35px;
+  height: 35px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  transition: all 0.3s ease;
+  backdrop-filter: blur(10px);
+}
+
+.image-actions button:hover {
+  background: rgba(0, 255, 127, 0.8);
+  transform: scale(1.1);
+}
+
+.carousel-btn {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  background: rgba(0, 0, 0, 0.7);
+  border: none;
+  color: #fff;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  transition: all 0.3s ease;
+  z-index: 10;
+  backdrop-filter: blur(10px);
+}
+
+.carousel-btn:hover {
+  background: rgba(0, 255, 127, 0.8);
+  transform: translateY(-50%) scale(1.1);
+}
+
+.carousel-prev {
+  left: 10px;
+}
+
+.carousel-next {
+  right: 10px;
+}
+
+.carousel-indicators {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.indicator {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.3);
+  border: none;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.indicator.active {
+  background: #00ff7f;
+  transform: scale(1.2);
+}
+
+.indicator:hover {
+  background: #00bfff;
+}
+
+/* Modal para imagen completa */
+.bing-image-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.9);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  backdrop-filter: blur(5px);
+}
+
+.modal-overlay {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.modal-content {
+  position: relative;
+  max-width: 90%;
+  max-height: 90%;
+  background: rgba(16, 33, 62, 0.95);
+  border-radius: 12px;
+  border: 1px solid rgba(0, 255, 127, 0.3);
+  overflow: hidden;
+}
+
+.modal-content img {
+  width: 100%;
+  height: auto;
+  max-height: 80vh;
+  object-fit: contain;
+}
+
+.modal-close {
+  position: absolute;
+  top: 15px;
+  right: 15px;
+  background: rgba(0, 0, 0, 0.7);
+  border: none;
+  color: #fff;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  transition: all 0.3s ease;
+  z-index: 10;
+}
+
+.modal-close:hover {
+  background: rgba(255, 0, 0, 0.8);
+  transform: scale(1.1);
+}
+
+.modal-caption {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: rgba(0, 0, 0, 0.8);
+  color: #fff;
+  padding: 15px;
+  text-align: center;
+  font-size: 14px;
+  backdrop-filter: blur(10px);
+}
+
+/* Responsive para carrusel */
+@media (max-width: 768px) {
+  .carousel-container {
+    height: 200px;
+  }
+  
+  .carousel-btn {
+    width: 35px;
+    height: 35px;
+  }
+}
+
+/* Animaciones para notificaciones */
+@keyframes slideInRight {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes slideOutRight {
+  from {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+}
+
+/* Ajustes responsive adicionales */
+@media (max-width: 768px) {
+  .carousel-btn {
+    font-size: 14px;
+  }
+  
+  .btn-bing-download,
+  .btn-bing-fullscreen,
+  .btn-bing-refresh {
+    width: 35px;
+    height: 35px;
+    font-size: 14px;
+  }
+  
+  .image-actions button {
+    width: 30px;
+    height: 30px;
+    font-size: 12px;
+  }
+  
+  .image-caption {
+    font-size: 11px;
+    padding: 6px 10px;
+  }
 }

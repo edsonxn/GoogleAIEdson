@@ -1037,36 +1037,25 @@ GUIÓN:
 ${script}
 
 INSTRUCCIONES:
-1. Genera exactamente ${imageCount} conjuntos de palabras clave para búsqueda de imágenes
-2. Cada conjunto debe tener 2-3 palabras simples en inglés
-3. Usa términos CONCRETOS y VISUALES que describan objetos, personajes, escenas
-4. Para videojuegos: usa "nintendo", "mario", "gaming", "retro games", "video game"
-5. Para historia: usa "vintage", "retro", "classic", "old", "historical"
-6. Para tecnología: usa "computer", "console", "gaming system", "vintage tech"
-7. Enfócate en elementos que se pueden VER en imágenes, no conceptos abstractos
+1. Genera exactamente ${imageCount} conjuntos de palabras clave
+2. Cada conjunto debe tener 2-4 palabras en inglés
+3. Las palabras deben ser específicas y visuales
+4. Deben seguir una secuencia lógica que acompañe el guión
+5. Evita palabras muy genéricas como "video", "youtube", "image"
+6. Enfócate en elementos visuales concretos del tema
 
 FORMATO DE RESPUESTA (exactamente ${imageCount} líneas):
-[palabra1 palabra2]
 [palabra1 palabra2 palabra3]
 [palabra1 palabra2]
+[palabra1 palabra2 palabra3 palabra4]
 ...
 
-EJEMPLO para tema "making of Mario 64":
-mario nintendo character
-vintage gaming console
-nintendo 64 controller
-retro video game
-mario jumping action
-nintendo development team
-classic game screenshots
-mario 3d model
-nintendo office 1990s
-super mario gameplay
-
-IMPORTANTE: 
-- USA palabras que describan cosas VISIBLES (personajes, objetos, escenas)
-- EVITA conceptos abstractos como "innovation", "challenge", "concept"
-- INCLUYE nombres reconocibles cuando sea relevante (mario, nintendo, etc.)
+EJEMPLO para tema "historia de zelda":
+hyrule castle kingdom
+link green tunic
+master sword triforce
+ganondorf dark power
+zelda princess wisdom
 
 Responde SOLO con las ${imageCount} líneas de palabras clave, sin explicaciones adicionales.`;
 
@@ -1115,95 +1104,41 @@ async function searchAndDownloadBingImages(keywords, sectionDir) {
   
   try {
     const downloadedImages = [];
-    const maxRetries = 3; // Máximo 3 intentos por imagen
     
     // Buscar y descargar una imagen para cada conjunto de palabras clave
     for (let i = 0; i < keywords.length; i++) {
       const query = keywords[i];
       console.log(`📸 Buscando imagen ${i + 1}/${keywords.length} con: "${query}"`);
       
-      let imageDownloaded = false;
-      let retryCount = 0;
-      
-      // Intentar descargar la imagen con reintentos
-      while (!imageDownloaded && retryCount < maxRetries) {
-        try {
-          // Buscar URLs de imágenes en Bing para este query específico
-          const imageUrls = await searchBingImages(query, 5); // Buscar 5 opciones por si alguna falla
-          
-          if (imageUrls.length > 0) {
-            // Intentar con diferentes URLs si la primera falla
-            for (let urlIndex = 0; urlIndex < Math.min(imageUrls.length, 3); urlIndex++) {
-              try {
-                const imageUrl = imageUrls[urlIndex];
-                const filename = `bing_image_${i + 1}.jpg`;
-                const filepath = path.join(sectionDir, filename);
-                
-                console.log(`📥 Descargando imagen ${i + 1} (intento ${retryCount + 1}/${maxRetries}, URL ${urlIndex + 1}): ${imageUrl.substring(0, 80)}...`);
-                
-                await downloadImageFromUrl(imageUrl, filepath);
-                
-                downloadedImages.push({
-                  filename: filename,
-                  path: filepath,
-                  url: imageUrl,
-                  source: 'bing',
-                  keywords: query,
-                  caption: `Imagen ${i + 1}: ${query}`
-                });
-                
-                console.log(`✅ Descargada imagen ${i + 1}: ${filename} (${query})`);
-                imageDownloaded = true;
-                break; // Salir del loop de URLs
-                
-              } catch (urlError) {
-                console.log(`⚠️ Error con URL ${urlIndex + 1}: ${urlError.message}`);
-                continue; // Intentar con la siguiente URL
-              }
-            }
-            
-            if (!imageDownloaded) {
-              retryCount++;
-              if (retryCount < maxRetries) {
-                console.log(`🔄 Reintentando imagen ${i + 1} (intento ${retryCount + 1}/${maxRetries})...`);
-                await new Promise(resolve => setTimeout(resolve, 2000)); // Pausa antes de reintentar
-              }
-            }
-            
-          } else {
-            console.log(`⚠️ No se encontraron imágenes para: "${query}"`);
-            retryCount++;
-            if (retryCount < maxRetries) {
-              console.log(`🔄 Reintentando búsqueda para "${query}" (intento ${retryCount + 1}/${maxRetries})...`);
-              await new Promise(resolve => setTimeout(resolve, 2000));
-            }
-          }
-          
-        } catch (error) {
-          retryCount++;
-          console.error(`❌ Error en intento ${retryCount} para imagen ${i + 1} (${query}):`, error.message);
-          if (retryCount < maxRetries) {
-            console.log(`🔄 Reintentando imagen ${i + 1} en 3 segundos...`);
-            await new Promise(resolve => setTimeout(resolve, 3000));
-          }
-        }
-      }
-      
-      // Si no se pudo descargar la imagen después de todos los intentos
-      if (!imageDownloaded) {
-        console.log(`❌ FALLO DEFINITIVO: No se pudo descargar imagen ${i + 1} con keywords "${query}" después de ${maxRetries} intentos`);
+      try {
+        // Buscar URLs de imágenes en Bing para este query específico
+        const imageUrls = await searchBingImages(query, 1); // Solo buscar 1 imagen por query
         
-        // Crear placeholder o imagen vacía para mantener la secuencia
-        const filename = `bing_image_${i + 1}.jpg`;
-        downloadedImages.push({
-          filename: filename,
-          path: null, // Sin archivo físico
-          url: null,
-          source: 'bing',
-          keywords: query,
-          caption: `Imagen ${i + 1}: ${query}`,
-          failed: true // Marcar como fallida
-        });
+        if (imageUrls.length > 0) {
+          const imageUrl = imageUrls[0];
+          const filename = `bing_image_${i + 1}.jpg`;
+          const filepath = path.join(sectionDir, filename);
+          
+          console.log(`📥 Descargando imagen ${i + 1}: ${imageUrl.substring(0, 80)}...`);
+          
+          await downloadImageFromUrl(imageUrl, filepath);
+          
+          downloadedImages.push({
+            filename: filename,
+            path: filepath,
+            url: imageUrl,
+            source: 'bing',
+            keywords: query,
+            caption: `Imagen ${i + 1}: ${query}`
+          });
+          
+          console.log(`✅ Descargada imagen ${i + 1}: ${filename} (${query})`);
+        } else {
+          console.log(`⚠️ No se encontraron imágenes para: "${query}"`);
+        }
+        
+      } catch (error) {
+        console.error(`❌ Error descargando imagen ${i + 1} (${query}):`, error.message);
       }
       
       // Pequeña pausa entre descargas para no sobrecargar Bing
@@ -1212,13 +1147,7 @@ async function searchAndDownloadBingImages(keywords, sectionDir) {
       }
     }
     
-    const successfulDownloads = downloadedImages.filter(img => !img.failed).length;
-    console.log(`🎉 Descarga completada: ${successfulDownloads}/${keywords.length} imágenes exitosas`);
-    
-    if (successfulDownloads < keywords.length) {
-      console.log(`⚠️ ADVERTENCIA: ${keywords.length - successfulDownloads} imágenes fallaron. Los keywords seguirán alineados.`);
-    }
-    
+    console.log(`🎉 Descarga completada: ${downloadedImages.length}/${keywords.length} imágenes`);
     return downloadedImages;
     
   } catch (error) {
@@ -2304,39 +2233,22 @@ Generado automáticamente por el sistema de creación de contenido
 
       // Agregar datos específicos según el modo
       if (shouldUseGoogleImages && downloadedImages.length > 0) {
-        // Modo Bing Images: filtrar solo imágenes exitosas que realmente existen
-        const existingImages = downloadedImages.filter(img => {
-          // Si la imagen fue marcada como fallida, no incluirla
-          if (img.failed) {
-            console.log(`⚠️ Imagen marcada como fallida, excluyendo: ${img.filename} (${img.keywords})`);
-            return false;
-          }
-          
-          const imagePath = path.join('./public', 'outputs', folderStructure.safeTopicName, `seccion_${section}`, img.filename);
-          const exists = fs.existsSync(imagePath);
-          if (!exists) {
-            console.log(`⚠️ Archivo no encontrado, excluyendo de respuesta: ${img.filename}`);
-          }
-          return exists;
-        });
-        
-        // Crear arrays de keywords solo para imágenes exitosas para mantener correspondencia
-        const successfulKeywords = existingImages.map(img => img.keywords);
-        
-        response.downloadedImages = existingImages.map(img => ({
+        // Modo Bing Images: devolver imágenes descargadas para el carrusel
+        response.downloadedImages = downloadedImages.map(img => ({
           url: `/outputs/${folderStructure.safeTopicName}/seccion_${section}/${img.filename}`,
           caption: `Imagen de Bing: ${img.filename.replace(/\.[^/.]+$/, '')}`,
           filename: img.filename,
           path: img.path
         }));
         response.bingImagesMode = true;
-        response.imagesDownloaded = existingImages.length;
+        response.imagesDownloaded = downloadedImages.length;
         response.mode = 'bing_images';
-        console.log(`✅ Respuesta configurada para modo Bing con ${existingImages.length} imágenes (${downloadedImages.length} descargadas, ${existingImages.length} existentes)`);
-        
-        // Usar keywords directamente de las imágenes exitosas (ya filtradas)
-        response.imageKeywords = successfulKeywords;
-        console.log(`🎯 Keywords incluidas en respuesta (solo existentes):`, successfulKeywords);
+        // Incluir las keywords para el botón de refresh
+        if (imageKeywords && imageKeywords.length > 0) {
+          response.imageKeywords = imageKeywords;
+          console.log(`🎯 Keywords incluidas en respuesta:`, imageKeywords);
+        }
+        console.log(`✅ Respuesta configurada para modo Bing con ${downloadedImages.length} imágenes`);
         console.log(`🖼️ URLs de imágenes:`, response.downloadedImages.map(img => img.url));
       } else if (shouldUseGoogleImages) {
         // Fallback si no se descargaron imágenes de Bing
@@ -3746,26 +3658,16 @@ app.post('/api/projects/:folderName/duplicate', (req, res) => {
 
 // Ruta para refrescar una imagen específica
 app.post('/api/refresh-image', async (req, res) => {
-  console.log('🎯 ENDPOINT /api/refresh-image llamado con body:', req.body);
   try {
     const { folderName, imageIndex, sectionNum, keywords, currentImages } = req.body;
     
-    console.log('📋 Parámetros recibidos:', { folderName, imageIndex, sectionNum, keywords: keywords.substring(0, 50) + '...' });
-    
     if (!folderName || imageIndex === undefined || !sectionNum || !keywords) {
-      console.log('❌ Faltan parámetros requeridos');
       return res.status(400).json({ error: 'Faltan parámetros requeridos' });
     }
 
-    // Convertir espacios a underscores para coincidir con la estructura de carpetas
-    const normalizedFolderName = folderName.replace(/ /g, '_');
-    console.log(`🔄 Carpeta normalizada: "${folderName}" → "${normalizedFolderName}"`);
-    
-    const imagesDir = path.join('./public/outputs', normalizedFolderName, `seccion_${sectionNum}`);
-    console.log('📁 Directorio de imágenes:', imagesDir);
+    const imagesDir = path.join('./public/outputs', folderName, `seccion_${sectionNum}`);
     
     if (!fs.existsSync(imagesDir)) {
-      console.log('❌ Carpeta no encontrada:', imagesDir);
       return res.status(404).json({ error: 'Carpeta no encontrada' });
     }
 
@@ -3800,39 +3702,22 @@ app.post('/api/refresh-image', async (req, res) => {
       return res.status(404).json({ error: `Archivo no encontrado: ${targetFilename}` });
     }
 
+    // Borrar la imagen actual
+    fs.unlinkSync(currentImagePath);
+    console.log(`🗑️ Imagen borrada: ${currentImagePath}`);
+
     // Buscar y descargar una nueva imagen con las mismas keywords
     console.log(`🔄 Buscando nueva imagen con keywords: ${keywords}`);
     
     // Convertir keywords a string si es un array, o usarlo directamente si es string
     const searchQuery = Array.isArray(keywords) ? keywords.join(' ') : keywords;
-    const imageUrls = await searchBingImages(searchQuery, 30); // Buscar 30 imágenes para más variación
+    const imageUrls = await searchBingImages(searchQuery, 10); // Buscar 10 imágenes para más variación
     
     if (imageUrls && imageUrls.length > 0) {
-      // Obtener URLs de imágenes existentes para evitar duplicados
-      const existingFiles = fs.readdirSync(imagesDir);
-      const existingImageUrls = new Set();
-      
-      // Leer metadata si existe para obtener URLs originales
-      const metadataPath = path.join(imagesDir, 'images_metadata.json');
-      if (fs.existsSync(metadataPath)) {
-        try {
-          const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
-          Object.values(metadata).forEach(img => {
-            if (img.originalUrl) existingImageUrls.add(img.originalUrl);
-          });
-        } catch (error) {
-          console.log('⚠️ Error leyendo metadata, continuando sin filtro de duplicados');
-        }
-      }
-      
-      // Filtrar URLs que ya tenemos
-      const filteredUrls = imageUrls.filter(url => !existingImageUrls.has(url));
-      const urlsToUse = filteredUrls.length > 0 ? filteredUrls : imageUrls;
-      
       // Seleccionar una imagen aleatoria para obtener variación
-      const randomIndex = Math.floor(Math.random() * urlsToUse.length);
-      const imageUrl = urlsToUse[randomIndex];
-      console.log(`🎲 Seleccionando imagen ${randomIndex + 1} de ${urlsToUse.length} encontradas (${filteredUrls.length > 0 ? 'sin duplicados' : 'total'})`);
+      const randomIndex = Math.floor(Math.random() * imageUrls.length);
+      const imageUrl = imageUrls[randomIndex];
+      console.log(`🎲 Seleccionando imagen ${randomIndex + 1} de ${imageUrls.length} encontradas`);
       
       // Mantener el mismo nombre base pero con timestamp para evitar cache
       const timestamp = Date.now();
@@ -3868,78 +3753,8 @@ app.post('/api/refresh-image', async (req, res) => {
       
       const newImagePath = path.join(imagesDir, newImageName);
       
-      // Descargar la nueva imagen con reintentos
-      let downloadSuccess = false;
-      let attemptCount = 0;
-      const maxAttempts = Math.min(5, urlsToUse.length); // Máximo 5 intentos
-      
-      // Crear ruta temporal para la nueva imagen
-      const tempImagePath = newImagePath.replace('.jpg', '_temp.jpg');
-      
-      while (!downloadSuccess && attemptCount < maxAttempts) {
-        try {
-          const attemptIndex = (randomIndex + attemptCount) % urlsToUse.length;
-          const attemptUrl = urlsToUse[attemptIndex];
-          console.log(`📥 Intento ${attemptCount + 1}/${maxAttempts} descargando desde: ${attemptUrl.substring(0, 80)}...`);
-          
-          // Descargar en archivo temporal primero
-          await downloadImageFromUrl(attemptUrl, tempImagePath);
-          downloadSuccess = true;
-          console.log(`✅ Descarga exitosa en intento ${attemptCount + 1}`);
-        } catch (error) {
-          attemptCount++;
-          console.log(`❌ Fallo en intento ${attemptCount}: ${error.message}`);
-          if (attemptCount < maxAttempts) {
-            console.log(`🔄 Reintentando con otra URL...`);
-          }
-        }
-      }
-      
-      if (!downloadSuccess) {
-        // Limpiar archivo temporal si falló la descarga
-        if (fs.existsSync(tempImagePath)) {
-          fs.unlinkSync(tempImagePath);
-          console.log(`🗑️ Archivo temporal borrado tras fallo: ${tempImagePath}`);
-        }
-        console.log(`❌ No se pudo descargar ninguna imagen después de ${maxAttempts} intentos`);
-        return res.status(500).json({ error: 'No se pudo descargar una nueva imagen después de varios intentos' });
-      }
-
-      // Solo borrar la imagen anterior DESPUÉS de confirmar que la nueva se descargó exitosamente
-      if (fs.existsSync(currentImagePath)) {
-        fs.unlinkSync(currentImagePath);
-        console.log(`🗑️ Imagen anterior borrada: ${currentImagePath}`);
-      }
-      
-      // Mover imagen temporal a ubicación final
-      fs.renameSync(tempImagePath, newImagePath);
-      console.log(`📁 Imagen temporal movida a ubicación final: ${newImagePath}`);
-      
-      // Actualizar metadata para rastrear URL original
-      const metadataFilePath = path.join(imagesDir, 'images_metadata.json');
-      let metadata = {};
-      
-      if (fs.existsSync(metadataFilePath)) {
-        try {
-          metadata = JSON.parse(fs.readFileSync(metadataFilePath, 'utf8'));
-        } catch (error) {
-          console.log('⚠️ Error leyendo metadata existente, creando nuevo');
-        }
-      }
-      
-      metadata[newImageName] = {
-        originalUrl: imageUrl,
-        keywords: searchQuery,
-        timestamp: timestamp,
-        refreshed: true
-      };
-      
-      try {
-        fs.writeFileSync(metadataFilePath, JSON.stringify(metadata, null, 2));
-        console.log(`📝 Metadata actualizada para ${newImageName}`);
-      } catch (error) {
-        console.log('⚠️ Error guardando metadata:', error.message);
-      }
+      // Descargar la nueva imagen
+      await downloadImageFromUrl(imageUrl, newImagePath);
       
       console.log(`✅ Nueva imagen descargada: ${newImagePath}`);
       console.log(`🎯 Mapeo mantenido: posición visual ${imageIndex} → ${newImageName}`);
@@ -3947,9 +3762,42 @@ app.post('/api/refresh-image', async (req, res) => {
       // Devolver la información de la nueva imagen
       res.json({ 
         success: true,
-        message: `Imagen ${imageIndex + 1} refrescada exitosamente`,
-        newImageUrl: `/outputs/${normalizedFolderName}/seccion_${sectionNum}/${newImageName}`,
-        filename: newImageName,
+        newImage: {
+          filename: newImageName,
+          url: `/outputs/${folderName}/seccion_${sectionNum}/${newImageName}`
+        },
+        imageIndex: imageIndex
+      });
+    } else {
+      res.status(404).json({ error: 'No se pudo encontrar una nueva imagen' });
+    }
+
+  } catch (error) {
+    console.error('❌ Error al refrescar imagen:', error);
+    res.status(500).json({ error: 'Error interno del servidor' });
+  }
+});
+    
+    if (imageUrls && imageUrls.length > 0) {
+      const imageUrl = imageUrls[0]; // Tomar la primera imagen
+      // Generar un nuevo nombre único para la imagen
+      const timestamp = Date.now();
+      const extension = imageUrl.split('.').pop()?.split('?')[0] || 'jpg';
+      const newImageName = `image_${imageIndex}_${timestamp}.${extension}`;
+      const newImagePath = path.join(imagesDir, newImageName);
+      
+      // Descargar la nueva imagen
+      await downloadImageFromUrl(imageUrl, newImagePath);
+      
+      console.log(`✅ Nueva imagen descargada: ${newImagePath}`);
+      
+      // Devolver la información de la nueva imagen
+      res.json({ 
+        success: true,
+        newImage: {
+          filename: newImageName,
+          url: `/outputs/${folderName}/seccion_${sectionNum}/${newImageName}`
+        },
         imageIndex: imageIndex
       });
     } else {
