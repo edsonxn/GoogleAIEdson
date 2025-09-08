@@ -635,6 +635,15 @@
               Imágenes de Google
             </label>
           </div>
+
+          <div class="checkbox-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="generateVideo" class="checkbox-input">
+              <span class="checkbox-custom"></span>
+              <i class="fas fa-video"></i>
+              Generar Video
+            </label>
+          </div>
         </div>
 
         <!-- Columna 3: Instrucciones adicionales -->
@@ -687,10 +696,63 @@
           <i class="fas fa-microphone"></i>
           <span>Generar Audio</span>
         </button>
+
+        <button id="generateVideoBtn" class="btn btn-video" style="display: none;">
+          <i class="fas fa-film"></i>
+          <span>Generar Video</span>
+        </button>
       </div>
     </div>
 
     <div id="output"></div>
+
+    <!-- Botón de Generación de Video Manual -->
+    <div id="videoGenerationContainer" style="display: none;" class="video-generation-section">
+      <div class="video-generation-wrapper">
+        <h3><i class="fas fa-video"></i> Generación de Video</h3>
+        <p class="video-description">Convierte todas las secciones generadas en un video compilado con transiciones y audio sincronizado.</p>
+        
+        <div class="video-settings">
+          <div class="video-setting-item">
+            <label for="videoDuration">Duración por imagen (segundos):</label>
+            <input type="number" id="videoDuration" value="3" min="1" max="10" step="0.5">
+          </div>
+          
+          <div class="video-setting-item">
+            <label for="videoAnimation">Animación:</label>
+            <select id="videoAnimation">
+              <option value="zoom-in">Zoom In (acercar)</option>
+              <option value="zoom-out" selected>Zoom Out (alejar)</option>
+              <option value="pan-right">Pan derecha</option>
+              <option value="pan-left">Pan izquierda</option>
+            </select>
+          </div>
+          
+          <div class="video-setting-item">
+            <label for="videoQuality">Calidad:</label>
+            <select id="videoQuality">
+              <option value="standard" selected>Estándar (recomendado)</option>
+              <option value="smooth">Suave (más FPS)</option>
+              <option value="ultra">Ultra suave (máximo FPS)</option>
+            </select>
+          </div>
+        </div>
+        
+        <button id="generateVideoBtn" class="generate-video-btn">
+          <i class="fas fa-play-circle"></i>
+          <span>Generar Video Completo</span>
+        </button>
+        
+        <div id="videoProgressContainer" class="video-progress-container" style="display: none;">
+          <div class="video-progress-label">Generando video...</div>
+          <div class="video-progress-bar">
+            <div id="videoProgressFill" class="video-progress-fill"></div>
+          </div>
+          <div id="videoProgressText" class="video-progress-text">0%</div>
+          <div id="videoProgressInfo" class="video-progress-info"></div>
+        </div>
+      </div>
+    </div>
 
     <!-- Carrusel de Imágenes -->
     <div id="carousel-container" style="display: none;">

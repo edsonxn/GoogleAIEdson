@@ -8,6 +8,12 @@ let globalChapterStructure = [];
 let currentImageKeywords = [];
 
 // ================================
+// VARIABLES GLOBALES PARA GENERACIÓN DE VIDEO
+// ================================
+let isGeneratingVideo = false;
+let currentVideoSession = null;
+
+// ================================
 // FUNCIÓN PARA MANEJAR SELECTOR NUMÉRICO DE SECCIONES
 // ================================
 function changeSectionCount(change) {
@@ -656,7 +662,11 @@ async function generateSectionContent(section, params) {
         chapterTitle: chapterTitle,
         tokenUsage: data.tokenUsage,
         voiceUsed: null,
-        scriptFileInfo: null
+        scriptFileInfo: null,
+        images: null,
+        imagePrompts: null,
+        imageKeywords: null,
+        imageMode: null
       });
       currentSectionNumber = section;
       return { success: true, data };
@@ -824,18 +834,48 @@ async function displaySectionContent(data, section) {
         console.log(`🖼️ DEBUG - Llamando a createCarousel...`);
         createCarousel(downloadedImages, section, []);
         console.log(`🖼️ DEBUG - createCarousel ejecutado`);
+        
+        // Guardar datos de imágenes en la sección para navegación
+        if (allSections[section - 1]) {
+          allSections[section - 1].images = downloadedImages;
+          allSections[section - 1].imageKeywords = data.imageKeywords || [];
+          allSections[section - 1].imageMode = 'bing';
+          console.log(`💾 Datos de imágenes Bing guardados para sección ${section}`);
+        }
       } else if (!skipImages && !bingImages && data.images && data.images.length > 0) {
         // Mostrar carrusel de imágenes normales
         console.log(`📷 Mostrando carrusel de imágenes normales`);
         createCarousel(data.images, section, data.imagePrompts);
+        
+        // Guardar datos de imágenes en la sección para navegación
+        if (allSections[section - 1]) {
+          allSections[section - 1].images = data.images;
+          allSections[section - 1].imagePrompts = data.imagePrompts || [];
+          allSections[section - 1].imageMode = 'ai';
+          console.log(`💾 Datos de imágenes AI guardados para sección ${section}`);
+        }
       } else if (bingImages && data.imagePrompts && data.imagePrompts.length > 0) {
         // Fallback: mostrar prompts si falló la descarga de Bing
         console.log(`⚠️ Descarga de Bing falló, mostrando prompts como fallback`);
         addPromptsToSidebar(data.imagePrompts, section);
+        
+        // Guardar datos de prompts en la sección para navegación
+        if (allSections[section - 1]) {
+          allSections[section - 1].imagePrompts = data.imagePrompts;
+          allSections[section - 1].imageMode = 'prompts';
+          console.log(`💾 Datos de prompts guardados para sección ${section}`);
+        }
       } else if (data.imagePrompts && data.imagePrompts.length > 0) {
         // Mostrar prompts de imágenes en el panel lateral
         console.log(`📋 Mostrando prompts en el panel lateral`);
         addPromptsToSidebar(data.imagePrompts, section);
+        
+        // Guardar datos de prompts en la sección para navegación
+        if (allSections[section - 1]) {
+          allSections[section - 1].imagePrompts = data.imagePrompts;
+          allSections[section - 1].imageMode = 'prompts';
+          console.log(`💾 Datos de prompts guardados para sección ${section}`);
+        }
       }
       resolve();
     }, 500);
@@ -910,6 +950,33 @@ async function showAutoGenerationComplete() {
   // Generar metadata de YouTube
   await generateYouTubeMetadata();
   
+  // Mostrar botón de generación de video
+  showVideoGenerationButton();
+  
+  // 🎬 VERIFICAR Y GENERAR VIDEO AUTOMÁTICAMENTE
+  if (shouldGenerateVideoAutomatically()) {
+    const folderName = document.getElementById("folderName").value.trim();
+    if (folderName && !isGeneratingVideo) {
+      console.log('🎬 Generación completa - iniciando video automático...');
+      
+      // Actualizar mensaje de éxito para incluir video
+      successMessage.innerHTML = `
+        <div class="success-content">
+          <i class="fas fa-trophy"></i>
+          <h3>¡Generación Automática Completada!</h3>
+          <p>Se han generado exitosamente ${totalSections} secciones con guión, imágenes y audio.</p>
+          <p>Metadata de YouTube completada.</p>
+          <p><strong>🎬 Iniciando generación automática de video...</strong></p>
+        </div>
+      `;
+      
+      // Delay para que se vea el mensaje actualizado antes de iniciar el video
+      setTimeout(() => {
+        generateVideoAutomatically();
+      }, 2000);
+    }
+  }
+  
   setTimeout(() => {
     generateBtn.innerHTML = `
       <i class="fas fa-video"></i>
@@ -936,6 +1003,12 @@ function disableControls(disable) {
   generateBtn.disabled = disable;
   continueBtn.disabled = disable;
   generateAudioBtn.disabled = disable;
+  
+  // También deshabilitar el botón de video
+  const generateVideoBtn = document.getElementById("generateVideoBtn");
+  if (generateVideoBtn) {
+    generateVideoBtn.disabled = disable;
+  }
 }
 
 // Función para mostrar mensaje de carga con etapas
@@ -1468,7 +1541,11 @@ function showScript(script, sectionNum, totalSections, voiceUsed = null, scriptF
     chapterTitle: chapterTitle,
     tokenUsage: tokenUsage,
     voiceUsed: voiceUsed,
-    scriptFileInfo: scriptFileInfo
+    scriptFileInfo: scriptFileInfo,
+    images: null,
+    imagePrompts: null,
+    imageKeywords: null,
+    imageMode: null
   };
   
   console.log(`Guardando sección ${sectionNum} completa:`, {
@@ -2022,6 +2099,12 @@ generateBtn.addEventListener("click", async () => {
   generateAudioBtn.style.display = "none";
   continueBtn.style.display = "none";
   
+  // Ocultar botón de video
+  const generateVideoBtn = document.getElementById("generateVideoBtn");
+  if (generateVideoBtn) {
+    generateVideoBtn.style.display = "none";
+  }
+  
   showLoadingStages(1, imageCount, skipImages, googleImages);
 
   try {
@@ -2095,10 +2178,26 @@ generateBtn.addEventListener("click", async () => {
             }
             
             createCarousel(data.downloadedImages, data.currentSection, []);
+            
+            // Guardar datos de imágenes en la sección para navegación (función principal)
+            if (allSections[data.currentSection - 1]) {
+              allSections[data.currentSection - 1].images = data.downloadedImages;
+              allSections[data.currentSection - 1].imageKeywords = data.imageKeywords || [];
+              allSections[data.currentSection - 1].imageMode = 'bing';
+              console.log(`💾 Datos de imágenes Bing guardados para sección ${data.currentSection} (función principal)`);
+            }
           } else if (data.images && data.images.length > 0) {
             // Imágenes generadas con IA
             console.log(`📷 Mostrando carrusel de imágenes IA`);
             createCarousel(data.images, data.currentSection, data.imagePrompts);
+            
+            // Guardar datos de imágenes en la sección para navegación (función principal)
+            if (allSections[data.currentSection - 1]) {
+              allSections[data.currentSection - 1].images = data.images;
+              allSections[data.currentSection - 1].imagePrompts = data.imagePrompts || [];
+              allSections[data.currentSection - 1].imageMode = 'ai';
+              console.log(`💾 Datos de imágenes AI guardados para sección ${data.currentSection} (función principal)`);
+            }
           }
         }, 1000);
       } else {
@@ -2276,10 +2375,11 @@ continueBtn.addEventListener("click", async () => {
       console.log(`🔍 DEBUG continueGeneration - data.googleImagesMode: ${data.googleImagesMode}`);
       console.log(`🔍 DEBUG continueGeneration - data.images: ${data.images ? data.images.length : 'null'}`);
       console.log(`🔍 DEBUG continueGeneration - data.imagePrompts: ${data.imagePrompts ? data.imagePrompts.length : 'null'}`);
+      console.log(`🔍 DEBUG continueGeneration - data.downloadedImages: ${data.downloadedImages ? data.downloadedImages.length : 'null'}`);
       
-      if (!serverSkipImages && !serverGoogleImages && data.images && data.images.length > 0) {
-        // Con imágenes normales
-        console.log(`📷 continueGeneration - Mostrando carrusel de imágenes normales`);
+      if (!serverSkipImages && !serverGoogleImages && ((data.images && data.images.length > 0) || (data.downloadedImages && data.downloadedImages.length > 0))) {
+        // Con imágenes (IA generadas o descargadas de Bing)
+        console.log(`📷 continueGeneration - Mostrando carrusel de imágenes ${data.downloadedImages ? 'Bing' : 'IA'}`);
         setTimeout(() => {
           updateStage('stage-prompt', 'completed');
           updateStage('stage-image', 'completed');
@@ -2295,7 +2395,41 @@ continueBtn.addEventListener("click", async () => {
         
         // Mostrar carrusel de imágenes
         setTimeout(() => {
-          createCarousel(data.images, data.currentSection, data.imagePrompts);
+          if (data.downloadedImages && data.downloadedImages.length > 0) {
+            // Imágenes de Bing descargadas
+            console.log(`🖼️ continueGeneration - Creando carrusel con ${data.downloadedImages.length} imágenes de Bing`);
+            
+            // Almacenar las keywords para el botón de refresh
+            if (data.imageKeywords && data.imageKeywords.length > 0) {
+              currentImageKeywords = data.imageKeywords;
+              console.log(`🎯 Keywords almacenadas para refresh (continueGeneration):`, currentImageKeywords);
+            } else {
+              console.warn(`⚠️ No se recibieron keywords para refresh (continueGeneration)`);
+              currentImageKeywords = [];
+            }
+            
+            createCarousel(data.downloadedImages, data.currentSection, []);
+            
+            // Guardar datos de imágenes en la sección para navegación (continueGeneration)
+            if (allSections[data.currentSection - 1]) {
+              allSections[data.currentSection - 1].images = data.downloadedImages;
+              allSections[data.currentSection - 1].imageKeywords = data.imageKeywords || [];
+              allSections[data.currentSection - 1].imageMode = 'bing';
+              console.log(`💾 Datos de imágenes Bing guardados para sección ${data.currentSection} (continueGeneration)`);
+            }
+          } else if (data.images && data.images.length > 0) {
+            // Imágenes generadas con IA
+            console.log(`📷 continueGeneration - Creando carrusel con ${data.images.length} imágenes IA`);
+            createCarousel(data.images, data.currentSection, data.imagePrompts);
+            
+            // Guardar datos de imágenes en la sección para navegación (continueGeneration)
+            if (allSections[data.currentSection - 1]) {
+              allSections[data.currentSection - 1].images = data.images;
+              allSections[data.currentSection - 1].imagePrompts = data.imagePrompts || [];
+              allSections[data.currentSection - 1].imageMode = 'ai';
+              console.log(`💾 Datos de imágenes AI guardados para sección ${data.currentSection} (continueGeneration)`);
+            }
+          }
         }, 1000);
       } else if (serverGoogleImages && data.imagePrompts && data.imagePrompts.length > 0) {
         // Modo Google Images
@@ -2412,6 +2546,30 @@ generateAudioBtn.addEventListener("click", async () => {
       <i class="fas fa-microphone"></i>
       <span>Generar Audio</span>
     `;
+  }
+});
+
+// Event listener para el botón de generar video
+document.getElementById("generateVideoBtn").addEventListener("click", async () => {
+  const folderName = document.getElementById("folderName").value.trim();
+  
+  if (!folderName) {
+    showError("Por favor, especifica el nombre de la carpeta del proyecto");
+    return;
+  }
+  
+  if (!allSections || allSections.length === 0) {
+    showError("No hay secciones generadas para crear el video");
+    return;
+  }
+  
+  console.log(`🎬 Iniciando generación de video para proyecto: ${folderName}`);
+  
+  try {
+    await generateProjectVideo(folderName, false); // false = manual
+  } catch (error) {
+    console.error("❌ Error generando video:", error);
+    showError(`Error generando video: ${error.message}`);
   }
 });
 
@@ -4250,6 +4408,10 @@ function showStoredSection(sectionNum) {
   const script = typeof sectionData === 'string' ? sectionData : sectionData.script;
   const chapterTitle = typeof sectionData === 'object' ? sectionData.chapterTitle : null;
   const tokenUsage = typeof sectionData === 'object' ? sectionData.tokenUsage : null;
+  const sectionImages = typeof sectionData === 'object' ? sectionData.images : null;
+  const sectionImagePrompts = typeof sectionData === 'object' ? sectionData.imagePrompts : null;
+  const sectionImageKeywords = typeof sectionData === 'object' ? sectionData.imageKeywords : null;
+  const sectionImageMode = typeof sectionData === 'object' ? sectionData.imageMode : null;
   
   const sectionTitle = document.getElementById("section-title");
   const currentSectionSpan = document.getElementById("current-section");
@@ -4302,6 +4464,40 @@ function showStoredSection(sectionNum) {
   
   // Actualizar estado de los botones de navegación
   updateNavigationButtons();
+  
+  // Restaurar carrusel e imágenes de esta sección
+  setTimeout(() => {
+    if (sectionImages && sectionImages.length > 0) {
+      console.log(`🎠 Restaurando carrusel para sección ${sectionNum} con ${sectionImages.length} imágenes (modo: ${sectionImageMode})`);
+      
+      // Restaurar keywords globales si es Bing
+      if (sectionImageMode === 'bing' && sectionImageKeywords) {
+        currentImageKeywords = sectionImageKeywords;
+        console.log(`🎯 Keywords restauradas para sección ${sectionNum}:`, currentImageKeywords);
+      }
+      
+      // Crear carrusel con las imágenes de esta sección
+      if (sectionImageMode === 'bing') {
+        createCarousel(sectionImages, sectionNum, []);
+      } else if (sectionImageMode === 'ai') {
+        createCarousel(sectionImages, sectionNum, sectionImagePrompts || []);
+      }
+    } else if (sectionImagePrompts && sectionImagePrompts.length > 0 && sectionImageMode === 'prompts') {
+      // Solo prompts (sin carrusel)
+      console.log(`📋 Restaurando prompts para sección ${sectionNum}`);
+      document.getElementById("carousel-container").style.display = "none";
+      addPromptsToSidebar(sectionImagePrompts, sectionNum);
+    } else {
+      // Sin imágenes en memoria - intentar cargar desde el servidor si hay un proyecto cargado
+      if (window.currentProject) {
+        console.log(`🔄 Intentando cargar imágenes desde servidor para sección ${sectionNum}...`);
+        loadSectionImages(sectionNum);
+      } else {
+        console.log(`❌ Sin imágenes para sección ${sectionNum} - ocultando carrusel`);
+        document.getElementById("carousel-container").style.display = "none";
+      }
+    }
+  }, 100);
   
   // Animación suave
   scriptContent.style.opacity = "0";
@@ -5277,6 +5473,12 @@ function showYouTubeMetadataResults(metadata, topic) {
   `;
   
   output.appendChild(metadataContainer);
+  
+  // 🎬 MOSTRAR BOTÓN DE GENERACIÓN DE VIDEO DESPUÉS DE METADATOS
+  // Solo mostrar si no se ha habilitado la generación automática
+  if (!shouldGenerateVideoAutomatically()) {
+    showVideoGenerationButton();
+  }
   
   // Scroll suave hacia el nuevo contenido
   setTimeout(() => {
@@ -6539,10 +6741,101 @@ function showLoadedSection(section) {
     currentSectionSpan.textContent = section.section;
   }
   
-  // Si hay imágenes, mostrarlas
-  if (section.hasImages && section.imageFiles) {
-    // Aquí podrías cargar las imágenes si implementas esa funcionalidad
-    console.log('Sección con imágenes cargada:', section.imageFiles);
+  // Cargar y mostrar imágenes en el carrusel si existen
+  if (section.hasImages || section.imageFiles || section.googleImagesMode) {
+    console.log('🖼️ Cargando imágenes para sección:', section.section);
+    console.log('🔍 Motivo de carga:', {
+      hasImages: section.hasImages,
+      imageFiles: !!section.imageFiles,
+      googleImagesMode: section.googleImagesMode
+    });
+    loadSectionImages(section.section);
+  } else {
+    console.log('🚫 No se detectaron imágenes para cargar:', {
+      hasImages: section.hasImages,
+      imageFiles: !!section.imageFiles,
+      googleImagesMode: section.googleImagesMode
+    });
+  }
+}
+
+// Función para cargar imágenes de una sección específica desde el proyecto
+async function loadSectionImages(sectionNumber) {
+  try {
+    console.log(`🔍 [loadSectionImages] Iniciando carga para sección ${sectionNumber}`);
+    
+    if (!window.currentProject) {
+      console.warn('⚠️ No hay proyecto cargado actualmente');
+      return;
+    }
+    
+    const folderName = window.currentProject.originalFolderName || window.currentProject.topic;
+    const normalizedFolderName = folderName.toLowerCase().replace(/\s+/g, '_');
+    
+    console.log(`🖼️ Buscando imágenes para sección ${sectionNumber} en proyecto: ${normalizedFolderName}`);
+    console.log(`🔗 URL que se va a llamar: /api/project-images/${normalizedFolderName}/${sectionNumber}`);
+    
+    const response = await fetch(`/api/project-images/${normalizedFolderName}/${sectionNumber}`);
+    console.log(`📡 Respuesta del servidor:`, response.status, response.statusText);
+    
+    const data = await response.json();
+    console.log(`📊 Datos recibidos:`, data);
+    
+    if (data.success && data.images && data.images.length > 0) {
+      console.log(`✅ Encontradas ${data.images.length} imágenes para sección ${sectionNumber}`);
+      
+      // Preparar imágenes para el carrusel
+      const carouselImages = data.images.map((image, index) => ({
+        url: image.url,
+        caption: image.caption || `Imagen ${index + 1} de la Sección ${sectionNumber}`,
+        filename: image.filename,
+        path: image.path
+      }));
+      
+      console.log(`🎠 Imágenes preparadas para carrusel:`, carouselImages);
+      
+      // Cargar keywords si están disponibles
+      if (data.keywords && data.keywords.length > 0) {
+        currentImageKeywords = data.keywords;
+        console.log(`📋 Keywords cargadas para las imágenes:`, data.keywords);
+      } else {
+        currentImageKeywords = [];
+      }
+      
+      // Mostrar carrusel
+      createCarousel(carouselImages, sectionNumber, []);
+      
+      // Actualizar variables globales
+      totalSlides = carouselImages.length;
+      currentSlide = 0;
+      
+      // Almacenar prompts si están disponibles
+      if (data.prompts && data.prompts.length > 0) {
+        imagePrompts = data.prompts;
+        console.log(`🎨 Prompts de imágenes cargados:`, data.prompts);
+      }
+      
+      console.log(`🎠 Carrusel creado exitosamente para sección ${sectionNumber}`);
+      
+    } else {
+      console.log(`📷 No se encontraron imágenes para sección ${sectionNumber}`, data);
+      
+      // Ocultar carrusel si no hay imágenes
+      const carouselContainer = document.getElementById("carousel-container");
+      if (carouselContainer) {
+        carouselContainer.style.display = "none";
+        console.log(`🔒 Carrusel ocultado para sección ${sectionNumber}`);
+      }
+    }
+    
+  } catch (error) {
+    console.error(`❌ Error cargando imágenes para sección ${sectionNumber}:`, error);
+    
+    // Ocultar carrusel en caso de error
+    const carouselContainer = document.getElementById("carousel-container");
+    if (carouselContainer) {
+      carouselContainer.style.display = "none";
+    }
   }
 }
 
@@ -7276,8 +7569,24 @@ function updateProjectButtons(project) {
     // También mostrar botón de audio para la sección actual
     generateAudioBtn.style.display = "inline-flex";
   } else {
-    // Todas las secciones están completadas - solo mostrar botón de audio
+    // Todas las secciones están completadas - mostrar botón de audio y botón de video
     generateAudioBtn.style.display = "inline-flex";
+    
+    // Mostrar botón de generación de video manual
+    showVideoGenerationButton();
+    
+    // 🎬 VERIFICAR GENERACIÓN AUTOMÁTICA DE VIDEO
+    // Solo generar automáticamente si no se ha generado ya y está activada la opción
+    if (shouldGenerateVideoAutomatically()) {
+      const folderName = document.getElementById("folderName").value.trim();
+      if (folderName && !isGeneratingVideo) {
+        console.log('🎬 Proyecto completo - iniciando generación automática de video...');
+        // Delay para permitir que se complete la visualización del proyecto
+        setTimeout(() => {
+          generateVideoAutomatically();
+        }, 2000);
+      }
+    }
   }
   
   console.log('✅ Botones actualizados correctamente');
@@ -8165,3 +8474,350 @@ function showNotification(message, type = 'info') {
 window.refreshBingImage = refreshBingImage;
 window.showBingImageFullscreen = showBingImageFullscreen;
 window.closeBingImageModal = closeBingImageModal;
+
+// ================================
+// FUNCIONES PARA GENERACIÓN DE VIDEO
+// ================================
+
+// Función para verificar si se debe generar video automáticamente
+function shouldGenerateVideoAutomatically() {
+  const generateVideoCheckbox = document.getElementById('generateVideo');
+  return generateVideoCheckbox && generateVideoCheckbox.checked;
+}
+
+// Función para mostrar el botón de generación manual de video
+function showVideoGenerationButton() {
+  const videoBtn = document.getElementById('generateVideoBtn');
+  if (videoBtn) {
+    videoBtn.style.display = 'inline-flex';
+    console.log('📹 Botón simple de generación de video mostrado');
+  }
+}
+
+// Función principal para generar video automáticamente
+async function generateVideoAutomatically() {
+  if (!shouldGenerateVideoAutomatically()) {
+    console.log('📹 Generación automática de video desactivada');
+    return;
+  }
+  
+  const folderName = document.getElementById("folderName").value.trim();
+  if (!folderName) {
+    console.warn('⚠️ No hay nombre de carpeta para generar video');
+    return;
+  }
+  
+  console.log('🎬 Iniciando generación automática de video...');
+  
+  try {
+    await generateProjectVideo(folderName, true); // true = automático
+  } catch (error) {
+    console.error('❌ Error en generación automática de video:', error);
+    showError(`Error generando video automáticamente: ${error.message}`);
+  }
+}
+
+// Función principal para generar video del proyecto
+async function generateProjectVideo(folderName, isAutomatic = false) {
+  if (isGeneratingVideo) {
+    console.log('⚠️ Ya se está generando un video');
+    return;
+  }
+  
+  isGeneratingVideo = true;
+  currentVideoSession = Date.now().toString();
+  
+  try {
+    // Obtener configuración de video
+    const duration = parseFloat(document.getElementById('videoDuration')?.value || 3);
+    const animationType = document.getElementById('videoAnimation')?.value || 'zoom-out';
+    const quality = document.getElementById('videoQuality')?.value || 'standard';
+    
+    console.log(`🎬 Generando video para proyecto: ${folderName}`);
+    console.log(`🎬 Configuración: duración=${duration}s, animación=${animationType}, calidad=${quality}`);
+    
+    // Mostrar progreso
+    if (!isAutomatic) {
+      showVideoProgress();
+      updateVideoProgress(0, 'Iniciando generación de video...');
+    } else {
+      // Para automático, mostrar en el output principal
+      showAutomaticVideoProgress();
+    }
+    
+    // Realizar llamada al servidor
+    const response = await fetch('/generate-project-video', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        folderName: folderName,
+        duration: duration,
+        animationType: animationType,
+        quality: quality
+      })
+    });
+    
+    // Obtener sessionId del servidor
+    const sessionId = response.headers.get('X-Video-Session-ID');
+    
+    if (sessionId) {
+      // Conectar al progreso en tiempo real
+      const eventSource = new EventSource(`/video-progress/${sessionId}`);
+      
+      eventSource.onmessage = function(event) {
+        try {
+          const progressData = JSON.parse(event.data);
+          
+          if (!isAutomatic) {
+            updateVideoProgress(progressData.percent, progressData.message);
+          } else {
+            updateAutomaticVideoProgress(progressData.percent, progressData.message);
+          }
+          
+          if (progressData.percent >= 100) {
+            eventSource.close();
+          }
+        } catch (e) {
+          console.error('Error parsing video progress data:', e);
+        }
+      };
+      
+      eventSource.onerror = function(event) {
+        console.error('Video EventSource error:', event);
+        eventSource.close();
+      };
+    }
+    
+    if (response.ok) {
+      console.log('🎬 Respuesta de video recibida, descargando...');
+      
+      const blob = await response.blob();
+      console.log('🎬 Video blob creado, tamaño:', blob.size);
+      
+      // Crear enlace de descarga
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${folderName}_video_completo.mp4`;
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      
+      // Intentar descarga automática
+      try {
+        a.click();
+        console.log('🎬 Descarga de video iniciada automáticamente');
+        
+        if (!isAutomatic) {
+          showSuccess('🎬 ¡Video generado y descargado exitosamente!');
+          hideVideoProgress(); // Restaurar botón después del éxito
+        } else {
+          showAutomaticVideoComplete();
+        }
+      } catch (clickError) {
+        console.log('🎬 Click automático falló, mostrando enlace manual');
+        a.style.display = 'block';
+        a.textContent = 'Hacer clic aquí para descargar el video';
+        a.style.color = '#00ff7f';
+        a.style.textDecoration = 'underline';
+        a.style.fontSize = '1.1rem';
+        a.style.padding = '10px';
+        
+        if (!isAutomatic) {
+          const progressInfo = document.getElementById('videoProgressInfo');
+          if (progressInfo) {
+            progressInfo.appendChild(document.createElement('br'));
+            progressInfo.appendChild(a);
+          }
+          hideVideoProgress(); // Restaurar botón incluso si falla el click automático
+        }
+      }
+      
+      // Limpiar después de un tiempo
+      setTimeout(() => {
+        try {
+          window.URL.revokeObjectURL(url);
+          if (a.parentNode) {
+            document.body.removeChild(a);
+          }
+        } catch (e) {
+          console.log('Error limpiando URL de video:', e);
+        }
+      }, 10000);
+      
+    } else {
+      const error = await response.json();
+      throw new Error(error.error || 'Error al generar el video');
+    }
+    
+  } catch (error) {
+    console.error('❌ Error generando video:', error);
+    
+    if (!isAutomatic) {
+      hideVideoProgress();
+      showError(`Error generando video: ${error.message}`);
+    } else {
+      showError(`Error generando video automáticamente: ${error.message}`);
+    }
+  } finally {
+    isGeneratingVideo = false;
+    currentVideoSession = null;
+    
+    // Asegurarse de que el botón se restaure en todos los casos
+    if (!isAutomatic) {
+      setTimeout(() => {
+        const generateBtn = document.getElementById('generateVideoBtn');
+        if (generateBtn && generateBtn.disabled) {
+          console.log('🔄 Restaurando botón de video desde finally');
+          hideVideoProgress();
+        }
+      }, 1000);
+    }
+  }
+}
+
+// Función para mostrar progreso de video manual
+function showVideoProgress() {
+  const progressContainer = document.getElementById('videoProgressContainer');
+  const generateBtn = document.getElementById('generateVideoBtn');
+  
+  if (progressContainer && generateBtn) {
+    progressContainer.style.display = 'block';
+    generateBtn.disabled = true;
+    generateBtn.innerHTML = `
+      <i class="fas fa-spinner fa-spin"></i>
+      <span>Generando Video...</span>
+    `;
+  }
+}
+
+// Función para ocultar progreso de video manual
+function hideVideoProgress() {
+  const progressContainer = document.getElementById('videoProgressContainer');
+  const generateBtn = document.getElementById('generateVideoBtn');
+  
+  if (progressContainer && generateBtn) {
+    // Ocultar inmediatamente el progreso y restaurar el botón
+    setTimeout(() => {
+      progressContainer.style.display = 'none';
+    }, 2000); // Reducido a 2 segundos
+    
+    // Restaurar el botón inmediatamente
+    generateBtn.disabled = false;
+    generateBtn.innerHTML = `
+      <i class="fas fa-play-circle"></i>
+      <span>Generar Video Completo</span>
+    `;
+    
+    console.log('🎬 Botón de video restaurado');
+  }
+}
+
+// Función para actualizar progreso de video manual
+function updateVideoProgress(percent, message) {
+  const progressFill = document.getElementById('videoProgressFill');
+  const progressText = document.getElementById('videoProgressText');
+  const progressInfo = document.getElementById('videoProgressInfo');
+  const progressLabel = document.querySelector('.video-progress-label');
+  
+  if (progressFill) {
+    progressFill.style.width = percent + '%';
+  }
+  
+  if (progressText) {
+    progressText.textContent = Math.round(percent) + '%';
+  }
+  
+  if (progressInfo) {
+    progressInfo.textContent = message;
+  }
+  
+  if (progressLabel) {
+    progressLabel.textContent = percent >= 100 ? '¡Video Completado!' : 'Generando video...';
+  }
+}
+
+// Función para mostrar progreso de video automático
+function showAutomaticVideoProgress() {
+  const automaticMessage = document.createElement('div');
+  automaticMessage.id = 'automaticVideoProgress';
+  automaticMessage.className = 'auto-completion-message';
+  automaticMessage.innerHTML = `
+    <div class="success-content">
+      <i class="fas fa-video"></i>
+      <h3>Generando Video Automáticamente</h3>
+      <p>Convirtiendo todas las secciones en un video compilado...</p>
+      <div class="video-progress-bar">
+        <div id="autoVideoProgressFill" class="video-progress-fill"></div>
+      </div>
+      <div id="autoVideoProgressText" class="video-progress-text">0%</div>
+      <div id="autoVideoProgressInfo" class="video-progress-info">Iniciando...</div>
+    </div>
+  `;
+  
+  output.insertBefore(automaticMessage, output.firstChild);
+}
+
+// Función para actualizar progreso de video automático
+function updateAutomaticVideoProgress(percent, message) {
+  const progressFill = document.getElementById('autoVideoProgressFill');
+  const progressText = document.getElementById('autoVideoProgressText');
+  const progressInfo = document.getElementById('autoVideoProgressInfo');
+  
+  if (progressFill) {
+    progressFill.style.width = percent + '%';
+  }
+  
+  if (progressText) {
+    progressText.textContent = Math.round(percent) + '%';
+  }
+  
+  if (progressInfo) {
+    progressInfo.textContent = message;
+  }
+}
+
+// Función para mostrar completación de video automático
+function showAutomaticVideoComplete() {
+  const automaticProgress = document.getElementById('automaticVideoProgress');
+  if (automaticProgress) {
+    automaticProgress.innerHTML = `
+      <div class="success-content">
+        <i class="fas fa-check-circle"></i>
+        <h3>¡Video Generado Automáticamente!</h3>
+        <p>El video compilado se ha descargado exitosamente.</p>
+      </div>
+    `;
+    
+    // Ocultar después de unos segundos
+    setTimeout(() => {
+      if (automaticProgress.parentNode) {
+        automaticProgress.remove();
+      }
+    }, 5000);
+  }
+}
+
+// Event listener para el botón de generación manual de video
+document.addEventListener('DOMContentLoaded', function() {
+  const generateVideoBtn = document.getElementById('generateVideoBtn');
+  
+  if (generateVideoBtn) {
+    generateVideoBtn.addEventListener('click', async function() {
+      const folderName = document.getElementById("folderName").value.trim();
+      
+      if (!folderName) {
+        showError('Por favor, especifica el nombre de la carpeta del proyecto');
+        return;
+      }
+      
+      await generateProjectVideo(folderName, false); // false = manual
+    });
+    
+    console.log('📹 Event listener para generación manual de video agregado');
+  }
+});
+
+// Exponer funciones globalmente
+window.generateProjectVideo = generateProjectVideo;
+window.generateVideoAutomatically = generateVideoAutomatically;
+window.showVideoGenerationButton = showVideoGenerationButton;

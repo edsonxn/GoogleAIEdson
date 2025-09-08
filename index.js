@@ -13,6 +13,9 @@ import { transcribeAudio, getAudioTracks } from "./transcriber.js";
 import multer from 'multer';
 import axios from 'axios';
 import * as cheerio from 'cheerio';
+import ffmpeg from 'fluent-ffmpeg';
+import { spawn } from 'child_process';
+import { createCanvas, loadImage } from 'canvas';
 
 const app = express();
 const PORT = 3000;
@@ -21,7 +24,8 @@ const PORT = 3000;
 const applioClient = new ApplioClient();
 
 app.use(cors());
-app.use(bodyParser.json());
+app.use(bodyParser.json({ limit: '50mb' })); // Aumentar límite para payloads grandes
+app.use(bodyParser.urlencoded({ limit: '50mb', extended: true })); // Para formularios grandes
 app.use(express.static('public')); // Servir HTML y assets
 
 // Configurar multer para subida de archivos
@@ -533,8 +537,15 @@ REGLAS ESTRICTAS:
 - NO hacer referencias a estilos anteriores
 `;
 
+    // Validar que la API key esté disponible
+    if (!process.env.GOOGLE_API_KEY) {
+      throw new Error('GOOGLE_API_KEY no está configurada en las variables de entorno');
+    }
+
     // Llamar a la IA para generar metadatos
-    const genAI = new GoogleGenAI(process.env.GEMINI_API_KEY);
+    const genAI = new GoogleGenAI({
+      apiKey: process.env.GOOGLE_API_KEY
+    });
     const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
     
     console.log(`🤖 Enviando request a Gemini para generar metadatos...`);
@@ -2127,6 +2138,18 @@ Generado automáticamente por el sistema de creación de contenido
           if (downloadedImages.length > 0) {
             console.log(`✅ ${downloadedImages.length} imágenes descargadas de Bing exitosamente con keywords específicas`);
             
+            // Guardar keywords en archivo para cargarlas posteriormente
+            try {
+              const keywordsToSave = downloadedImages.map(img => img.keywords || '').filter(k => k.trim());
+              if (keywordsToSave.length > 0) {
+                const keywordsFilePath = path.join(folderStructure.sectionDir, `${folderStructure.folderName}_seccion_${section}_keywords.txt`);
+                fs.writeFileSync(keywordsFilePath, keywordsToSave.join('\n'), 'utf8');
+                console.log(`💾 Keywords guardadas en: ${keywordsFilePath}`);
+              }
+            } catch (keywordSaveError) {
+              console.warn(`⚠️ Error guardando keywords: ${keywordSaveError.message}`);
+            }
+            
             // Crear "prompts" mostrando las palabras clave específicas que se usaron
             enhancedPrompts = downloadedImages.map((img, index) => 
               `Imagen ${index + 1}: ${img.keywords || img.caption || img.filename}`
@@ -3680,6 +3703,102 @@ app.get('/api/projects/:folderName', (req, res) => {
   }
 });
 
+// Endpoint para obtener imágenes de una sección específica
+app.get('/api/project-images/:folderName/:sectionNumber', (req, res) => {
+  try {
+    const { folderName, sectionNumber } = req.params;
+    const projectDir = path.join('./public/outputs', folderName);
+    const sectionDir = path.join(projectDir, `seccion_${sectionNumber}`);
+    
+    console.log(`🖼️ Buscando imágenes en: ${sectionDir}`);
+    
+    if (!fs.existsSync(sectionDir)) {
+      console.log(`📁 Directorio de sección no encontrado: ${sectionDir}`);
+      return res.json({ success: true, images: [], keywords: [], prompts: [] });
+    }
+    
+    // Buscar archivos de imagen
+    const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'];
+    const files = fs.readdirSync(sectionDir);
+    const imageFiles = files.filter(file => 
+      imageExtensions.includes(path.extname(file).toLowerCase())
+    );
+    
+    console.log(`🖼️ Archivos de imagen encontrados: ${imageFiles.length}`);
+    
+    // Crear URLs para las imágenes
+    const images = imageFiles.map(filename => ({
+      url: `/outputs/${folderName}/seccion_${sectionNumber}/${filename}`,
+      filename: filename,
+      caption: `Imagen: ${filename}`,
+      path: path.join(sectionDir, filename)
+    }));
+    
+    // Buscar archivo de keywords
+    let keywords = [];
+    const keywordsFile = path.join(sectionDir, `${folderName}_seccion_${sectionNumber}_keywords.txt`);
+    if (fs.existsSync(keywordsFile)) {
+      try {
+        const keywordsContent = fs.readFileSync(keywordsFile, 'utf8');
+        keywords = keywordsContent.split('\n').filter(line => line.trim());
+        console.log(`📋 Keywords cargadas desde archivo keywords: ${keywords.length}`);
+      } catch (error) {
+        console.warn(`⚠️ Error leyendo keywords: ${error.message}`);
+      }
+    } else {
+      // Intentar extraer keywords del archivo de prompts como fallback
+      const promptsFile = path.join(sectionDir, `${folderName}_seccion_${sectionNumber}_prompts_imagenes.txt`);
+      if (fs.existsSync(promptsFile)) {
+        try {
+          const promptsContent = fs.readFileSync(promptsFile, 'utf8');
+          const lines = promptsContent.split('\n');
+          
+          // Buscar líneas que contengan "Imagen X: [keyword]"
+          const keywordLines = lines.filter(line => {
+            return line.match(/^\d+\.\s*Imagen\s+\d+:\s*(.+)$/);
+          });
+          
+          keywords = keywordLines.map(line => {
+            const match = line.match(/^\d+\.\s*Imagen\s+\d+:\s*(.+)$/);
+            return match ? match[1].trim() : '';
+          }).filter(keyword => keyword);
+          
+          console.log(`📋 Keywords extraídas desde archivo de prompts: ${keywords.length}`);
+        } catch (error) {
+          console.warn(`⚠️ Error extrayendo keywords desde prompts: ${error.message}`);
+        }
+      }
+    }
+    
+    // Buscar archivo de prompts
+    let prompts = [];
+    const promptsFile = path.join(sectionDir, `${folderName}_seccion_${sectionNumber}_prompts_imagenes.txt`);
+    if (fs.existsSync(promptsFile)) {
+      try {
+        const promptsContent = fs.readFileSync(promptsFile, 'utf8');
+        prompts = promptsContent.split('\n').filter(line => line.trim());
+        console.log(`🎨 Prompts cargados: ${prompts.length}`);
+      } catch (error) {
+        console.warn(`⚠️ Error leyendo prompts: ${error.message}`);
+      }
+    }
+    
+    console.log(`✅ Respondiendo con ${images.length} imágenes, ${keywords.length} keywords, ${prompts.length} prompts`);
+    
+    res.json({ 
+      success: true, 
+      images: images,
+      keywords: keywords,
+      prompts: prompts,
+      sectionNumber: parseInt(sectionNumber)
+    });
+    
+  } catch (error) {
+    console.error('❌ Error obteniendo imágenes del proyecto:', error);
+    res.status(500).json({ success: false, error: 'Error obteniendo imágenes del proyecto' });
+  }
+});
+
 // Ruta para eliminar un proyecto
 app.delete('/api/projects/:folderName', (req, res) => {
   try {
@@ -3961,6 +4080,910 @@ app.post('/api/refresh-image', async (req, res) => {
     res.status(500).json({ error: 'Error interno del servidor' });
   }
 });
+
+// ================================
+// ENDPOINTS PARA GENERACIÓN DE VIDEO
+// ================================
+
+// Almacén de progreso en memoria para cada sesión de video
+const videoProgressStore = new Map();
+
+// Función helper para actualizar progreso de video
+function updateVideoProgress(sessionId, percent, message) {
+  videoProgressStore.set(sessionId, { percent, message, timestamp: Date.now() });
+  console.log(`[VIDEO-${sessionId}] ${Math.round(percent)}% - ${message}`);
+}
+
+// Endpoint para progreso de video en tiempo real usando Server-Sent Events
+app.get('/video-progress/:sessionId', (req, res) => {
+  const sessionId = req.params.sessionId;
+  
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Cache-Control'
+  });
+
+  // Función para enviar progreso
+  const sendProgress = (data) => {
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  // Enviar progreso inicial
+  const initialProgress = videoProgressStore.get(sessionId) || { percent: 0, message: 'Iniciando generación de video...' };
+  sendProgress(initialProgress);
+
+  // Verificar progreso cada segundo
+  const progressInterval = setInterval(() => {
+    const progress = videoProgressStore.get(sessionId);
+    if (progress) {
+      sendProgress(progress);
+      
+      // Si está completo, limpiar después de un tiempo
+      if (progress.percent >= 100) {
+        setTimeout(() => {
+          videoProgressStore.delete(sessionId);
+          clearInterval(progressInterval);
+        }, 30000); // Limpiar después de 30 segundos
+      }
+    }
+  }, 1000);
+
+  // Limpiar al cerrar conexión
+  req.on('close', () => {
+    clearInterval(progressInterval);
+  });
+});
+
+// Endpoint para generar video desde el proyecto
+app.post('/generate-project-video', async (req, res) => {
+  const sessionId = Date.now().toString(); // ID único para esta sesión
+  
+  try {
+    updateVideoProgress(sessionId, 0, 'Iniciando procesamiento de video...');
+    
+    const { 
+      folderName, 
+      duration = 3, 
+      animationType = 'zoom-out', 
+      quality = 'standard' 
+    } = req.body;
+    
+    // Enviar sessionId al cliente para que pueda conectarse al progreso
+    res.setHeader('X-Video-Session-ID', sessionId);
+    
+    if (!folderName) {
+      return res.status(400).json({ error: 'Nombre de carpeta requerido' });
+    }
+
+    console.log(`🎬 Iniciando generación de video para proyecto: ${folderName}`);
+    console.log(`🎬 Configuración: duración=${duration}s, animación=${animationType}, calidad=${quality}`);
+
+    updateVideoProgress(sessionId, 5, 'Analizando estructura del proyecto...');
+    
+    // Normalizar nombre de la carpeta
+    const normalizedFolderName = folderName.toLowerCase().replace(/\s+/g, '_');
+    const projectPath = path.join(process.cwd(), 'public', 'outputs', normalizedFolderName);
+    
+    if (!fs.existsSync(projectPath)) {
+      return res.status(404).json({ error: 'Proyecto no encontrado' });
+    }
+
+    // Organizar archivos por secciones
+    updateVideoProgress(sessionId, 10, 'Organizando archivos por secciones...');
+    const secciones = await organizarArchivosPorSecciones(projectPath);
+    
+    if (secciones.length === 0) {
+      return res.status(404).json({ error: 'No se encontraron secciones con imágenes' });
+    }
+
+    console.log(`🎬 Encontradas ${secciones.length} secciones para procesar`);
+    updateVideoProgress(sessionId, 15, `Encontradas ${secciones.length} secciones para procesar`);
+    
+    // Generar video
+    const outputPath = await procesarVideoCompleto(secciones, normalizedFolderName, duration, animationType, quality, sessionId);
+    
+    // Verificar que el archivo existe antes de enviarlo
+    if (!fs.existsSync(outputPath)) {
+      throw new Error('El archivo de video no se generó correctamente');
+    }
+    
+    console.log('🎬 Enviando video al cliente');
+    updateVideoProgress(sessionId, 100, '¡Video completado y listo para descarga!');
+    
+    const filename = `${normalizedFolderName}_video_completo.mp4`;
+    
+    res.download(outputPath, filename, (err) => {
+      if (err) {
+        console.error('❌ Error enviando video:', err);
+      } else {
+        console.log('✅ Video enviado exitosamente');
+        
+        // Limpiar archivo temporal después de un tiempo
+        setTimeout(() => {
+          try {
+            if (fs.existsSync(outputPath)) {
+              fs.unlinkSync(outputPath);
+              console.log('🗑️ Archivo temporal de video limpiado');
+            }
+          } catch (e) {
+            console.log('⚠️ No se pudo limpiar archivo temporal:', e.message);
+          }
+        }, 60000); // Limpiar después de 1 minuto
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error al procesar video:', error);
+    updateVideoProgress(sessionId, 0, `Error: ${error.message}`);
+    res.status(500).json({ error: 'Error interno del servidor' });
+  }
+});
+
+// Función para organizar archivos por secciones desde el proyecto
+async function organizarArchivosPorSecciones(projectPath) {
+  const secciones = [];
+  
+  try {
+    const items = fs.readdirSync(projectPath);
+    
+    // Buscar carpetas de secciones
+    for (const item of items) {
+      const itemPath = path.join(projectPath, item);
+      const stats = fs.statSync(itemPath);
+      
+      if (stats.isDirectory() && item.startsWith('seccion_')) {
+        const numeroSeccion = parseInt(item.replace('seccion_', ''));
+        const imagenes = [];
+        const audios = [];
+        
+        // Buscar archivos en la carpeta de sección
+        const sectionFiles = fs.readdirSync(itemPath);
+        
+        for (const file of sectionFiles) {
+          const filePath = path.join(itemPath, file);
+          const fileStats = fs.statSync(filePath);
+          
+          if (fileStats.isFile()) {
+            const ext = path.extname(file).toLowerCase();
+            
+            if (['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'].includes(ext)) {
+              imagenes.push({
+                path: filePath,
+                name: file,
+                mtime: fileStats.mtime
+              });
+            } else if (['.mp3', '.wav', '.m4a', '.aac', '.ogg'].includes(ext)) {
+              audios.push({
+                path: filePath,
+                name: file
+              });
+            }
+          }
+        }
+        
+        if (imagenes.length > 0) {
+          // Ordenar imágenes por nombre para mantener orden consistente
+          imagenes.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+          
+          secciones.push({
+            numero: numeroSeccion,
+            nombre: `Sección ${numeroSeccion}`,
+            imagenes: imagenes,
+            audios: audios,
+            path: itemPath
+          });
+        }
+      }
+    }
+    
+    // Ordenar secciones por número
+    secciones.sort((a, b) => a.numero - b.numero);
+    
+    console.log(`🎬 Secciones encontradas: ${secciones.length}`);
+    secciones.forEach(seccion => {
+      console.log(`  - ${seccion.nombre}: ${seccion.imagenes.length} imágenes, ${seccion.audios.length} audios`);
+    });
+    
+    return secciones;
+    
+  } catch (error) {
+    console.error('❌ Error organizando archivos:', error);
+    return [];
+  }
+}
+
+// Función principal para procesar video completo
+async function procesarVideoCompleto(secciones, projectName, duration, animationType, quality, sessionId) {
+  const outputDir = path.join(process.cwd(), 'temp');
+  if (!fs.existsSync(outputDir)) {
+    fs.mkdirSync(outputDir, { recursive: true });
+  }
+  
+  const finalOutputPath = path.join(outputDir, `${projectName}_video_${Date.now()}.mp4`);
+  const videosSeccionesTemp = [];
+  
+  try {
+    // Procesar cada sección individualmente
+    for (let i = 0; i < secciones.length; i++) {
+      const seccion = secciones[i];
+      const progresoBase = 20 + (i * 60 / secciones.length);
+      
+      updateVideoProgress(sessionId, progresoBase, `Procesando ${seccion.nombre}...`);
+      
+      const videoSeccionPath = await procesarSeccionVideo(seccion, duration, animationType, quality, sessionId, progresoBase, secciones.length);
+      
+      if (videoSeccionPath && fs.existsSync(videoSeccionPath)) {
+        videosSeccionesTemp.push(videoSeccionPath);
+        console.log(`✅ ${seccion.nombre} procesada: ${videoSeccionPath}`);
+      }
+    }
+    
+    if (videosSeccionesTemp.length === 0) {
+      throw new Error('No se pudieron procesar las secciones');
+    }
+    
+    // Combinar todas las secciones
+    updateVideoProgress(sessionId, 85, 'Combinando todas las secciones...');
+    await combinarSeccionesVideo(videosSeccionesTemp, finalOutputPath, sessionId);
+    
+    // Limpiar videos temporales de secciones
+    videosSeccionesTemp.forEach(video => {
+      try {
+        if (fs.existsSync(video)) {
+          fs.unlinkSync(video);
+        }
+      } catch (e) {
+        console.log('⚠️ No se pudo limpiar video temporal:', e.message);
+      }
+    });
+    
+    return finalOutputPath;
+    
+  } catch (error) {
+    // Limpiar videos temporales en caso de error
+    videosSeccionesTemp.forEach(video => {
+      try {
+        if (fs.existsSync(video)) {
+          fs.unlinkSync(video);
+        }
+      } catch (e) {
+        console.log('⚠️ No se pudo limpiar video temporal:', e.message);
+      }
+    });
+    throw error;
+  }
+}
+
+// Función para procesar una sección individual
+async function procesarSeccionVideo(seccion, duration, animationType, quality, sessionId, progresoBase, totalSecciones) {
+  try {
+    const outputPath = path.join(process.cwd(), 'temp', `seccion_${seccion.numero}_${Date.now()}.mp4`);
+    
+    // Validar que la sección tiene imágenes
+    if (!seccion.imagenes || seccion.imagenes.length === 0) {
+      throw new Error(`${seccion.nombre} no tiene imágenes para procesar`);
+    }
+    
+    // Buscar archivo de audio para esta sección
+    let audioPath = null;
+    let finalDuration = duration; // Duración por defecto
+    
+    if (seccion.audios && seccion.audios.length > 0) {
+      // Usar el primer archivo de audio encontrado
+      audioPath = seccion.audios[0].path;
+      if (fs.existsSync(audioPath)) {
+        console.log(`🎵 Audio encontrado para ${seccion.nombre}: ${audioPath}`);
+        
+        // Obtener duración del audio usando ffprobe
+        try {
+          const audioDuration = await getAudioDuration(audioPath);
+          if (audioDuration > 0) {
+            // Calcular duración por imagen basándose en el audio
+            finalDuration = audioDuration / seccion.imagenes.length;
+            console.log(`� Duración del audio: ${audioDuration} segundos`);
+            console.log(`📐 Duración calculada por imagen: ${finalDuration.toFixed(2)} segundos`);
+          } else {
+            console.warn(`⚠️ No se pudo obtener duración válida del audio, usando duración fija: ${duration}s`);
+          }
+        } catch (error) {
+          console.warn(`⚠️ Error obteniendo duración del audio: ${error.message}, usando duración fija: ${duration}s`);
+        }
+      } else {
+        console.warn(`⚠️ Archivo de audio no existe: ${audioPath}`);
+        audioPath = null;
+      }
+    } else {
+      console.log(`📢 No se encontró audio para ${seccion.nombre}`);
+    }
+    
+    // Validar que todas las imágenes existen y obtener sus rutas absolutas
+    const imagenesValidadas = [];
+    for (const imagen of seccion.imagenes) {
+      let imagePath = imagen.path;
+      
+      // Si la ruta no es absoluta, convertirla
+      if (!path.isAbsolute(imagePath)) {
+        imagePath = path.resolve(imagePath);
+      }
+      
+      if (!fs.existsSync(imagePath)) {
+        console.error(`❌ Imagen no encontrada: ${imagePath}`);
+        throw new Error(`Imagen no encontrada: ${imagePath}`);
+      }
+      
+      // Verificar que es un archivo de imagen válido
+      const ext = path.extname(imagePath).toLowerCase();
+      if (!['.jpg', '.jpeg', '.png', '.bmp', '.gif', '.webp'].includes(ext)) {
+        console.error(`❌ Formato de imagen no soportado: ${ext}`);
+        throw new Error(`Formato de imagen no soportado: ${ext}`);
+      }
+      
+      imagenesValidadas.push(imagePath);
+      console.log(`✅ Imagen validada: ${imagePath}`);
+    }
+    
+    console.log(`🎬 Procesando ${seccion.nombre} con ${imagenesValidadas.length} imágenes validadas${audioPath ? ' y audio' : ''}`);
+    console.log(`⏱️ Duración por imagen: ${finalDuration.toFixed(2)} segundos`);
+    
+    // Procesar cada imagen con transiciones usando Canvas
+    const transitionTypes = ['zoom-in', 'zoom-out', 'pan-right', 'pan-left', 'fade-in', 'slide-in-left', 'slide-in-right', 'rotate-zoom'];
+    const framesPorSegundo = 30;
+    
+    if (imagenesValidadas.length === 1) {
+      // Una sola imagen - generar directamente al archivo final
+      const imagePath = imagenesValidadas[0];
+      const transitionType = 'zoom-out'; // Usar zoom-out para imagen única
+      
+      console.log(`🎬 Procesando imagen única con transición ${transitionType}`);
+      
+      // Generar video con transición
+      await generateImageVideoWithTransitions(imagePath, outputPath, finalDuration, transitionType, framesPorSegundo);
+      
+      // Agregar audio si existe
+      if (audioPath) {
+        const tempVideo = path.join(path.dirname(outputPath), `temp_${path.basename(outputPath)}`);
+        fs.renameSync(outputPath, tempVideo);
+        
+        const ffmpegArgs = ['-i', tempVideo, '-i', audioPath, '-c:v', 'copy', '-c:a', 'aac', '-shortest', outputPath];
+        
+        await new Promise((resolve, reject) => {
+          const ffmpeg = spawn('ffmpeg', ffmpegArgs, { stdio: 'pipe' });
+          ffmpeg.on('close', (code) => {
+            if (code === 0) {
+              // Limpiar archivo temporal
+              if (fs.existsSync(tempVideo)) fs.unlinkSync(tempVideo);
+              resolve();
+            } else {
+              reject(new Error(`FFmpeg falló con código ${code}`));
+            }
+          });
+        });
+      }
+    } else {
+      // Múltiples imágenes - generar videos temporales y concatenar
+      const tempVideos = [];
+      
+      for (let i = 0; i < imagenesValidadas.length; i++) {
+        const imagePath = imagenesValidadas[i];
+        const transitionType = 'zoom-out'; // Usar siempre zoom-out
+        const tempVideoPath = path.join(path.dirname(outputPath), `temp_${i}_${Date.now()}.mp4`);
+        
+        console.log(`🎬 Procesando imagen ${i + 1}/${imagenesValidadas.length} con transición ${transitionType}`);
+        
+        // Generar video con transición para esta imagen
+        await generateImageVideoWithTransitions(imagePath, tempVideoPath, finalDuration, transitionType, framesPorSegundo);
+        tempVideos.push(tempVideoPath);
+      }
+      
+      // Concatenar videos con transiciones de desvanecimiento
+      await concatenateVideosWithCrossfade(tempVideos, audioPath, outputPath);
+      
+      // Limpiar archivos temporales
+      tempVideos.forEach(video => {
+        if (fs.existsSync(video)) fs.unlinkSync(video);
+      });
+    }
+    
+    console.log(`✅ Video de sección ${seccion.nombre} generado con transiciones: ${outputPath}`);
+    return outputPath; // Devolver la ruta del video generado
+        
+  } catch (error) {
+    console.error(`❌ Error en procesarSeccionVideo:`, error);
+    throw error;
+  }
+}
+
+// Función auxiliar para obtener la duración del audio
+function getAudioDuration(audioPath) {
+  return new Promise((resolve, reject) => {
+    const ffprobeProcess = spawn('ffprobe', [
+      '-v', 'quiet',
+      '-show_entries', 'format=duration',
+      '-of', 'csv=p=0',
+      audioPath
+    ]);
+    
+    let ffprobeOutput = '';
+    
+    ffprobeProcess.stdout.on('data', (data) => {
+      ffprobeOutput += data.toString();
+    });
+    
+    ffprobeProcess.on('close', (code) => {
+      if (code === 0) {
+        const duration = parseFloat(ffprobeOutput.trim());
+        resolve(duration);
+      } else {
+        reject(new Error(`ffprobe falló con código ${code}`));
+      }
+    });
+    
+    ffprobeProcess.on('error', (err) => {
+      reject(err);
+    });
+  });
+}
+
+// Función para combinar todas las secciones
+async function combinarSeccionesVideo(videosSeccionesTemp, finalOutputPath, sessionId) {
+  return new Promise((resolve, reject) => {
+    updateVideoProgress(sessionId, 90, 'Concatenando todas las secciones...');
+    
+    const listFile = path.join(process.cwd(), 'temp', `concat_list_${Date.now()}.txt`);
+    const listContent = videosSeccionesTemp.map(video => `file '${video}'`).join('\n');
+    
+    fs.writeFileSync(listFile, listContent);
+    
+    const args = [
+      '-f', 'concat',
+      '-safe', '0',
+      '-i', listFile,
+      '-c', 'copy',
+      '-y',
+      finalOutputPath
+    ];
+    
+    const ffmpegProcess = spawn('ffmpeg', args);
+    
+    let stderrData = '';
+    
+    ffmpegProcess.stderr.on('data', (data) => {
+      stderrData += data.toString();
+    });
+    
+    ffmpegProcess.on('close', (code) => {
+      // Limpiar archivo de lista temporal
+      try {
+        if (fs.existsSync(listFile)) {
+          fs.unlinkSync(listFile);
+        }
+      } catch (e) {
+        console.log('⚠️ No se pudo limpiar archivo de lista:', e.message);
+      }
+      
+      if (code === 0) {
+        console.log('✅ Video final concatenado exitosamente');
+        updateVideoProgress(sessionId, 95, 'Video final generado exitosamente');
+        resolve(finalOutputPath);
+      } else {
+        console.error('❌ Error en concatenación FFmpeg:', stderrData);
+        reject(new Error(`FFmpeg falló con código ${code}`));
+      }
+    });
+    
+    ffmpegProcess.on('error', (err) => {
+      console.error('❌ Error ejecutando FFmpeg:', err);
+      reject(err);
+    });
+  });
+}
+
+// ================================
+// FUNCIONES DE ANIMACIÓN AVANZADAS CON TRANSICIONES
+// ================================
+
+// Función para generar frames animados usando Canvas con transiciones avanzadas
+async function generateAnimatedFrames(imagePath, outputPath, duration, animationType, smoothness = 'standard', useGPU = false) {
+  // FPS optimizado según el nivel de suavidad seleccionado
+  let fps = 25;
+  
+  if (smoothness === 'standard') {
+    if (duration > 10) fps = 20;      // 20 FPS para videos de 10-30s
+    if (duration > 30) fps = 15;      // 15 FPS para videos de 30-60s
+    if (duration > 60) fps = 10;      // 10 FPS para videos de 1-2 minutos  
+    if (duration > 120) fps = 8;      // 8 FPS para videos muy largos (>2 min)
+  } else if (smoothness === 'smooth') {
+    if (duration > 10) fps = 25;      // 25 FPS para videos de 10-30s
+    if (duration > 30) fps = 20;      // 20 FPS para videos de 30-60s
+    if (duration > 60) fps = 15;      // 15 FPS para videos de 1-2 minutos  
+    if (duration > 120) fps = 12;     // 12 FPS para videos muy largos (>2 min)
+  } else if (smoothness === 'ultra') {
+    if (duration > 10) fps = 30;      // 30 FPS para videos de 10-30s
+    if (duration > 30) fps = 25;      // 25 FPS para videos de 30-60s
+    if (duration > 60) fps = 20;      // 20 FPS para videos de 1-2 minutos  
+    if (duration > 120) fps = 15;     // 15 FPS para videos muy largos (>2 min)
+  }
+  
+  const totalFrames = duration * fps;
+  const tempDir = path.join(process.cwd(), 'temp_frames');
+  
+  console.log(`🎬 Generando ${totalFrames} frames a ${fps} FPS para duración de ${duration}s (calidad: ${smoothness})`);
+  
+  // Crear directorio temporal para los frames
+  if (!fs.existsSync(tempDir)) {
+    fs.mkdirSync(tempDir, { recursive: true });
+  }
+  
+  try {
+    // Verificar que es un archivo de imagen válido
+    const validImageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'];
+    const fileExtension = path.extname(imagePath).toLowerCase();
+    
+    console.log(`🖼️ Procesando archivo: ${imagePath}`);
+    console.log(`📄 Extensión detectada: "${fileExtension}"`);
+    
+    if (!validImageExtensions.includes(fileExtension)) {
+      throw new Error(`Tipo de imagen no soportado: "${fileExtension}" para archivo ${path.basename(imagePath)}`);
+    }
+    
+    // Verificar que el archivo existe
+    if (!fs.existsSync(imagePath)) {
+      throw new Error(`Archivo no encontrado: ${imagePath}`);
+    }
+    
+    console.log(`📂 Cargando imagen: ${path.basename(imagePath)} (${fileExtension})`);
+    
+    // Cargar la imagen original
+    const image = await loadImage(imagePath);
+    
+    // Para videos muy largos, usar lotes más grandes para mejor rendimiento
+    const batchSize = duration > 60 ? 20 : 50; // Lotes más pequeños para videos largos
+    
+    for (let batchStart = 0; batchStart < totalFrames; batchStart += batchSize) {
+      const batchEnd = Math.min(batchStart + batchSize, totalFrames);
+      
+      console.log(`🎥 Procesando frames ${batchStart + 1}-${batchEnd} de ${totalFrames}`);
+      
+      // Generar frames del lote actual
+      for (let frame = batchStart; frame < batchEnd; frame++) {
+        const progress = frame / (totalFrames - 1); // 0 a 1
+        
+        // Función de easing para suavizar las transiciones (ease-in-out cubic)
+        const easeInOutCubic = (t) => {
+          return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+        };
+        
+        // Función de easing suave (ease-out sine) para movimientos más naturales
+        const easeOutSine = (t) => {
+          return Math.sin((t * Math.PI) / 2);
+        };
+        
+        // Aplicar easing al progreso para animaciones más fluidas
+        const easedProgress = easeInOutCubic(progress);
+        
+        // Crear canvas de 1920x1080
+        const canvas = createCanvas(1920, 1080);
+        const ctx = canvas.getContext('2d');
+        
+        // Fondo negro
+        ctx.fillStyle = 'black';
+        ctx.fillRect(0, 0, 1920, 1080);
+        
+        // Calcular aspect ratio de la imagen original y del canvas
+        const imageAspectRatio = image.width / image.height;
+        const canvasAspectRatio = 1920 / 1080;
+        
+        // Calcular dimensiones manteniendo aspect ratio
+        let baseWidth, baseHeight;
+        
+        if (imageAspectRatio > canvasAspectRatio) {
+          // Imagen más ancha: ajustar por ancho
+          baseWidth = 1920;
+          baseHeight = 1920 / imageAspectRatio;
+        } else {
+          // Imagen más alta: ajustar por alto
+          baseHeight = 1080;
+          baseWidth = 1080 * imageAspectRatio;
+        }
+        
+        // Calcular posición centrada
+        const baseCenterX = (1920 - baseWidth) / 2;
+        const baseCenterY = (1080 - baseHeight) / 2;
+        
+        // Aplicar efectos de animación manteniendo aspect ratio
+        let drawWidth, drawHeight, drawX, drawY;
+        
+        switch (animationType) {
+          case 'zoom-in':
+            // Zoom in: escala de 1.0 a 1.3 con easing suave
+            const zoomInScale = 1 + (easedProgress * 0.3);
+            drawWidth = baseWidth * zoomInScale;
+            drawHeight = baseHeight * zoomInScale;
+            drawX = baseCenterX - ((drawWidth - baseWidth) / 2);
+            drawY = baseCenterY - ((drawHeight - baseHeight) / 2);
+            break;
+            
+          case 'zoom-out':
+            // Zoom out: escala de 1.3 a 1.0 con easing suave
+            const zoomOutScale = 1.3 - (easedProgress * 0.3);
+            drawWidth = baseWidth * zoomOutScale;
+            drawHeight = baseHeight * zoomOutScale;
+            drawX = baseCenterX - ((drawWidth - baseWidth) / 2);
+            drawY = baseCenterY - ((drawHeight - baseHeight) / 2);
+            break;
+            
+          case 'pan-right':
+            // Pan derecha: imagen más grande que se mueve con easing suave
+            const panScale = 1.2;
+            drawWidth = baseWidth * panScale;
+            drawHeight = baseHeight * panScale;
+            const panOffsetX = ((drawWidth - baseWidth) / 2) + ((drawWidth - 1920) * easedProgress);
+            drawX = baseCenterX - panOffsetX;
+            drawY = baseCenterY - ((drawHeight - baseHeight) / 2);
+            break;
+            
+          case 'pan-left':
+            // Pan izquierda: imagen más grande que se mueve al revés con easing suave
+            const leftPanScale = 1.2;
+            drawWidth = baseWidth * leftPanScale;
+            drawHeight = baseHeight * leftPanScale;
+            const leftPanOffsetX = ((drawWidth - baseWidth) / 2) + ((drawWidth - 1920) * (1 - easedProgress));
+            drawX = baseCenterX - leftPanOffsetX;
+            drawY = baseCenterY - ((drawHeight - baseHeight) / 2);
+            break;
+            
+          case 'fade-in':
+            // Fade in: opacidad de 0 a 1
+            drawWidth = baseWidth;
+            drawHeight = baseHeight;
+            drawX = baseCenterX;
+            drawY = baseCenterY;
+            ctx.globalAlpha = easedProgress;
+            break;
+            
+          case 'slide-in-left':
+            // Deslizar desde la izquierda
+            drawWidth = baseWidth;
+            drawHeight = baseHeight;
+            drawX = baseCenterX - (1920 * (1 - easedProgress));
+            drawY = baseCenterY;
+            break;
+            
+          case 'slide-in-right':
+            // Deslizar desde la derecha
+            drawWidth = baseWidth;
+            drawHeight = baseHeight;
+            drawX = baseCenterX + (1920 * (1 - easedProgress));
+            drawY = baseCenterY;
+            break;
+            
+          case 'rotate-zoom':
+            // Rotación con zoom
+            const rotateZoomScale = 1 + (easedProgress * 0.2);
+            const rotation = easedProgress * Math.PI * 2; // Una rotación completa
+            drawWidth = baseWidth * rotateZoomScale;
+            drawHeight = baseHeight * rotateZoomScale;
+            
+            ctx.save();
+            ctx.translate(1920/2, 1080/2);
+            ctx.rotate(rotation);
+            ctx.translate(-drawWidth/2, -drawHeight/2);
+            drawX = 0;
+            drawY = 0;
+            break;
+            
+          case 'none':
+          default:
+            // Sin animación: imagen estática centrada manteniendo aspect ratio
+            drawWidth = baseWidth;
+            drawHeight = baseHeight;
+            drawX = baseCenterX;
+            drawY = baseCenterY;
+        }
+        
+        // Dibujar la imagen en el canvas manteniendo aspect ratio
+        ctx.drawImage(image, drawX, drawY, drawWidth, drawHeight);
+        
+        // Restaurar contexto si se usó transformación
+        if (animationType === 'rotate-zoom') {
+          ctx.restore();
+        }
+        
+        // Resetear alpha si se usó
+        if (animationType === 'fade-in') {
+          ctx.globalAlpha = 1;
+        }
+        
+        // Guardar el frame como imagen con calidad ajustada según duración
+        const quality = duration > 60 ? 0.7 : 0.85; // Menor calidad para videos largos
+        const framePath = path.join(tempDir, `frame_${String(frame).padStart(6, '0')}.jpg`);
+        const buffer = canvas.toBuffer('image/jpeg', { quality });
+        fs.writeFileSync(framePath, buffer);
+      }
+      
+      // Forzar liberación de memoria entre lotes
+      if (global.gc) {
+        global.gc();
+      }
+    }
+    
+    // Convertir frames a video usando FFmpeg con aceleración GPU opcional
+    await new Promise((resolve, reject) => {
+      const videoCodec = useGPU ? 'h264_nvenc' : 'libx264';
+      const outputOptions = [
+        '-c:v', videoCodec,
+        '-pix_fmt', 'yuv420p',
+        '-t', duration.toString()
+      ];
+      
+      if (useGPU) {
+        // Opciones optimizadas para NVENC
+        outputOptions.push(
+          '-preset', 'fast',        // Preset rápido para NVENC
+          '-rc', 'vbr',             // Variable bitrate
+          '-cq', '23',              // Calidad constante
+          '-b:v', '8M',             // Bitrate target
+          '-maxrate', '15M',        // Bitrate máximo
+          '-bufsize', '30M'         // Buffer size
+        );
+      } else {
+        // Opciones para CPU
+        outputOptions.push('-preset', duration > 60 ? 'ultrafast' : 'fast');
+      }
+      
+      console.log(`🎬 Convirtiendo frames a video usando ${useGPU ? 'GPU (NVENC)' : 'CPU'}...`);
+      
+      ffmpeg()
+        .input(path.join(tempDir, 'frame_%06d.jpg'))
+        .inputOptions(['-framerate', fps.toString()])
+        .outputOptions(outputOptions)
+        .output(outputPath)
+        .on('end', () => {
+          console.log(`✅ Video generado exitosamente con ${useGPU ? 'aceleración GPU' : 'CPU'}`);
+          resolve();
+        })
+        .on('error', reject)
+        .run();
+    });
+    
+    // Limpiar frames temporales
+    const files = fs.readdirSync(tempDir);
+    for (const file of files) {
+      fs.unlinkSync(path.join(tempDir, file));
+    }
+    
+  } catch (error) {
+    throw error;
+  }
+}
+
+// Función para generar video de una imagen con transiciones usando Canvas
+async function generateImageVideoWithTransitions(imagePath, outputPath, duration, animationType = 'zoom-out', fps = 30) {
+  return new Promise(async (resolve, reject) => {
+    try {
+      console.log(`🎬 Generando video con transición ${animationType} para ${path.basename(imagePath)}`);
+      
+      // Generar video completo con animación
+      await generateAnimatedFrames(imagePath, outputPath, duration, animationType, 'standard', false);
+      
+      console.log(`✅ Video con transición generado: ${path.basename(outputPath)}`);
+      resolve(outputPath);
+      
+    } catch (error) {
+      console.error('Error en generateImageVideoWithTransitions:', error);
+      reject(error);
+    }
+  });
+}
+
+// Función para concatenar videos con transición crossfade
+async function concatenateVideosWithCrossfade(videoPaths, audioPath, outputPath) {
+  return new Promise((resolve, reject) => {
+    console.log(`🎬 Concatenando ${videoPaths.length} videos con transición crossfade...`);
+    
+    if (videoPaths.length === 0) {
+      reject(new Error('No hay videos para concatenar'));
+      return;
+    }
+    
+    if (videoPaths.length === 1) {
+      // Si solo hay un video, no necesitamos crossfade
+      const command = ffmpeg(videoPaths[0]);
+      if (audioPath) {
+        command.input(audioPath);
+      }
+      command
+        .outputOptions(['-c:v libx264', '-crf 23', '-preset medium'])
+        .output(outputPath)
+        .on('end', () => {
+          console.log('✅ Video único procesado correctamente');
+          resolve(outputPath);
+        })
+        .on('error', (err) => {
+          console.error('Error procesando video único:', err);
+          reject(err);
+        })
+        .run();
+      return;
+    }
+    
+    // Para múltiples videos, creamos filtros de crossfade
+    const command = ffmpeg();
+    
+    // Agregar todos los videos como inputs
+    videoPaths.forEach(videoPath => {
+      command.input(videoPath);
+    });
+    
+    // Agregar audio si existe
+    if (audioPath) {
+      command.input(audioPath);
+    }
+    
+    // Construir el filtro complejo para crossfade
+    const filterComplex = [];
+    const crossfadeDuration = 0.5; // 0.5 segundos de crossfade
+    
+    // Para múltiples videos, usaremos un enfoque más simple: concatenar con fade
+    // Primero, creamos un filtro que ajusta cada video para que tenga fade out al final
+    for (let i = 0; i < videoPaths.length; i++) {
+      if (i === 0) {
+        // Primer video: solo fade out al final
+        filterComplex.push(`[${i}:v]fade=t=out:st=9.5:d=0.5[v${i}]`);
+      } else if (i === videoPaths.length - 1) {
+        // Último video: solo fade in al inicio
+        filterComplex.push(`[${i}:v]fade=t=in:st=0:d=0.5[v${i}]`);
+      } else {
+        // Videos del medio: fade in y fade out
+        filterComplex.push(`[${i}:v]fade=t=in:st=0:d=0.5,fade=t=out:st=9.5:d=0.5[v${i}]`);
+      }
+    }
+    
+    // Ahora concatenamos todos los videos con fade
+    const inputLabels = videoPaths.map((_, i) => `[v${i}]`).join('');
+    filterComplex.push(`${inputLabels}concat=n=${videoPaths.length}:v=1:a=0[outv]`);
+    
+    const outputOptions = [
+      '-filter_complex', filterComplex.join(';'),
+      '-map', '[outv]',
+      '-c:v', 'libx264',
+      '-crf', '23',
+      '-preset', 'medium',
+      '-pix_fmt', 'yuv420p'
+    ];
+    
+    // Si hay audio, mapearlo también
+    if (audioPath) {
+      outputOptions.push('-map', `${videoPaths.length}:a`);
+      outputOptions.push('-c:a', 'aac');
+      outputOptions.push('-b:a', '128k');
+    }
+    
+    command
+      .outputOptions(outputOptions)
+      .output(outputPath)
+      .on('start', (commandLine) => {
+        console.log('🎬 Comando FFmpeg para crossfade:', commandLine);
+      })
+      .on('progress', (progress) => {
+        if (progress.percent) {
+          console.log(`⏳ Progreso crossfade: ${Math.round(progress.percent)}%`);
+        }
+      })
+      .on('end', () => {
+        console.log('✅ Videos concatenados con crossfade exitosamente');
+        resolve(outputPath);
+      })
+      .on('error', (err) => {
+        console.error('❌ Error en concatenación con crossfade:', err);
+        reject(err);
+      })
+      .run();
+  });
+}
 
 app.listen(PORT, () => {
   console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`);
