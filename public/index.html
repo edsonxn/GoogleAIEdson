@@ -444,6 +444,20 @@
           </div>
 
           <div class="field-group">
+            <label for="wordsPerSection" class="field-label">
+              <i class="fas fa-align-left"></i> Palabras por sección:
+            </label>
+            <div class="words-input-group">
+              <div class="words-range">
+                <input type="number" id="minWords" class="words-input" value="800" min="0" max="5000" placeholder="800">
+                <span class="words-separator">-</span>
+                <input type="number" id="maxWords" class="words-input" value="1100" min="0" max="5000" placeholder="1100">
+              </div>
+              <span class="words-label">palabras</span>
+            </div>
+          </div>
+
+          <div class="field-group">
             <label for="styleSelect" class="field-label">
               <i class="fas fa-palette"></i> Estilo:
             </label>
@@ -638,6 +652,118 @@
 
           <div class="checkbox-group">
             <label class="checkbox-label">
+              <input type="checkbox" id="localAIImages" class="checkbox-input" 
+                     onchange="
+                       console.log('🎯 Checkbox cambiado:', this.checked);
+                       const config = document.getElementById('comfyUIConfig');
+                       if (config) {
+                         if (this.checked) {
+                           config.style.display = 'block';
+                           console.log('✅ Mostrando controles ComfyUI');
+                           if (typeof checkComfyUIStatus === 'function') checkComfyUIStatus();
+                         } else {
+                           config.style.display = 'none';
+                           console.log('❌ Ocultando controles ComfyUI');
+                         }
+                       } else {
+                         console.error('❌ No se encontró elemento comfyUIConfig');
+                       }
+                     ">
+              <span class="checkbox-custom"></span>
+              <i class="fas fa-brain"></i>
+              Imágenes IA en local
+            </label>
+          </div>
+
+          <!-- Configuraciones de ComfyUI (aparece cuando se activa IA local) -->
+          <div id="comfyUIConfig" class="comfyui-config" style="display: none; background: #1a1a2e; border: 2px solid #00ff7f; padding: 20px; margin: 15px 0; border-radius: 8px;">
+            <h4 style="color: #00ff7f; margin-bottom: 15px;">🎨 Configuración ComfyUI + Flux</h4>
+            
+            <div style="margin-bottom: 15px;">
+              <label style="color: #e1e5e9; display: block; margin-bottom: 5px;">Pasos de generación:</label>
+              <input type="range" id="comfyUISteps" min="5" max="50" value="15" style="width: 100%;">
+              <span id="stepsValue" style="color: #00ff7f; font-weight: bold;">15</span>
+              <small style="color: #888; display: block;">Más pasos = mejor calidad, más tiempo</small>
+            </div>
+            
+            <div style="margin-bottom: 15px;">
+              <label style="color: #e1e5e9; display: block; margin-bottom: 5px;">Resolución (16:9 automático):</label>
+              
+              <div style="margin-bottom: 10px;">
+                <label style="color: #ccc; font-size: 0.9rem;">Ancho:</label>
+                <input type="range" id="comfyUIWidth" min="200" max="2000" value="800" style="width: 200px; margin: 0 10px;">
+                <span id="widthValue" style="color: #00ff7f; font-weight: bold;">800px</span>
+              </div>
+              
+              <div style="margin-bottom: 10px;">
+                <label style="color: #ccc; font-size: 0.9rem;">Alto (automático):</label>
+                <span id="heightValue" style="color: #00ff7f; font-weight: bold; font-size: 1.1rem; margin-left: 10px;">450px</span>
+                <input type="hidden" id="comfyUIHeight" value="450">
+                <small style="color: #888; display: block; margin-top: 5px;">La altura se calcula automáticamente para mantener proporción 16:9</small>
+              </div>
+            </div>
+          </div>
+
+          <script>
+            // Script inline para asegurar que funcione
+            document.addEventListener('DOMContentLoaded', function() {
+              console.log('🎯 Script inline ejecutándose...');
+              
+              // Configurar sliders
+              const stepsSlider = document.getElementById('comfyUISteps');
+              const stepsValue = document.getElementById('stepsValue');
+              const widthSlider = document.getElementById('comfyUIWidth');
+              const widthValue = document.getElementById('widthValue');
+              const heightSlider = document.getElementById('comfyUIHeight');
+              const heightValue = document.getElementById('heightValue');
+              
+              // Función para calcular altura 16:9
+              function updateHeight(width) {
+                const height = Math.round(width / 16 * 9);
+                if (heightSlider) heightSlider.value = height;
+                if (heightValue) heightValue.textContent = height + 'px';
+                return height;
+              }
+              
+              if (stepsSlider && stepsValue) {
+                stepsSlider.addEventListener('input', function() {
+                  stepsValue.textContent = this.value;
+                  console.log('Pasos:', this.value);
+                });
+              }
+              
+              if (widthSlider && widthValue) {
+                widthSlider.addEventListener('input', function() {
+                  const width = parseInt(this.value);
+                  widthValue.textContent = width + 'px';
+                  const height = updateHeight(width);
+                  console.log('Resolución:', width + 'x' + height + ' (16:9)');
+                });
+              }
+              
+              // Función para obtener configuración actual
+              window.getComfyUISettings = function() {
+                const steps = document.getElementById('comfyUISteps')?.value || 15;
+                const width = document.getElementById('comfyUIWidth')?.value || 800;
+                const height = document.getElementById('comfyUIHeight')?.value || 450;
+                
+                return {
+                  steps: parseInt(steps),
+                  width: parseInt(width),
+                  height: parseInt(height),
+                  guidance: 3.5, // Valor fijo
+                  sampler: 'euler', // Valor fijo
+                  scheduler: 'simple', // Valor fijo
+                  negativePrompt: 'low quality, blurry, distorted, ugly, bad anatomy' // Valor fijo
+                };
+              };
+              
+              console.log('✅ Script inline configurado - Sliders de resolución añadidos');
+            });
+          </script>
+
+          <div class="checkbox-group">
+            <label class="checkbox-label">
               <input type="checkbox" id="generateVideo" class="checkbox-input">
               <span class="checkbox-custom"></span>
               <i class="fas fa-video"></i>
@@ -696,11 +822,44 @@
           <i class="fas fa-microphone"></i>
           <span>Generar Audio</span>
         </button>
+      </div>
 
-        <button id="generateVideoBtn" class="btn btn-video" style="display: none;">
-          <i class="fas fa-film"></i>
-          <span>Generar Video</span>
-        </button>
+      <!-- Barra de progreso para generación por lotes -->
+      <div id="progressContainer" style="display: none;">
+        <div class="progress-header">
+          <h4><i class="fas fa-tasks"></i> Progreso de Generación</h4>
+          <div class="progress-info">
+            <span id="currentPhase">Iniciando...</span>
+            <span id="progressPercentage">0%</span>
+          </div>
+        </div>
+        
+        <div class="progress-bar-container">
+          <div class="progress-bar" id="progressBar">
+            <div class="progress-fill" id="progressFill" style="width: 0%;"></div>
+          </div>
+        </div>
+        
+        <div class="progress-details">
+          <div class="progress-stats">
+            <div class="stat-item">
+              <i class="fas fa-hourglass-half"></i>
+              <span>Tiempo transcurrido: <span id="elapsedTime">0:00</span></span>
+            </div>
+            <div class="stat-item">
+              <i class="fas fa-clock"></i>
+              <span>Tiempo estimado restante: <span id="estimatedTime">Calculando...</span></span>
+            </div>
+            <div class="stat-item">
+              <i class="fas fa-list-ol"></i>
+              <span>Elementos: <span id="currentProgress">0 / 0</span></span>
+            </div>
+          </div>
+          <div class="current-task">
+            <i class="fas fa-cog fa-spin"></i>
+            <span id="currentTask">Preparando generación...</span>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -713,12 +872,7 @@
         <p class="video-description">Convierte todas las secciones generadas en un video compilado con transiciones y audio sincronizado.</p>
         
         <div class="video-settings">
-          <div class="video-setting-item">
-            <label for="videoDuration">Duración por imagen (segundos):</label>
-            <input type="number" id="videoDuration" value="3" min="1" max="10" step="0.5">
-          </div>
-          
-          <div class="video-setting-item">
+          <div class="video-setting-item" id="videoAnimationSetting">
             <label for="videoAnimation">Animación:</label>
             <select id="videoAnimation">
               <option value="zoom-in">Zoom In (acercar)</option>
@@ -726,21 +880,38 @@
               <option value="pan-right">Pan derecha</option>
               <option value="pan-left">Pan izquierda</option>
             </select>
+            <small class="setting-help">Solo para video con animaciones</small>
           </div>
           
-          <div class="video-setting-item">
+          <div class="video-setting-item" id="videoQualitySetting">
             <label for="videoQuality">Calidad:</label>
             <select id="videoQuality">
               <option value="standard" selected>Estándar (recomendado)</option>
               <option value="smooth">Suave (más FPS)</option>
               <option value="ultra">Ultra suave (máximo FPS)</option>
             </select>
+            <small class="setting-help">Solo para video con animaciones</small>
           </div>
         </div>
         
         <button id="generateVideoBtn" class="generate-video-btn">
           <i class="fas fa-play-circle"></i>
           <span>Generar Video Completo</span>
+        </button>
+        
+        <button id="generateSimpleVideoBtn" class="generate-simple-video-btn">
+          <i class="fas fa-images"></i>
+          <span>Video Simple (Sin Animación)</span>
+        </button>
+        
+        <button id="regenerateApplioAudiosBtn" class="regenerate-audio-btn" style="display: none;">
+          <i class="fas fa-microphone-alt"></i>
+          <span>Generar Audios Faltantes</span>
+        </button>
+        
+        <button id="regenerateMissingScriptsBtn" class="regenerate-scripts-btn" style="display: none;">
+          <i class="fas fa-file-alt"></i>
+          <span>Regenerar Guiones Vacíos</span>
         </button>
         
         <div id="videoProgressContainer" class="video-progress-container" style="display: none;">
@@ -836,10 +1007,10 @@
                   <span id="totalTime">0:00</span>
                 </div>
                 
-                <div class="progress-container">
-                  <div class="progress-bar" id="progressBar">
-                    <div class="progress-fill" id="progressFill"></div>
-                    <div class="progress-handle" id="progressHandle"></div>
+                <div class="audio-progress-container">
+                  <div class="audio-progress-bar" id="audioProgressBar">
+                    <div class="progress-fill" id="audioProgressFill"></div>
+                    <div class="progress-handle" id="audioProgressHandle"></div>
                   </div>
                 </div>
                 
@@ -1060,7 +1231,7 @@
     </div>
   </div>
 
-  <script src="script.js?v=20250907_3"></script>
+  <script src="script.js?v=20250917_1"></script>
   
   <!-- Script inline para forzar eventos de proyectos -->
   <script>

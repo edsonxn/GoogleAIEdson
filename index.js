@@ -2,7 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import bodyParser from 'body-parser';
-import { GoogleGenAI, Modality } from "@google/genai";
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import OpenAI from 'openai';
 import wav from 'wav';
 import fs from 'fs';
@@ -14,14 +14,581 @@ import multer from 'multer';
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 import ffmpeg from 'fluent-ffmpeg';
-import { spawn } from 'child_process';
+import { spawn, exec } from 'child_process';
 import { createCanvas, loadImage } from 'canvas';
+import ComfyUIClient from './comfyui-client.js';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+
+// Obtener __dirname equivalente en módulos ES6
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 const app = express();
 const PORT = 3000;
 
 // Configurar cliente Applio
 const applioClient = new ApplioClient();
+
+// Variables para control de proceso ComfyUI
+let comfyUIProcess = null;
+const COMFYUI_PATH = 'C:\\comfy\\ComfyUI';
+const COMFYUI_START_BAT = path.join(COMFYUI_PATH, 'start.bat');
+
+// Variables para control de proceso Applio
+let applioProcess = null;
+let applioStarted = false; // Nueva variable para rastrear si ya se inició
+const APPLIO_PATH = 'C:\\applio2\\Applio';
+const APPLIO_START_BAT = path.join(APPLIO_PATH, 'run-applio.bat');
+
+// Variable para rastrear progreso de proyectos
+const projectProgressTracker = {};
+
+/**
+ * Extrae solo el contenido del guión de un archivo TXT completo
+ * @param {string} fullContent - Contenido completo del archivo TXT con metadatos
+ * @returns {object} - Objeto con el contenido del guión y información adicional
+ */
+function extractScriptContent(fullContent) {
+  try {
+    if (!fullContent || typeof fullContent !== 'string') {
+      return { content: '', isEmpty: true, hasStructure: false };
+    }
+    
+    // Verificar si tiene la estructura esperada de metadatos
+    const hasStructure = fullContent.includes('CONTENIDO DEL GUIÓN:') || 
+                        fullContent.includes('===============================');
+    
+    // Buscar el marcador de inicio del contenido
+    const contentStart = fullContent.indexOf('CONTENIDO DEL GUIÓN:');
+    if (contentStart === -1) {
+      // Si no encuentra el marcador, intentar buscar patrones alternativos
+      const altPatterns = [
+        'CONTENIDO:',
+        'GUIÓN:',
+        'SCRIPT:',
+        'TEXTO:'
+      ];
+      
+      let startIndex = -1;
+      for (const pattern of altPatterns) {
+        const index = fullContent.indexOf(pattern);
+        if (index !== -1) {
+          startIndex = index + pattern.length;
+          break;
+        }
+      }
+      
+      if (startIndex === -1) {
+        // Si no encuentra ningún patrón, devolver todo el contenido limpio
+        console.warn('⚠️ No se encontró marcador de inicio del guión, devolviendo contenido limpio');
+        const cleanContent = fullContent.trim();
+        return { 
+          content: cleanContent, 
+          isEmpty: cleanContent.length === 0, 
+          hasStructure: hasStructure 
+        };
+      }
+      
+      const textAfterMarker = fullContent.substring(startIndex);
+      const endMarker = textAfterMarker.indexOf('===============================');
+      
+      const extractedContent = endMarker !== -1 
+        ? textAfterMarker.substring(0, endMarker).trim()
+        : textAfterMarker.trim();
+        
+      return { 
+        content: extractedContent, 
+        isEmpty: extractedContent.length === 0, 
+        hasStructure: hasStructure 
+      };
+    }
+    
+    // Extraer texto después del marcador "CONTENIDO DEL GUIÓN:"
+    const startIndex = contentStart + 'CONTENIDO DEL GUIÓN:'.length;
+    const textAfterMarker = fullContent.substring(startIndex);
+    
+    // Buscar el marcador de fin (línea de separación)
+    const endMarker = textAfterMarker.indexOf('===============================');
+    
+    let scriptContent;
+    if (endMarker !== -1) {
+      // Extraer solo hasta el marcador de fin
+      scriptContent = textAfterMarker.substring(0, endMarker);
+    } else {
+      // Si no hay marcador de fin, tomar todo después del inicio
+      scriptContent = textAfterMarker;
+    }
+    
+    // Limpiar el contenido
+    scriptContent = scriptContent
+      .replace(/Guión generado automáticamente por IA.*$/g, '') // Remover pie de página si quedó
+      .replace(/^\s*\n+/, '') // Remover líneas vacías al inicio
+      .replace(/\n+\s*$/, '') // Remover líneas vacías al final
+      .trim();
+    
+    const isEmpty = scriptContent.length === 0;
+    
+    console.log(`📝 Script extraído: ${scriptContent.length} caracteres (de ${fullContent.length} originales)${isEmpty ? ' - CONTENIDO VACÍO' : ''}`);
+    
+    return { 
+      content: scriptContent, 
+      isEmpty: isEmpty, 
+      hasStructure: hasStructure 
+    };
+    
+  } catch (error) {
+    console.error('❌ Error extrayendo contenido del script:', error);
+    return { 
+      content: fullContent.trim(), 
+      isEmpty: fullContent.trim().length === 0, 
+      hasStructure: false 
+    }; // Devolver contenido original como fallback
+  }
+}
+
+/**
+ * Genera un guión faltante para una sección específica usando IA
+ * @param {string} topic - Tema del proyecto
+ * @param {number} sectionNumber - Número de la sección
+ * @param {number} totalSections - Total de secciones del proyecto
+ * @param {string} chapterTitle - Título del capítulo si está disponible
+ * @param {Array} previousSections - Secciones anteriores para contexto
+ * @param {string} scriptStyle - Estilo del script ('professional', 'comedy', 'custom')
+ * @param {string} customStyleInstructions - Instrucciones personalizadas si es estilo custom
+ * @param {number} wordsMin - Mínimo de palabras
+ * @param {number} wordsMax - Máximo de palabras
+ * @returns {Promise<object>} - Resultado de la generación
+ */
+async function generateMissingScript(topic, sectionNumber, totalSections, chapterTitle = null, previousSections = [], scriptStyle = 'professional', customStyleInstructions = '', wordsMin = 800, wordsMax = 1100) {
+  try {
+    console.log(`📝 Generando guión faltante para sección ${sectionNumber}/${totalSections}:`);
+    console.log(`🎯 Tema: ${topic}`);
+    console.log(`📖 Capítulo: ${chapterTitle || 'Sin título específico'}`);
+    console.log(`🎨 Estilo: ${scriptStyle}`);
+    
+    // Preparar contexto de secciones anteriores en el formato correcto
+    let previousChapterContent = [];
+    if (previousSections && previousSections.length > 0) {
+      previousChapterContent = previousSections.map(section => {
+        const content = typeof section.script === 'string' ? section.script : section.script?.content || '';
+        return content;
+      });
+    }
+    
+    // Preparar estructura de capítulos si hay título
+    let chapterStructure = null;
+    if (chapterTitle) {
+      // Crear una estructura simple con el título actual
+      chapterStructure = Array(totalSections).fill().map((_, index) => {
+        if (index + 1 === sectionNumber) {
+          return chapterTitle;
+        }
+        return `Capítulo ${index + 1}`;
+      });
+    }
+
+    // Generar prompt usando las funciones existentes según el estilo
+    let prompt;
+    switch (scriptStyle) {
+      case 'comedy':
+        prompt = generateComedyPrompt(topic, totalSections, sectionNumber, chapterStructure, previousChapterContent, wordsMin, wordsMax);
+        break;
+      case 'custom':
+        prompt = generateCustomPrompt(topic, totalSections, sectionNumber, chapterStructure, previousChapterContent, wordsMin, wordsMax, customStyleInstructions);
+        break;
+      case 'professional':
+      default:
+        prompt = generateProfessionalPrompt(topic, totalSections, sectionNumber, chapterStructure, previousChapterContent, wordsMin, wordsMax);
+        break;
+    }
+
+    // Validar que la API key esté disponible
+    if (!process.env.GOOGLE_API_KEY) {
+      throw new Error('GOOGLE_API_KEY no está configurada en las variables de entorno');
+    }
+
+    // Usar el cliente de IA configurado (Gemini o similar)
+    const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
+    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
+    
+    console.log('🤖 Enviando prompt al modelo de IA...');
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const generatedScript = response.text();
+    
+    if (!generatedScript || generatedScript.trim().length < 200) {
+      throw new Error('El guión generado es demasiado corto o está vacío');
+    }
+    
+    console.log(`✅ Guión generado: ${generatedScript.length} caracteres`);
+    
+    return {
+      success: true,
+      script: generatedScript.trim(),
+      length: generatedScript.trim().length,
+      sectionNumber: sectionNumber,
+      topic: topic
+    };
+    
+  } catch (error) {
+    console.error(`❌ Error generando guión para sección ${sectionNumber}:`, error);
+    return {
+      success: false,
+      error: error.message,
+      sectionNumber: sectionNumber,
+      topic: topic
+    };
+  }
+}
+
+// Funciones para controlar ComfyUI automáticamente
+async function startComfyUI() {
+  try {
+    console.log('🚀 Iniciando ComfyUI en nueva ventana CMD...');
+    
+    // Verificar si ya está ejecutándose
+    const client = new ComfyUIClient('http://127.0.0.1:8188');
+    const connectionCheck = await client.checkConnection();
+    if (connectionCheck.success) {
+      console.log('✅ ComfyUI ya está ejecutándose');
+      return true;
+    }
+    
+    // Cerrar Applio antes de iniciar ComfyUI para evitar conflictos de recursos
+    console.log('🛑 Cerrando Applio antes de iniciar ComfyUI para liberar recursos...');
+    await stopApplio();
+    console.log('✅ Applio cerrado, iniciando ComfyUI...');
+    
+    // Verificar que el archivo start.bat existe
+    if (!fs.existsSync(COMFYUI_START_BAT)) {
+      throw new Error(`No se encontró start.bat en: ${COMFYUI_START_BAT}`);
+    }
+    
+    console.log(`📂 Abriendo nueva ventana CMD para ComfyUI...`);
+    
+    // Crear un archivo temporal .bat para evitar problemas con comillas
+    const tempBatPath = path.join(__dirname, 'temp_start_comfyui.bat');
+    const batContent = `@echo off
+title ComfyUI Server - AutoRestart
+cd /d "${COMFYUI_PATH}"
+start.bat`;
+    
+    fs.writeFileSync(tempBatPath, batContent);
+    
+    // Ejecutar el archivo .bat en una nueva ventana
+    comfyUIProcess = spawn('cmd', ['/c', 'start', tempBatPath], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: false
+    });
+    
+    // Desacoplar el proceso del proceso padre
+    comfyUIProcess.unref();
+    
+    console.log(`🪟 Nueva ventana CMD abierta para ComfyUI`);
+    
+    // Limpiar el archivo temporal después de un momento
+    setTimeout(() => {
+      try {
+        if (fs.existsSync(tempBatPath)) {
+          fs.unlinkSync(tempBatPath);
+        }
+      } catch (error) {
+        console.log('ℹ️ No se pudo eliminar archivo temporal:', tempBatPath);
+      }
+    }, 10000);
+    
+    // Esperar a que ComfyUI esté listo (máximo 90 segundos para dar tiempo al inicio)
+    console.log('⏳ Esperando a que ComfyUI esté listo en la nueva ventana...');
+    const maxAttempts = 90;
+    let attempt = 0;
+    
+    while (attempt < maxAttempts) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      attempt++;
+      
+      try {
+        const check = await client.checkConnection();
+        if (check.success) {
+          console.log(`✅ ComfyUI listo después de ${attempt} segundos en nueva ventana`);
+          return true;
+        }
+      } catch (error) {
+        // Continuar intentando
+      }
+      
+      if (attempt % 15 === 0) {
+        console.log(`⏳ Intento ${attempt}/${maxAttempts}... (ComfyUI iniciándose en ventana separada)`);
+      }
+    }
+    
+    throw new Error('Timeout: ComfyUI no respondió después de 90 segundos');
+    
+  } catch (error) {
+    console.error('❌ Error iniciando ComfyUI:', error.message);
+    return false;
+  }
+}
+
+async function stopComfyUI() {
+  try {
+    console.log('🛑 Cerrando ventana CMD de ComfyUI...');
+    
+    // Buscar y cerrar todos los procesos relacionados con ComfyUI
+    // Esto cerrará tanto el proceso Python como la ventana CMD
+    const killCommand = spawn('taskkill', [
+      '/F',  // Forzar cierre
+      '/IM', 'python.exe',  // Cerrar procesos Python (ComfyUI)
+      '/T'   // Terminar árbol de procesos
+    ], {
+      stdio: 'ignore'
+    });
+    
+    // También cerrar cualquier proceso CMD que tenga "ComfyUI" en el título
+    const killCmdCommand = spawn('taskkill', [
+      '/F',
+      '/FI', 'WINDOWTITLE eq ComfyUI Server*'
+    ], {
+      stdio: 'ignore'
+    });
+    
+    // Esperar a que los comandos de cierre terminen
+    await Promise.all([
+      new Promise(resolve => killCommand.on('close', resolve)),
+      new Promise(resolve => killCmdCommand.on('close', resolve))
+    ]);
+    
+    console.log('✅ Ventana CMD de ComfyUI cerrada');
+    
+    // Limpiar referencia del proceso
+    comfyUIProcess = null;
+    
+    // Esperar un momento para que el proceso se cierre completamente
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    
+    return true;
+  } catch (error) {
+    console.error('❌ Error cerrando ComfyUI:', error.message);
+    return false;
+  }
+}
+
+// Función para generar imagen con reinicio automático en caso de timeout
+async function generateImageWithAutoRestart(prompt, options = {}, maxRetries = 2) {
+  let attempt = 1;
+  
+  while (attempt <= maxRetries) {
+    try {
+      console.log(`🎨 [ATTEMPT ${attempt}/${maxRetries}] Generando imagen: "${prompt}"`);
+      
+      // Verificar si ComfyUI está disponible
+      const client = new ComfyUIClient('http://127.0.0.1:8188');
+      const connectionCheck = await client.checkConnection();
+      
+      if (!connectionCheck.success) {
+        console.log(`⚠️ ComfyUI no disponible en intento ${attempt}, iniciando...`);
+        const started = await startComfyUI();
+        if (!started) {
+          throw new Error('No se pudo iniciar ComfyUI');
+        }
+      }
+      
+      // Intentar generar imagen
+      const result = await client.generateImage(prompt, options);
+      console.log(`✅ Imagen generada exitosamente en intento ${attempt}`);
+      return result;
+      
+    } catch (error) {
+      console.error(`❌ Error en intento ${attempt}:`, error.message);
+      
+      // Si es timeout de ComfyUI y no es el último intento
+      if (error.message.includes('COMFYUI_TIMEOUT') && attempt < maxRetries) {
+        console.log(`⏱️ Timeout detectado (>90s), reiniciando ComfyUI...`);
+        
+        // Cerrar Applio y ComfyUI para liberar todos los recursos
+        console.log('🛑 Cerrando Applio para liberar recursos GPU/VRAM...');
+        await stopApplio();
+        console.log('🛑 Cerrando ComfyUI que se colgó...');
+        await stopComfyUI();
+        
+        // Esperar un momento antes de reiniciar
+        console.log('⏳ Esperando 5 segundos antes de reiniciar...');
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        
+        // Reiniciar ComfyUI
+        console.log('🔄 Reiniciando ComfyUI en nueva ventana...');
+        const restarted = await startComfyUI();
+        
+        if (!restarted) {
+          console.error('❌ No se pudo reiniciar ComfyUI');
+          if (attempt === maxRetries) {
+            throw new Error('No se pudo reiniciar ComfyUI después del timeout');
+          }
+        } else {
+          console.log('✅ ComfyUI reiniciado exitosamente, reintentando generación...');
+        }
+        
+        attempt++;
+        continue;
+      }
+      
+      // Si no es timeout o es el último intento, lanzar error
+      if (attempt === maxRetries) {
+        throw error;
+      }
+      
+      attempt++;
+    }
+  }
+  
+  throw new Error('Se agotaron los intentos de generación');
+}
+
+// Funciones para controlar Applio automáticamente
+async function startApplio() {
+  try {
+    // Si ya está marcado como iniciado, solo verificar conexión
+    if (applioStarted) {
+      console.log('ℹ️ Applio ya fue iniciado anteriormente, verificando conexión...');
+      const connectionCheck = await applioClient.checkConnection();
+      if (connectionCheck) {
+        console.log('✅ Applio sigue ejecutándose y listo');
+        return true;
+      } else {
+        console.log('⚠️ Applio fue iniciado pero no responde, intentando reiniciar...');
+        console.log('🔍 [DEBUG] Reseteando estado de Applio...');
+        applioStarted = false; // Reset para permitir reinicio
+      }
+    }
+    
+    console.log('🚀 Iniciando Applio en nueva ventana CMD (primera vez)...');
+    
+    // Verificar si ya está ejecutándose
+    const connectionCheck = await applioClient.checkConnection();
+    if (connectionCheck) {
+      console.log('✅ Applio ya está ejecutándose');
+      applioStarted = true;
+      return true;
+    }
+    
+    // Verificar que el archivo run-applio.bat existe
+    if (!fs.existsSync(APPLIO_START_BAT)) {
+      throw new Error(`No se encontró run-applio.bat en: ${APPLIO_START_BAT}`);
+    }
+    
+    console.log(`📂 Abriendo nueva ventana CMD para Applio...`);
+    
+    // Crear un archivo temporal .bat para evitar problemas con comillas
+    const tempBatPath = path.join(__dirname, 'temp_start_applio.bat');
+    const batContent = `@echo off
+title Applio Server - PERMANENTE
+cd /d "${APPLIO_PATH}"
+run-applio.bat`;
+    
+    fs.writeFileSync(tempBatPath, batContent);
+    
+    // Ejecutar el archivo .bat en una nueva ventana
+    applioProcess = spawn('cmd', ['/c', 'start', tempBatPath], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: false
+    });
+    
+    // Desacoplar el proceso del proceso padre
+    applioProcess.unref();
+    
+    console.log(`🪟 Nueva ventana CMD abierta para Applio - PERMANENTE`);
+    
+    // Limpiar el archivo temporal después de un momento
+    setTimeout(() => {
+      try {
+        if (fs.existsSync(tempBatPath)) {
+          fs.unlinkSync(tempBatPath);
+        }
+      } catch (error) {
+        console.log('ℹ️ No se pudo eliminar archivo temporal:', tempBatPath);
+      }
+    }, 10000);
+    
+    // Esperar a que Applio esté listo (máximo 120 segundos para dar tiempo al inicio)
+    console.log('⏳ Esperando a que Applio esté listo en la nueva ventana...');
+    const maxAttempts = 120;
+    let attempt = 0;
+    
+    while (attempt < maxAttempts) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      attempt++;
+      
+      try {
+        const check = await applioClient.checkConnection();
+        if (check) {
+          console.log(`✅ Applio listo después de ${attempt} segundos en nueva ventana`);
+          applioStarted = true; // Marcar como iniciado
+          return true;
+        }
+      } catch (error) {
+        // Continuar intentando
+      }
+      
+      if (attempt % 20 === 0) {
+        console.log(`⏳ Intento ${attempt}/${maxAttempts}... (Applio iniciándose en ventana separada)`);
+      }
+    }
+    
+    throw new Error('Timeout: Applio no respondió después de 120 segundos');
+    
+  } catch (error) {
+    console.error('❌ Error iniciando Applio:', error.message);
+    console.log('🔍 [DEBUG] Reseteando estado debido a error');
+    applioStarted = false;
+    return false;
+  }
+}
+
+async function stopApplio() {
+  try {
+    console.log('🛑 Cerrando ventana CMD de Applio...');
+    
+    // Buscar y cerrar todos los procesos relacionados con Applio
+    // Esto cerrará tanto el proceso Python como la ventana CMD
+    const killCommand = spawn('taskkill', [
+      '/F',  // Forzar cierre
+      '/IM', 'python.exe',  // Cerrar procesos Python (Applio)
+      '/T'   // Terminar árbol de procesos
+    ], {
+      stdio: 'ignore'
+    });
+    
+    // También cerrar cualquier proceso CMD que tenga "Applio" en el título
+    const killCmdCommand = spawn('taskkill', [
+      '/F',
+      '/FI', 'WINDOWTITLE eq Applio Server*'
+    ], {
+      stdio: 'ignore'
+    });
+    
+    // Esperar a que los comandos de cierre terminen
+    await Promise.all([
+      new Promise(resolve => killCommand.on('close', resolve)),
+      new Promise(resolve => killCmdCommand.on('close', resolve))
+    ]);
+    
+    console.log('✅ Ventana CMD de Applio cerrada');
+    
+    // Limpiar referencia del proceso y estado
+    applioProcess = null;
+    applioStarted = false; // Reset del estado
+    
+    // Esperar un momento para que el proceso se cierre completamente
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    
+    return true;
+  } catch (error) {
+    console.error('❌ Error cerrando Applio:', error.message);
+    return false;
+  }
+}
 
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' })); // Aumentar límite para payloads grandes
@@ -62,9 +629,7 @@ const upload = multer({
   }
 });
 
-const ai = new GoogleGenAI({
-  apiKey: process.env.GOOGLE_API_KEY,
-});
+const ai = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
 
 // Configurar cliente OpenAI
 const openai = new OpenAI({
@@ -165,30 +730,33 @@ async function generateUniversalContent(model, promptOrHistory, systemInstructio
         const response = await openai.chat.completions.create(requestConfig);
         
         console.log(`✅ Contenido generado exitosamente con OpenAI en intento ${attempt}`);
-        return {
+        
+        const result = {
           text: response.choices[0].message.content
         };
         
+        return result;
+        
       } else {
         // Usar Google AI (comportamiento existente)
-        const params = {
-          model: `models/${model}`
-        };
+        const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
+        const model_instance = genAI.getGenerativeModel({ model: model });
         
         // Si promptOrHistory es un array (historial de conversación)
         if (Array.isArray(promptOrHistory)) {
-          params.contents = promptOrHistory;
+          const result = await model_instance.generateContent({
+            contents: promptOrHistory,
+            systemInstruction: systemInstruction
+          });
+          const response = await result.response;
+          console.log(`✅ Contenido generado exitosamente con Google AI en intento ${attempt}`);
+          return await response.text();
         } else {
-          params.contents = promptOrHistory;
+          const result = await model_instance.generateContent(promptOrHistory);
+          const response = await result.response;
+          console.log(`✅ Contenido generado exitosamente con Google AI en intento ${attempt}`);
+          return await response.text();
         }
-        
-        if (systemInstruction) {
-          params.config = { systemInstruction };
-        }
-        
-        const response = await ai.models.generateContent(params);
-        console.log(`✅ Contenido generado exitosamente con Google AI en intento ${attempt}`);
-        return response;
       }
       
     } catch (error) {
@@ -206,6 +774,9 @@ async function generateUniversalContent(model, promptOrHistory, systemInstructio
       }
     }
   }
+  
+  // Si llegamos aquí, todos los intentos fallaron
+  throw new Error(`No se pudo generar contenido después de ${maxRetries} intentos`);
 }
 
 // Función para optimizar historial manteniendo continuidad narrativa
@@ -397,6 +968,8 @@ function saveProjectState(projectData) {
       customStyleInstructions,
       promptModifier,
       imageCount,
+      minWords,
+      maxWords,
       skipImages,
       googleImages,
       applioVoice
@@ -431,6 +1004,8 @@ function saveProjectState(projectData) {
       customStyleInstructions,
       promptModifier: promptModifier || '',
       imageCount: imageCount || 3,
+      minWords: minWords || 800,
+      maxWords: maxWords || 1100,
       skipImages: skipImages || false,
       googleImages: googleImages || false,
       applioVoice: applioVoice || 'logs\\VOCES\\RemyOriginal.pth',
@@ -543,9 +1118,7 @@ REGLAS ESTRICTAS:
     }
 
     // Llamar a la IA para generar metadatos
-    const genAI = new GoogleGenAI({
-      apiKey: process.env.GOOGLE_API_KEY
-    });
+    const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
     const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
     
     console.log(`🤖 Enviando request a Gemini para generar metadatos...`);
@@ -667,6 +1240,177 @@ function updateCompletedSection(projectData, sectionNumber, sectionData) {
   }
 }
 
+// Función para reconstruir el estado de un proyecto desde las carpetas existentes
+function reconstructProjectState(folderName) {
+  try {
+    console.log(`🔧 Reconstruyendo estado del proyecto: ${folderName}`);
+    
+    const projectDir = path.join('./public/outputs', folderName);
+    
+    if (!fs.existsSync(projectDir)) {
+      console.error(`❌ Directorio del proyecto no existe: ${projectDir}`);
+      return null;
+    }
+    
+    // Buscar carpetas de secciones
+    const sectionDirs = fs.readdirSync(projectDir)
+      .filter(item => {
+        const itemPath = path.join(projectDir, item);
+        return fs.statSync(itemPath).isDirectory() && item.startsWith('seccion_');
+      })
+      .sort((a, b) => {
+        const numA = parseInt(a.replace('seccion_', ''));
+        const numB = parseInt(b.replace('seccion_', ''));
+        return numA - numB;
+      });
+    
+    console.log(`📁 Carpetas de secciones encontradas: ${sectionDirs.join(', ')}`);
+    
+    if (sectionDirs.length === 0) {
+      console.error(`❌ No se encontraron carpetas de secciones en ${projectDir}`);
+      return null;
+    }
+    
+    const completedSections = [];
+    let totalSections = 0;
+    let projectTopic = folderName; // Usar el nombre de la carpeta como fallback
+    
+    // Analizar cada sección
+    for (const sectionDir of sectionDirs) {
+      const sectionNumber = parseInt(sectionDir.replace('seccion_', ''));
+      totalSections = Math.max(totalSections, sectionNumber);
+      
+      const sectionPath = path.join(projectDir, sectionDir);
+      const files = fs.readdirSync(sectionPath);
+      
+      console.log(`🔍 Analizando sección ${sectionNumber}: ${files.length} archivos`);
+      
+      // Buscar archivos de texto (script)
+      const scriptFiles = files.filter(file => 
+        file.endsWith('.txt') && !file.includes('metadata') && !file.includes('keywords')
+      );
+      
+      // Buscar archivos de audio
+      const audioFiles = files.filter(file => 
+        file.endsWith('.wav') || file.endsWith('.mp3') || 
+        file.endsWith('.m4a') || file.endsWith('.ogg')
+      );
+      
+      // Buscar archivos de imágenes
+      const imageFiles = files.filter(file => 
+        file.endsWith('.png') || file.endsWith('.jpg') || 
+        file.endsWith('.jpeg') || file.endsWith('.webp')
+      );
+      
+      // Buscar archivo de keywords
+      const keywordFiles = files.filter(file => 
+        file.includes('keywords') && file.endsWith('.txt')
+      );
+      
+      let sectionScript = '';
+      let sectionTitle = `Sección ${sectionNumber}`;
+      
+      // Leer el script si existe
+      if (scriptFiles.length > 0) {
+        try {
+          const scriptFilePath = path.join(sectionPath, scriptFiles[0]);
+          const fullScriptContent = fs.readFileSync(scriptFilePath, 'utf8');
+          
+          // Extraer solo el contenido del guión sin metadatos
+          const scriptResult = extractScriptContent(fullScriptContent);
+          sectionScript = scriptResult.content;
+          
+          // Si el script está vacío, marcarlo para regeneración posterior
+          if (scriptResult.isEmpty && scriptResult.hasStructure) {
+            console.warn(`⚠️ Sección ${sectionNumber} tiene estructura pero contenido vacío - necesita regeneración`);
+            sectionScript = ''; // Marcar como vacío para regenerar después
+          }
+          
+          // Para el título, usar el contenido del archivo completo para extraer metadatos
+          const firstLine = fullScriptContent.split('\n')[0];
+          if (firstLine && firstLine.length > 0 && firstLine.length < 200) {
+            sectionTitle = firstLine.trim();
+          } else {
+            // Usar las primeras 50 caracteres del script limpio como título (si no está vacío)
+            if (sectionScript.length > 0) {
+              sectionTitle = sectionScript.substring(0, 50).trim() + '...';
+            } else {
+              sectionTitle = `Sección ${sectionNumber} (sin contenido)`;
+            }
+          }
+          
+          console.log(`📝 Script encontrado para sección ${sectionNumber}: ${sectionScript.length} caracteres (limpio), ${fullScriptContent.length} caracteres (completo)${scriptResult.isEmpty ? ' - VACÍO' : ''}`);
+        } catch (readError) {
+          console.warn(`⚠️ Error leyendo script de sección ${sectionNumber}:`, readError.message);
+        }
+      }
+      
+      // Si es la primera sección, intentar inferir el tema del proyecto
+      if (sectionNumber === 1 && sectionScript) {
+        // Usar las primeras palabras del script como tema del proyecto
+        const words = sectionScript.split(' ').slice(0, 10).join(' ');
+        if (words.length > 10) {
+          projectTopic = words.trim();
+        }
+      }
+      
+      const sectionData = {
+        section: sectionNumber,
+        title: sectionTitle,
+        script: sectionScript,
+        hasScript: scriptFiles.length > 0,
+        hasAudio: audioFiles.length > 0,
+        hasImages: imageFiles.length > 0,
+        hasKeywords: keywordFiles.length > 0,
+        scriptFile: scriptFiles[0] || null,
+        audioFiles: audioFiles,
+        imageFiles: imageFiles.map(file => `outputs/${folderName}/${sectionDir}/${file}`),
+        keywordFile: keywordFiles[0] || null,
+        fileCount: files.length
+      };
+      
+      completedSections.push(sectionData);
+      console.log(`✅ Sección ${sectionNumber} reconstruida: script=${sectionData.hasScript}, audio=${sectionData.hasAudio}, imágenes=${sectionData.hasImages}`);
+    }
+    
+    // Construir el estado del proyecto
+    const reconstructedState = {
+      topic: projectTopic,
+      originalFolderName: folderName,
+      folderName: folderName,
+      totalSections: totalSections,
+      completedSections: completedSections,
+      sectionsCompleted: completedSections.length,
+      lastModified: new Date().toISOString(),
+      reconstructed: true,
+      reconstructedAt: new Date().toISOString(),
+      voice: 'shimmer', // Valor por defecto
+      imageModel: 'gemini2', // Valor por defecto
+      llmModel: 'gemini-2.5-pro', // Valor por defecto
+      scriptStyle: 'professional', // Valor por defecto
+      imageCount: 5, // Valor por defecto
+      minWords: 800,
+      maxWords: 1100,
+      skipImages: false,
+      googleImages: false,
+      localAIImages: false
+    };
+    
+    console.log(`🔧 Estado del proyecto reconstruido:`, {
+      topic: reconstructedState.topic,
+      totalSections: reconstructedState.totalSections,
+      sectionsCompleted: reconstructedState.sectionsCompleted,
+      carpetasAnalizadas: sectionDirs.length
+    });
+    
+    return reconstructedState;
+    
+  } catch (error) {
+    console.error(`❌ Error reconstruyendo estado del proyecto ${folderName}:`, error);
+    return null;
+  }
+}
+
 // Función para obtener lista de proyectos disponibles
 function getAvailableProjects() {
   try {
@@ -685,15 +1429,92 @@ function getAvailableProjects() {
       
       if (fs.existsSync(projectStateFile) && fs.statSync(projectDir).isDirectory()) {
         try {
-          const projectState = JSON.parse(fs.readFileSync(projectStateFile, 'utf8'));
+          const fileContent = fs.readFileSync(projectStateFile, 'utf8');
+          
+          // Verificar si el archivo está vacío o incompleto
+          if (!fileContent.trim()) {
+            console.warn(`⚠️ Archivo JSON vacío para proyecto ${folder}, intentando reconstruir...`);
+            
+            // Intentar reconstruir el estado del proyecto
+            const reconstructedState = reconstructProjectState(folder);
+            
+            if (reconstructedState) {
+              // Guardar el estado reconstruido
+              fs.writeFileSync(projectStateFile, JSON.stringify(reconstructedState, null, 2), 'utf8');
+              console.log(`✅ Estado del proyecto ${folder} reconstruido y guardado`);
+              
+              projects.push({
+                ...reconstructedState,
+                folderPath: folder,
+                sectionsCompleted: reconstructedState.completedSections?.length || 0,
+                lastModifiedDate: new Date(reconstructedState.lastModified || Date.now()).toLocaleString()
+              });
+              continue;
+            } else {
+              console.error(`❌ No se pudo reconstruir el proyecto ${folder}`);
+              continue;
+            }
+          }
+          
+          // Verificar si el JSON parece estar incompleto
+          if (!fileContent.trim().endsWith('}') && !fileContent.trim().endsWith(']')) {
+            console.warn(`⚠️ Archivo JSON parece incompleto para proyecto ${folder}: termina con '${fileContent.slice(-10)}'`);
+            console.warn(`📋 Intentando reparar archivo JSON para proyecto ${folder}...`);
+            
+            // Intentar agregar llaves faltantes si es necesario
+            let repairedContent = fileContent.trim();
+            
+            // Contar llaves abiertas vs cerradas
+            const openBraces = (repairedContent.match(/\{/g) || []).length;
+            const closeBraces = (repairedContent.match(/\}/g) || []).length;
+            
+            if (openBraces > closeBraces) {
+              // Agregar llaves faltantes
+              for (let i = 0; i < openBraces - closeBraces; i++) {
+                repairedContent += '}';
+              }
+              console.log(`🔧 Agregadas ${openBraces - closeBraces} llaves faltantes para proyecto ${folder}`);
+            }
+            
+            try {
+              const projectState = JSON.parse(repairedContent);
+              
+              // Si la reparación fue exitosa, guardar el archivo corregido
+              fs.writeFileSync(projectStateFile, JSON.stringify(projectState, null, 2), 'utf8');
+              console.log(`✅ Archivo JSON reparado y guardado para proyecto ${folder}`);
+              
+              projects.push({
+                ...projectState,
+                folderPath: folder,
+                sectionsCompleted: projectState.completedSections?.length || 0,
+                lastModifiedDate: new Date(projectState.lastModified || Date.now()).toLocaleString()
+              });
+              continue;
+            } catch (repairError) {
+              console.error(`❌ No se pudo reparar JSON para proyecto ${folder}:`, repairError.message);
+              console.log(`📄 Contenido problemático (primeros 200 chars): ${fileContent.substring(0, 200)}...`);
+              continue;
+            }
+          }
+          
+          const projectState = JSON.parse(fileContent);
           projects.push({
             ...projectState,
             folderPath: folder,
-            sectionsCompleted: projectState.completedSections.length,
-            lastModifiedDate: new Date(projectState.lastModified).toLocaleString()
+            sectionsCompleted: projectState.completedSections?.length || 0,
+            lastModifiedDate: new Date(projectState.lastModified || Date.now()).toLocaleString()
           });
         } catch (parseError) {
           console.warn(`⚠️ Error leyendo proyecto ${folder}:`, parseError);
+          
+          // Intentar crear un backup del archivo corrupto
+          try {
+            const backupPath = projectStateFile + '.corrupted.' + Date.now();
+            fs.copyFileSync(projectStateFile, backupPath);
+            console.log(`🗃️ Backup del archivo corrupto creado: ${backupPath}`);
+          } catch (backupError) {
+            console.warn(`⚠️ No se pudo crear backup para ${folder}:`, backupError.message);
+          }
         }
       }
     }
@@ -714,31 +1535,254 @@ function getAvailableProjects() {
 function loadProjectState(folderName) {
   try {
     const projectStateFile = path.join('./public/outputs', folderName, 'project_state.json');
+    console.log(`🔍 Buscando archivo de estado: ${projectStateFile}`);
     
     if (!fs.existsSync(projectStateFile)) {
+      console.log(`❌ Archivo project_state.json no existe para proyecto "${folderName}"`);
       return null;
     }
     
-    const projectState = JSON.parse(fs.readFileSync(projectStateFile, 'utf8'));
+    console.log(`✅ Archivo de estado encontrado, leyendo contenido...`);
+    
+    let projectState;
+    try {
+      const fileContent = fs.readFileSync(projectStateFile, 'utf8');
+      
+      // Verificar si el archivo está vacío o incompleto
+      if (!fileContent.trim()) {
+        console.warn(`⚠️ Archivo JSON vacío para proyecto "${folderName}", intentando reconstruir...`);
+        
+        // Intentar reconstruir el estado del proyecto
+        const reconstructedState = reconstructProjectState(folderName);
+        
+        if (reconstructedState) {
+          // Guardar el estado reconstruido
+          fs.writeFileSync(projectStateFile, JSON.stringify(reconstructedState, null, 2), 'utf8');
+          console.log(`✅ Estado del proyecto "${folderName}" reconstruido y guardado`);
+          projectState = reconstructedState;
+        } else {
+          console.error(`❌ No se pudo reconstruir el proyecto "${folderName}"`);
+          return null;
+        }
+      }
+      
+      // Intentar parsear directamente primero
+      try {
+        projectState = JSON.parse(fileContent);
+      } catch (initialParseError) {
+        console.warn(`⚠️ Error inicial parseando JSON, intentando reparar...`);
+        
+        // Verificar si el JSON parece estar incompleto
+        if (!fileContent.trim().endsWith('}') && !fileContent.trim().endsWith(']')) {
+          console.warn(`⚠️ Archivo JSON parece incompleto para proyecto "${folderName}": termina con '${fileContent.slice(-10)}'`);
+          
+          // Intentar agregar llaves faltantes si es necesario
+          let repairedContent = fileContent.trim();
+          
+          // Contar llaves abiertas vs cerradas
+          const openBraces = (repairedContent.match(/\{/g) || []).length;
+          const closeBraces = (repairedContent.match(/\}/g) || []).length;
+          
+          if (openBraces > closeBraces) {
+            // Agregar llaves faltantes
+            for (let i = 0; i < openBraces - closeBraces; i++) {
+              repairedContent += '}';
+            }
+            console.log(`🔧 Agregadas ${openBraces - closeBraces} llaves faltantes para proyecto "${folderName}"`);
+            
+            try {
+              projectState = JSON.parse(repairedContent);
+              
+              // Si la reparación fue exitosa, guardar el archivo corregido
+              fs.writeFileSync(projectStateFile, JSON.stringify(projectState, null, 2), 'utf8');
+              console.log(`✅ Archivo JSON reparado y guardado para proyecto "${folderName}"`);
+            } catch (repairError) {
+              console.error(`❌ No se pudo reparar JSON para proyecto "${folderName}":`, repairError.message);
+              
+              // Crear backup del archivo corrupto
+              try {
+                const backupPath = projectStateFile + '.corrupted.' + Date.now();
+                fs.copyFileSync(projectStateFile, backupPath);
+                console.log(`🗃️ Backup del archivo corrupto creado: ${backupPath}`);
+              } catch (backupError) {
+                console.warn(`⚠️ No se pudo crear backup: ${backupError.message}`);
+              }
+              
+              return null;
+            }
+          } else {
+            // No se pudo determinar cómo reparar
+            console.error(`❌ No se pudo reparar JSON para proyecto "${folderName}"`);
+            console.log(`📄 Contenido problemático (primeros 200 chars): ${fileContent.substring(0, 200)}...`);
+            return null;
+          }
+        } else {
+          // El archivo parece completo pero aún no se puede parsear
+          throw initialParseError;
+        }
+      }
+      
+      console.log(`📊 Estado del proyecto "${folderName}" cargado:`, {
+        topic: projectState.topic,
+        totalSections: projectState.totalSections,
+        completedSections: projectState.completedSections?.length || 0
+      });
+    } catch (parseError) {
+      console.error(`❌ Error parseando JSON del proyecto "${folderName}":`, parseError.message);
+      console.log(`📄 Contenido del archivo (primeros 500 chars):`);
+      console.log(fs.readFileSync(projectStateFile, 'utf8').substring(0, 500) + '...');
+      return null;
+    }
     
     // Cargar datos adicionales de cada sección completada
-    for (const section of projectState.completedSections) {
+    // Usar 'sections' si existe, o 'completedSections' si es un array
+    let sectionsToProcess = [];
+    
+    if (projectState.sections && Array.isArray(projectState.sections)) {
+      console.log(`📚 Proyecto "${folderName}" tiene ${projectState.sections.length} secciones en formato nuevo`);
+      sectionsToProcess = projectState.sections;
+      // Asegurar que completedSections apunte a las secciones reales
+      projectState.completedSections = projectState.sections;
+    } else if (projectState.completedSections && Array.isArray(projectState.completedSections)) {
+      console.log(`📚 Proyecto "${folderName}" tiene ${projectState.completedSections.length} secciones en formato legacy`);
+      sectionsToProcess = projectState.completedSections;
+    } else {
+      console.log(`⚠️ Proyecto "${folderName}" no tiene secciones completadas o completedSections no es un array`);
+      // Asegurar que completedSections sea un array vacío si no existe o no es válido
+      projectState.completedSections = [];
+      sectionsToProcess = [];
+    }
+    
+    // Procesar cada sección para agregar información de archivos
+    for (const section of sectionsToProcess) {
       const sectionDir = path.join('./public/outputs', folderName, `seccion_${section.section}`);
       
-      // Verificar si existen las imágenes
-      if (section.hasImages && fs.existsSync(sectionDir)) {
+      // 📝 CARGAR SCRIPT DESDE ARCHIVO
+      const scriptFileName = `${folderName}_seccion_${section.section}_guion.txt`;
+      const scriptFilePath = path.join(sectionDir, scriptFileName);
+      
+      if (fs.existsSync(scriptFilePath)) {
+        try {
+          const scriptContent = fs.readFileSync(scriptFilePath, 'utf8');
+          section.script = scriptContent.trim();
+          console.log(`📝 Script cargado para sección ${section.section}: ${scriptContent.length} caracteres`);
+        } catch (error) {
+          console.error(`❌ Error leyendo script de sección ${section.section}:`, error);
+        }
+      } else {
+        console.log(`📝 Archivo de script no encontrado para sección ${section.section}: ${scriptFilePath}`);
+        // Verificar si el script está guardado en el project_state.json (formato legacy)
+        if (section.script) {
+          console.log(`📝 Script encontrado en project_state.json para sección ${section.section}`);
+        }
+      }
+      
+      // 🎨 CARGAR PROMPTS DE IMAGEN DESDE ARCHIVO
+      const promptsFileName = `${folderName}_seccion_${section.section}_prompts_imagenes.txt`;
+      const promptsFilePath = path.join(sectionDir, promptsFileName);
+      
+      if (fs.existsSync(promptsFilePath)) {
+        try {
+          const promptsContent = fs.readFileSync(promptsFilePath, 'utf8');
+          
+          // Parsear el archivo de prompts que tiene formato específico
+          const lines = promptsContent.split('\n');
+          const prompts = [];
+          let isInPromptsSection = false;
+          
+          lines.forEach(line => {
+            const trimmedLine = line.trim();
+            
+            // Comenzar a leer prompts después de "PROMPTS GENERADOS:"
+            if (trimmedLine === 'PROMPTS GENERADOS:') {
+              isInPromptsSection = true;
+              return;
+            }
+            
+            // Si estamos en la sección de prompts y la línea no está vacía
+            if (isInPromptsSection && trimmedLine.length > 0) {
+              // Filtrar líneas que no son prompts (líneas separadoras, etc.)
+              if (!trimmedLine.startsWith('=') && !trimmedLine.startsWith('Prompts generados automáticamente')) {
+                // Remover numeración (ej: "1. ") del inicio del prompt
+                const prompt = trimmedLine.replace(/^\d+\.\s*/, '').trim();
+                if (prompt.length > 0) {
+                  prompts.push(prompt);
+                }
+              }
+            }
+          });
+          
+          if (prompts.length > 0) {
+            section.imagePrompts = prompts;
+            console.log(`🎨 Prompts cargados para sección ${section.section}: ${prompts.length} prompts`);
+          } else {
+            console.log(`⚠️ Archivo de prompts encontrado pero no se pudieron extraer prompts válidos para sección ${section.section}`);
+          }
+        } catch (error) {
+          console.error(`❌ Error leyendo prompts de sección ${section.section}:`, error);
+        }
+      } else {
+        console.log(`🎨 Archivo de prompts no encontrado para sección ${section.section}: ${promptsFilePath}`);
+        // Verificar si los prompts están en el project_state.json (formato legacy)
+        if (section.imagePrompts && section.imagePrompts.length > 0) {
+          console.log(`🎨 Prompts encontrados en project_state.json para sección ${section.section}: ${section.imagePrompts.length} prompts`);
+        }
+      }
+      
+      // Verificar si existen archivos de audio
+      if (fs.existsSync(sectionDir)) {
+        const audioFiles = fs.readdirSync(sectionDir).filter(file => 
+          file.endsWith('.wav') || file.endsWith('.mp3')
+        );
+        if (audioFiles.length > 0) {
+          section.hasAudio = true;
+          section.audioFiles = audioFiles.map(file => `outputs/${folderName}/seccion_${section.section}/${file}`);
+          console.log(`🎵 Sección ${section.section}: ${audioFiles.length} archivo(s) de audio encontrado(s)`);
+        }
+        
+        // Verificar si existen las imágenes
         const imageFiles = fs.readdirSync(sectionDir).filter(file => 
           file.endsWith('.png') || file.endsWith('.jpg') || file.endsWith('.jpeg')
         );
-        section.imageFiles = imageFiles.map(file => `outputs/${folderName}/seccion_${section.section}/${file}`);
+        if (imageFiles.length > 0) {
+          section.hasImages = true;
+          section.imageFiles = imageFiles.map(file => `outputs/${folderName}/seccion_${section.section}/${file}`);
+          console.log(`🖼️ Sección ${section.section}: ${imageFiles.length} archivo(s) de imagen encontrado(s)`);
+        }
+        
+        // Verificar archivos de texto (guiones y prompts)
+        const textFiles = fs.readdirSync(sectionDir).filter(file => 
+          file.endsWith('.txt')
+        );
+        if (textFiles.length > 0) {
+          section.textFiles = textFiles.map(file => `outputs/${folderName}/seccion_${section.section}/${file}`);
+          console.log(`📝 Sección ${section.section}: ${textFiles.length} archivo(s) de texto encontrado(s)`);
+        }
+      } else {
+        console.log(`📁 Directorio de sección ${section.section} no encontrado: ${sectionDir}`);
       }
     }
     
     // 🎬 CARGAR METADATOS DE YOUTUBE SI EXISTEN
-    const metadataFile = path.join('./public/outputs', folderName, `${folderName}_youtube_metadata.txt`);
-    if (fs.existsSync(metadataFile)) {
+    // Intentar ambos formatos de nombre de archivo para compatibilidad
+    const metadataFile1 = path.join('./public/outputs', folderName, `${folderName}_metadata_youtube.txt`);
+    const metadataFile2 = path.join('./public/outputs', folderName, `${folderName}_youtube_metadata.txt`);
+    
+    let metadataFile = null;
+    if (fs.existsSync(metadataFile1)) {
+      metadataFile = metadataFile1;
+      console.log(`📽️ Metadatos de YouTube encontrados (formato 1): ${metadataFile1}`);
+    } else if (fs.existsSync(metadataFile2)) {
+      metadataFile = metadataFile2;
+      console.log(`📽️ Metadatos de YouTube encontrados (formato 2): ${metadataFile2}`);
+    } else {
+      console.log(`📽️ No se encontraron metadatos de YouTube para ${folderName}`);
+    }
+    
+    if (metadataFile) {
       try {
         const metadataContent = fs.readFileSync(metadataFile, 'utf8');
+        const metadataFileName = path.basename(metadataFile);
         console.log(`📽️ Metadatos de YouTube encontrados para ${folderName}`);
         
         // Si no hay metadatos en el estado pero sí en archivo, agregarlos
@@ -746,7 +1790,7 @@ function loadProjectState(folderName) {
           projectState.youtubeMetadata = {
             generatedAt: fs.statSync(metadataFile).mtime.toISOString(),
             content: metadataContent,
-            filename: `${folderName}_youtube_metadata.txt`,
+            filename: metadataFileName,
             fileExists: true
           };
           
@@ -754,11 +1798,15 @@ function loadProjectState(folderName) {
         } else {
           // Asegurar que el flag de archivo existe esté presente
           projectState.youtubeMetadata.fileExists = true;
+          projectState.youtubeMetadata.filename = metadataFileName;
         }
       } catch (error) {
         console.error(`❌ Error cargando metadatos de YouTube:`, error);
       }
     }
+    
+    // 📁 Agregar el nombre de la carpeta al estado del proyecto
+    projectState.folderName = folderName;
     
     return projectState;
   } catch (error) {
@@ -769,11 +1817,19 @@ function loadProjectState(folderName) {
 
 // Función para crear nombre de carpeta seguro basado en el tema
 function createSafeFolderName(topic) {
-  return topic
+  if (!topic || typeof topic !== 'string') {
+    console.warn('⚠️ createSafeFolderName recibió valor inválido:', topic);
+    return 'proyecto_sin_nombre';
+  }
+  
+  const safeName = topic
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, '') // Remover caracteres especiales
     .replace(/\s+/g, '_') // Reemplazar espacios con guiones bajos
     .substring(0, 50); // Limitar longitud
+    
+  console.log(`📁 createSafeFolderName: "${topic}" → "${safeName}"`);
+  return safeName;
 }
 
 // Función para limpiar el texto del guión de contenido no deseado
@@ -824,9 +1880,10 @@ function cleanScriptText(text) {
 
 // Función para crear estructura de carpetas
 function createProjectStructure(topic, section, customFolderName = null) {
-  // Usar nombre personalizado si se proporciona, sino usar el tema
+  // Si hay customFolderName, usarlo directamente (ya viene normalizado del projectKey)
+  // Sino, normalizar el topic
   const folderName = customFolderName && customFolderName.trim() 
-    ? createSafeFolderName(customFolderName.trim())
+    ? customFolderName.trim()  // Ya viene normalizado, no aplicar createSafeFolderName otra vez
     : createSafeFolderName(topic);
     
   const outputsDir = path.join('./public/outputs');
@@ -848,7 +1905,8 @@ function createProjectStructure(topic, section, customFolderName = null) {
     outputsDir,
     projectDir,
     sectionDir,
-    safeTopicName: folderName
+    safeTopicName: folderName, // Este es el nombre real de la carpeta que se está usando
+    folderName: folderName     // Agregar también como folderName para consistencia
   };
 }
 
@@ -1032,6 +2090,503 @@ async function generateImageWithModel(ai, prompt, modelType) {
 }
 
 // =====================================
+// FUNCIONES PARA IA LOCAL (COMFYUI + FLUX)
+// =====================================
+
+// Inicializar cliente ComfyUI
+const comfyUIClient = new ComfyUIClient('http://127.0.0.1:8188');
+
+// Función para generar imágenes usando IA Local (ComfyUI + Flux)
+async function generateLocalAIImages(imagePrompts, additionalInstructions, sectionDir, sectionNumber, customSettings = null, keepAlive = false) {
+  const generatedImages = [];
+  
+  try {
+    console.log(`🤖 Iniciando generación de ${imagePrompts.length} imágenes con ComfyUI + Flux...`);
+    
+    // 1. Iniciar ComfyUI automáticamente
+    console.log('🚀 Iniciando ComfyUI para la sección...');
+    const comfyUIStarted = await startComfyUI();
+    if (!comfyUIStarted) {
+      throw new Error('No se pudo iniciar ComfyUI automáticamente');
+    }
+    
+    // 2. Verificar conexión con ComfyUI (ya debería estar listo por startComfyUI)
+    const connectionCheck = await comfyUIClient.checkConnection();
+    if (!connectionCheck.success) {
+      throw new Error(`No se puede conectar a ComfyUI: ${connectionCheck.error}`);
+    }
+    
+    console.log('✅ ComfyUI iniciado y listo para generar imágenes');
+    
+    for (let index = 0; index < imagePrompts.length; index++) {
+      const basePrompt = imagePrompts[index].trim();
+      
+      // Usar el prompt directamente ya que las instrucciones adicionales están integradas desde el LLM
+      const finalPrompt = basePrompt;
+      console.log(`✅ Las instrucciones adicionales ya están integradas en el prompt desde el LLM`);
+      
+      console.log(`🎨 Generando imagen ${index + 1}/${imagePrompts.length} con ComfyUI + Flux...`);
+      console.log(`📝 Prompt final: ${finalPrompt.substring(0, 100)}...`);
+      
+      try {
+        // Configurar opciones (usar configuración personalizada si está disponible)
+        const options = customSettings ? {
+          width: parseInt(customSettings.width) || 1280,
+          height: parseInt(customSettings.height) || 720,
+          steps: parseInt(customSettings.steps) || 25,
+          cfg: 1,
+          guidance: parseFloat(customSettings.guidance) || 3.5,
+          sampler: customSettings.sampler || "euler",
+          scheduler: customSettings.scheduler || "simple",
+          model: "flux1-dev-fp8.safetensors", // Modelo Flux optimizado
+          negativePrompt: customSettings.negativePrompt || "low quality, blurry, distorted",
+          timeout: Math.max(180, parseInt(customSettings.steps) * 6) // Timeout dinámico basado en pasos
+        } : {
+          width: 1280,
+          height: 720,
+          steps: 25, // Valor por defecto
+          cfg: 1,
+          guidance: 3.5,
+          sampler: "euler",
+          scheduler: "simple",
+          model: "flux1-dev-fp8.safetensors", // Modelo Flux optimizado
+          negativePrompt: "low quality, blurry, distorted",
+          timeout: 180 // 3 minutos timeout por defecto
+        };
+        
+        console.log(`⚙️ Usando configuración ComfyUI:`, {
+          resolution: `${options.width}x${options.height}`,
+          steps: options.steps,
+          guidance: options.guidance,
+          sampler: options.sampler,
+          scheduler: options.scheduler
+        });
+        
+        // Generar imagen con ComfyUI usando reinicio automático en caso de timeout
+        const result = await generateImageWithAutoRestart(finalPrompt, options);
+        
+        if (result.success && result.localPath) {
+          // Copiar imagen a la carpeta de la sección
+          const imageFileName = `comfyui_seccion_${sectionNumber}_imagen_${index + 1}_${Date.now()}.png`;
+          const imageFilePath = path.join(sectionDir, imageFileName);
+          
+          // Copiar archivo de la ubicación temporal a la carpeta de la sección
+          fs.copyFileSync(result.localPath, imageFilePath);
+          console.log(`💾 Imagen ComfyUI ${index + 1} guardada en: ${imageFilePath}`);
+          
+          // Eliminar la copia temporal de la carpeta outputs general
+          try {
+            if (fs.existsSync(result.localPath)) {
+              fs.unlinkSync(result.localPath);
+              console.log(`🗑️ Copia temporal eliminada de: ${result.localPath}`);
+            }
+          } catch (error) {
+            console.log(`⚠️ No se pudo eliminar copia temporal: ${error.message}`);
+          }
+          
+          // Retornar ruta relativa para acceso web
+          const relativePath = path.relative('./public', imageFilePath).replace(/\\/g, '/');
+          
+          generatedImages.push({
+            path: relativePath,
+            prompt: finalPrompt,
+            filename: imageFileName,
+            source: 'IA Local (ComfyUI + Flux)',
+            index: index + 1,
+            promptId: result.promptId
+          });
+          
+          console.log(`✅ Imagen ${index + 1} generada exitosamente con ComfyUI + Flux`);
+        } else {
+          throw new Error(`Error en generación de ComfyUI: ${result.error || 'Respuesta inválida'}`);
+        }
+        
+        // Pequeña pausa entre generaciones para no sobrecargar el servidor
+        if (index < imagePrompts.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+        
+      } catch (imageError) {
+        console.error(`❌ Error generando imagen ${index + 1} con ComfyUI:`, imageError.message);
+        
+        // Mensaje específico para conexión rechazada
+        let errorMessage = imageError.message;
+        if (imageError.message.includes('ECONNREFUSED') || imageError.message.includes('connect')) {
+          errorMessage = 'Servidor ComfyUI no disponible en localhost:8188. Asegúrate de que ComfyUI esté ejecutándose.';
+          console.error(`🔌 CONEXIÓN: ${errorMessage}`);
+        }
+        
+        // Continuar con la siguiente imagen en caso de error
+        generatedImages.push({
+          path: null,
+          prompt: finalPrompt,
+          filename: null,
+          source: 'IA Local (ComfyUI Error)',
+          index: index + 1,
+          error: errorMessage
+        });
+      }
+    }
+    
+    console.log(`🎨 Generación de ComfyUI completada: ${generatedImages.filter(img => img.path).length}/${imagePrompts.length} exitosas`);
+    
+    // 3. Cerrar ComfyUI solo si no se debe mantener vivo
+    if (!keepAlive) {
+      console.log('🛑 Cerrando ComfyUI para liberar GPU...');
+      await stopComfyUI();
+      console.log('✅ ComfyUI cerrado, GPU liberada');
+    } else {
+      console.log('🔄 Manteniendo ComfyUI activo para próximas secciones...');
+    }
+    
+    return generatedImages;
+    
+  } catch (error) {
+    console.error(`❌ Error general en generación de ComfyUI:`, error.message);
+    
+    // Cerrar ComfyUI solo si no se debe mantener vivo, incluso si hay errores
+    if (!keepAlive) {
+      console.log('🛑 Cerrando ComfyUI debido a error...');
+      await stopComfyUI();
+      console.log('✅ ComfyUI cerrado después del error');
+    } else {
+      console.log('⚠️ Error en ComfyUI pero manteniéndolo activo para próximas secciones...');
+    }
+    
+    throw error;
+  }
+}
+
+// Función para generar archivo project_state.json
+function generateProjectStateFile(projectData, requestData) {
+  try {
+    const { sections, imagePrompts, chapterStructure } = projectData;
+    const { 
+      topic, folderName, voice, imageModel, scriptStyle, customStyleInstructions, 
+      promptModifier, imageCount, skipImages, googleImages, applioVoice 
+    } = requestData;
+    
+    const projectState = {
+      topic: topic,
+      folderName: folderName,
+      originalFolderName: folderName,
+      totalSections: sections.length,
+      currentSection: sections.length,
+      voice: voice || 'Orus',
+      imageModel: imageModel || 'gemini2',
+      scriptStyle: scriptStyle || 'professional',
+      customStyleInstructions: customStyleInstructions || null,
+      promptModifier: promptModifier || '',
+      imageCount: imageCount || 5,
+      skipImages: skipImages || false,
+      googleImages: googleImages || false,
+      applioVoice: applioVoice || null,
+      createdAt: new Date().toISOString(),
+      lastModified: new Date().toISOString(),
+      completedSections: sections.map((section, index) => ({
+        section: section.section,
+        script: section.script,
+        imageCount: 0,
+        hasImages: !skipImages,
+        googleImagesMode: googleImages || false,
+        imagesSkipped: skipImages || false,
+        imagePrompts: imagePrompts[index]?.prompts || [],
+        completedAt: new Date().toISOString(),
+        scriptFile: {
+          path: `outputs/${folderName}/seccion_${section.section}/${folderName}_seccion_${section.section}_guion.txt`,
+          filename: `${folderName}_seccion_${section.section}_guion.txt`,
+          saved: true
+        },
+        promptsFile: {
+          path: `outputs/${folderName}/seccion_${section.section}/${folderName}_seccion_${section.section}_prompts_imagenes.txt`,
+          filename: `${folderName}_seccion_${section.section}_prompts_imagenes.txt`,
+          saved: true
+        }
+      }))
+    };
+    
+    // Guardar el archivo en la carpeta del proyecto
+    const baseTopic = topic.split(' ')[0] || 'Proyecto';
+    const folderStructure = createProjectStructure(baseTopic, 1, folderName);
+    const projectStateFilePath = path.join(folderStructure.projectDir, 'project_state.json');
+    
+    fs.writeFileSync(projectStateFilePath, JSON.stringify(projectState, null, 2), 'utf8');
+    console.log(`📄 Archivo project_state.json guardado: ${projectStateFilePath}`);
+    
+    return projectStateFilePath;
+    
+  } catch (error) {
+    console.error('❌ Error generando project_state.json:', error);
+    return null;
+  }
+}
+
+// =====================================
+// FUNCIONES DE MEMORIA DE PROMPTS PARA CONSISTENCIA
+// =====================================
+
+// Función para obtener prompts anteriores de un proyecto para mantener consistencia
+function getPreviousImagePrompts(projectKey, currentSection) {
+  try {
+    const projectStateFile = `./public/outputs/${projectKey}/project_state.json`;
+    
+    if (!fs.existsSync(projectStateFile)) {
+      console.log(`📝 No hay estado previo del proyecto para ${projectKey}`);
+      return { previousPrompts: [], contextInfo: null };
+    }
+    
+    const projectState = JSON.parse(fs.readFileSync(projectStateFile, 'utf8'));
+    const completedSections = projectState.completedSections || [];
+    
+    // Verificar que completedSections sea un array
+    if (!Array.isArray(completedSections)) {
+      console.log(`⚠️ completedSections no es un array, iniciando como array vacío`);
+      return { previousPrompts: [], contextInfo: null };
+    }
+    
+    // Obtener los últimos 2 prompts de secciones anteriores
+    const previousSections = completedSections
+      .filter(section => section.section < currentSection)
+      .sort((a, b) => b.section - a.section) // Ordenar por sección más reciente primero
+      .slice(0, 2); // Tomar las 2 más recientes
+    
+    const previousPrompts = [];
+    let contextInfo = null;
+    
+    if (previousSections.length > 0) {
+      // Extraer prompts de secciones anteriores
+      for (const section of previousSections) {
+        const sectionPrompts = section.imagePrompts || [];
+        if (sectionPrompts.length > 0) {
+          // Tomar los primeros 2 prompts de cada sección para mantener consistencia
+          const selectedPrompts = sectionPrompts.slice(0, 2);
+          previousPrompts.push(...selectedPrompts.map(prompt => ({
+            sectionNumber: section.section,
+            prompt: prompt
+          })));
+        }
+      }
+      
+      // Crear información de contexto para consistencia
+      contextInfo = {
+        lastSection: previousSections[0].section,
+        totalPreviousPrompts: previousPrompts.length,
+        projectTopic: projectState.topic,
+        projectStyle: projectState.scriptStyle || 'professional'
+      };
+      
+      console.log(`🧠 Recuperados ${previousPrompts.length} prompts de ${previousSections.length} secciones anteriores para consistencia`);
+    } else {
+      console.log(`📝 No hay secciones anteriores para la sección ${currentSection}`);
+    }
+    
+    return { previousPrompts, contextInfo };
+    
+  } catch (error) {
+    console.error('❌ Error obteniendo prompts anteriores:', error);
+    return { previousPrompts: [], contextInfo: null };
+  }
+}
+
+// Función para construir contexto de consistencia para el LLM
+function buildConsistencyContext(previousPrompts, contextInfo) {
+  if (!previousPrompts || previousPrompts.length === 0) {
+    return '';
+  }
+  
+  let consistencyContext = `\n\nPARA MANTENER CONSISTENCIA VISUAL:
+Basándote en las imágenes generadas anteriormente en este proyecto, mantén consistencia en la descripción de personajes, lugares y estilo visual.
+
+PROMPTS DE IMÁGENES ANTERIORES (úsalos como referencia para personajes y lugares):`;
+  
+  previousPrompts.forEach((item, index) => {
+    consistencyContext += `\n${index + 1}. [Sección ${item.sectionNumber}]: ${item.prompt}`;
+  });
+  
+  consistencyContext += `\n\nREQUISITOS DE CONSISTENCIA:
+- Si aparecen los mismos personajes, mantén sus características físicas y vestimenta
+- Si aparecen los mismos lugares, mantén su arquitectura y ambiente
+- Mantén el mismo estilo artístico y paleta de colores
+- Si introduces nuevos elementos, que sean coherentes con lo ya establecido`;
+  
+  return consistencyContext;
+}
+
+// Función para integrar instrucciones adicionales en el prompt del LLM
+function integrateAdditionalInstructions(basePrompt, additionalInstructions) {
+  if (!additionalInstructions || !additionalInstructions.trim()) {
+    return basePrompt;
+  }
+  
+  // Encontrar donde insertar las instrucciones adicionales en el prompt del LLM
+  const additionalSection = `\n\nINSTRUCCIONES ADICIONALES DEL USUARIO:
+${additionalInstructions.trim()}
+
+IMPORTANTE: Integra estas instrucciones adicionales de manera natural en todos los prompts que generes. No las agregues literalmente al final, sino incorpóralas como parte orgánica de la descripción de cada imagen.`;
+
+  // Insertar las instrucciones antes de los requisitos obligatorios
+  const insertionPoint = basePrompt.indexOf('REQUISITOS OBLIGATORIOS para cada prompt:');
+  if (insertionPoint !== -1) {
+    return basePrompt.substring(0, insertionPoint) + additionalSection + '\n\n' + basePrompt.substring(insertionPoint);
+  } else {
+    // Si no encuentra el punto de inserción, agregar antes del formato de respuesta
+    const formatPoint = basePrompt.indexOf('FORMATO DE RESPUESTA OBLIGATORIO:');
+    if (formatPoint !== -1) {
+      return basePrompt.substring(0, formatPoint) + additionalSection + '\n\n' + basePrompt.substring(formatPoint);
+    } else {
+      // Como fallback, agregar al final antes del último párrafo
+      return basePrompt + additionalSection;
+    }
+  }
+}
+
+// =====================================
+// FUNCIONES DE PROGRESO Y GUARDADO AUTOMÁTICO
+// =====================================
+
+// Función para calcular y actualizar el progreso del proyecto
+function updateProjectProgress(projectKey, phase, completedItems, totalItems, itemType = 'elemento', estimatedTimePerItem = null) {
+  try {
+    // Obtener o crear datos de progreso existentes
+    if (!projectProgressTracker[projectKey]) {
+      projectProgressTracker[projectKey] = {
+        projectKey: projectKey,
+        currentPhase: phase,
+        startTime: Date.now(),
+        phases: {
+          script: { total: 0, completed: 0, timePerItem: 0 },
+          audio: { total: 0, completed: 0, timePerItem: 0 },
+          images: { total: 0, completed: 0, timePerItem: 0 }
+        },
+        lastUpdate: Date.now()
+      };
+    }
+    
+    const progressData = projectProgressTracker[projectKey];
+    
+    // Actualizar datos de la fase actual
+    progressData.currentPhase = phase;
+    progressData.phases[phase].total = totalItems;
+    progressData.phases[phase].completed = completedItems;
+    progressData.lastUpdate = Date.now();
+    
+    // Actualizar tiempo promedio por elemento si se proporciona
+    if (estimatedTimePerItem && completedItems > 0) {
+      progressData.phases[phase].timePerItem = estimatedTimePerItem / completedItems;
+    }
+    
+    // Calcular progreso general
+    const totalPhases = Object.keys(progressData.phases).length;
+    let overallProgress = 0;
+    
+    for (const [phaseName, phaseData] of Object.entries(progressData.phases)) {
+      if (phaseData.total > 0) {
+        const phaseProgress = (phaseData.completed / phaseData.total) * 100;
+        overallProgress += phaseProgress / totalPhases;
+      }
+    }
+    
+    progressData.percentage = Math.min(Math.round(overallProgress), 100);
+    progressData.currentStep = completedItems;
+    progressData.totalSteps = totalItems;
+    
+    // Calcular tiempo estimado restante
+    const elapsed = Date.now() - progressData.startTime;
+    const currentPhaseData = progressData.phases[phase];
+    
+    if (completedItems > 0 && currentPhaseData.timePerItem > 0) {
+      const remainingItems = totalItems - completedItems;
+      const estimatedRemainingMs = remainingItems * currentPhaseData.timePerItem;
+      
+      const minutes = Math.floor(estimatedRemainingMs / 60000);
+      const seconds = Math.floor((estimatedRemainingMs % 60000) / 1000);
+      progressData.estimatedTimeRemaining = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+    } else {
+      progressData.estimatedTimeRemaining = 'Calculando...';
+    }
+    
+    console.log(`📊 Progreso actualizado - ${phase}: ${completedItems}/${totalItems} (${progressData.percentage}%)`);
+    
+    return progressData;
+    
+  } catch (error) {
+    console.error('❌ Error actualizando progreso:', error);
+    return null;
+  }
+}
+
+// Función para guardar el estado progresivo del proyecto
+function saveProgressiveProjectState(projectKey, projectData, completedSections = [], completedAudio = [], completedImages = []) {
+  try {
+    const projectStateFile = `./public/outputs/${projectKey}/project_state.json`;
+    
+    // Cargar estado existente si existe
+    let existingState = {};
+    if (fs.existsSync(projectStateFile)) {
+      existingState = JSON.parse(fs.readFileSync(projectStateFile, 'utf8'));
+    }
+    
+    // Crear estructura actualizada
+    const updatedState = {
+      ...existingState,
+      ...projectData,
+      lastModified: new Date().toISOString(),
+      completedSections: completedSections,
+      completedAudio: completedAudio,
+      completedImages: completedImages,
+      resumableState: {
+        canResumeScripts: completedSections.length < (projectData.totalSections || 0),
+        canResumeAudio: completedSections.length > 0 && completedAudio.length < completedSections.length,
+        canResumeImages: completedSections.length > 0 && completedImages.length < completedSections.length,
+        nextPhase: getNextPhase(completedSections, completedAudio, completedImages, projectData.totalSections || 0)
+      }
+    };
+    
+    // Asegurar que el directorio existe
+    const stateDir = path.dirname(projectStateFile);
+    if (!fs.existsSync(stateDir)) {
+      fs.mkdirSync(stateDir, { recursive: true });
+    }
+    
+    // Guardar estado
+    fs.writeFileSync(projectStateFile, JSON.stringify(updatedState, null, 2), 'utf8');
+    
+    return updatedState;
+    
+  } catch (error) {
+    console.error('❌ Error guardando estado progresivo:', error);
+    return null;
+  }
+}
+
+// Función auxiliar para determinar la siguiente fase
+function getNextPhase(completedSections, completedAudio, completedImages, totalSections) {
+  if (completedSections.length < totalSections) {
+    return 'scripts';
+  } else if (completedAudio.length < completedSections.length) {
+    return 'audio';
+  } else if (completedImages.length < completedSections.length) {
+    return 'images';
+  } else {
+    return 'completed';
+  }
+}
+
+// Función para obtener el progreso actual del proyecto
+function getProjectProgress(projectKey) {
+  try {
+    const progressFile = `./public/outputs/${projectKey}/progress.json`;
+    if (fs.existsSync(progressFile)) {
+      return JSON.parse(fs.readFileSync(progressFile, 'utf8'));
+    }
+    return null;
+  } catch (error) {
+    console.error('❌ Error obteniendo progreso:', error);
+    return null;
+  }
+}
+
+// =====================================
 // FUNCIONES DE BÚSQUEDA Y DESCARGA DE IMÁGENES DE BING
 // =====================================
 
@@ -1048,43 +2603,68 @@ GUIÓN:
 ${script}
 
 INSTRUCCIONES:
-1. Genera exactamente ${imageCount} conjuntos de palabras clave para búsqueda de imágenes
-2. Cada conjunto debe tener 2-3 palabras simples en inglés
-3. Usa términos CONCRETOS y VISUALES que describan objetos, personajes, escenas
-4. Para videojuegos: usa "nintendo", "mario", "gaming", "retro games", "video game"
-5. Para historia: usa "vintage", "retro", "classic", "old", "historical"
-6. Para tecnología: usa "computer", "console", "gaming system", "vintage tech"
-7. Enfócate en elementos que se pueden VER en imágenes, no conceptos abstractos
+1. PRIMERO detecta el universo/contexto principal del contenido (ej: World of Warcraft, League of Legends, Nintendo, Historia Medieval, etc.)
+2. Genera exactamente ${imageCount} conjuntos de palabras clave para búsqueda de imágenes
+3. CADA conjunto DEBE incluir el contexto detectado para evitar imágenes irrelevantes
+4. Cada conjunto debe tener 3-4 palabras simples en inglés
+5. Usa términos CONCRETOS y VISUALES que describan objetos, personajes, escenas
+
+REGLAS DE CONTEXTO AUTOMÁTICO:
+- Si mencionas "Alianza", "Horda", "Azeroth", "Stormwind", personajes como "Arthas", "Jaina", "Thrall": USA "World of Warcraft" 
+- Si mencionas "Champions", "Rift", "Summoner", personajes como "Jinx", "Yasuo", "Garen": USA "League of Legends"
+- Si mencionas "Mario", "Nintendo", "Mushroom Kingdom", "Bowser": USA "Nintendo Super Mario"
+- Si mencionas "Roma", "Imperio Romano", "Gladiadores", "César": USA "Ancient Rome"
+- Si mencionas "Medieval", "Caballeros", "Castillos", "Rey Arturo": USA "Medieval history"
+- Si mencionas "Zelda", "Hyrule", "Link", "Ganondorf": USA "Nintendo Legend of Zelda"
+- Para CUALQUIER videojuego: SIEMPRE incluye el nombre del juego específico
 
 FORMATO DE RESPUESTA (exactamente ${imageCount} líneas):
-[palabra1 palabra2]
-[palabra1 palabra2 palabra3]
-[palabra1 palabra2]
+[contexto específico + descripción visual]
+[contexto específico + descripción visual]
+[contexto específico + descripción visual]
 ...
 
-EJEMPLO para tema "making of Mario 64":
-mario nintendo character
-vintage gaming console
-nintendo 64 controller
-retro video game
-mario jumping action
-nintendo development team
-classic game screenshots
-mario 3d model
-nintendo office 1990s
-super mario gameplay
+EJEMPLOS CORRECTOS para diferentes universos:
+
+Para guión sobre "Líderes de la Alianza en World of Warcraft":
+World of Warcraft Alliance leaders meeting
+WoW Stormwind City throne room
+World of Warcraft King Anduin Wrynn
+WoW Alliance army banner blue
+World of Warcraft Ironforge council
+
+Para guión sobre "La Horda en World of Warcraft":
+World of Warcraft Horde leaders
+WoW Orgrimmar city red banners
+World of Warcraft Thrall shaman
+WoW Horde warriors battle
+World of Warcraft orc chieftain
+
+Para guión sobre "Historia de Roma":
+Ancient Rome senate meeting
+Roman Empire emperor statue
+Ancient Roman gladiator arena
+Roman legion soldiers march
+Classical Rome architecture
+
+Para guión sobre "Nintendo Mario":
+Nintendo Super Mario character
+Mario Bros mushroom kingdom
+Nintendo platformer game screenshot
+Super Mario vintage console
 
 IMPORTANTE: 
+- NUNCA generes keywords genéricas sin contexto
+- SIEMPRE incluye el universo/juego/contexto en cada keyword
 - USA palabras que describan cosas VISIBLES (personajes, objetos, escenas)
 - EVITA conceptos abstractos como "innovation", "challenge", "concept"
-- INCLUYE nombres reconocibles cuando sea relevante (mario, nintendo, etc.)
 
 Responde SOLO con las ${imageCount} líneas de palabras clave, sin explicaciones adicionales.`;
 
     console.log(`🤖 Enviando prompt a LLM para generar keywords...`);
     
     const response = await generateUniversalContent('gemini-2.5-flash', prompt);
-    const keywordsText = response.text ? response.text.trim() : response.response?.text?.() || '';
+    const keywordsText = response ? response.trim() : '';
     
     console.log(`📝 Respuesta del LLM:`, keywordsText);
     
@@ -1140,11 +2720,11 @@ async function searchAndDownloadBingImages(keywords, sectionDir) {
       while (!imageDownloaded && retryCount < maxRetries) {
         try {
           // Buscar URLs de imágenes en Bing para este query específico
-          const imageUrls = await searchBingImages(query, 5); // Buscar 5 opciones por si alguna falla
+          const imageUrls = await searchBingImages(query, 20); // Buscar 20 opciones para más variedad
           
           if (imageUrls.length > 0) {
-            // Intentar con diferentes URLs si la primera falla
-            for (let urlIndex = 0; urlIndex < Math.min(imageUrls.length, 3); urlIndex++) {
+            // Intentar con diferentes URLs si la primera falla - usar más opciones
+            for (let urlIndex = 0; urlIndex < Math.min(imageUrls.length, 10); urlIndex++) {
               try {
                 const imageUrl = imageUrls[urlIndex];
                 const filename = `bing_image_${i + 1}.jpg`;
@@ -1372,18 +2952,18 @@ async function downloadImageFromUrl(url, filepath) {
 }
 
 // Función para generar prompts según el estilo seleccionado
-function generateScriptPrompt(style, topic, sections, section, customStyleInstructions = null, chapterStructure = null, previousChapterContent = null) {
+function generateScriptPrompt(style, topic, sections, section, customStyleInstructions = null, chapterStructure = null, previousChapterContent = null, wordsMin = 800, wordsMax = 1100) {
   if (style === 'comedy') {
-    return generateComedyPrompt(topic, sections, section, chapterStructure, previousChapterContent);
+    return generateComedyPrompt(topic, sections, section, chapterStructure, previousChapterContent, wordsMin, wordsMax);
   } else if (style && style.startsWith('custom_') && customStyleInstructions) {
-    return generateCustomPrompt(topic, sections, section, customStyleInstructions, chapterStructure, previousChapterContent);
+    return generateCustomPrompt(topic, sections, section, customStyleInstructions, chapterStructure, previousChapterContent, wordsMin, wordsMax);
   } else {
-    return generateProfessionalPrompt(topic, sections, section, chapterStructure, previousChapterContent);
+    return generateProfessionalPrompt(topic, sections, section, chapterStructure, previousChapterContent, wordsMin, wordsMax);
   }
 }
 
 // Función para generar prompt con estilo personalizado
-function generateCustomPrompt(topic, sections, section, customInstructions, chapterStructure = null, previousChapterContent = null) {
+function generateCustomPrompt(topic, sections, section, customInstructions, chapterStructure = null, previousChapterContent = null, wordsMin = 800, wordsMax = 1100) {
   const currentSection = section;
   const totalSections = sections;
   
@@ -1436,8 +3016,7 @@ ${chapterStructure ? `- ENFÓCATE en el contenido específico del CAPÍTULO 1: "
 
 ESTRUCTURA REQUERIDA PARA EL CAPÍTULO 1:
 - Exactamente 3 párrafos detallados
-- Máximo 300 palabras en total para este capítulo
-- Mínimo 250 palabras por capítulo
+- Entre ${wordsMin} y ${wordsMax} palabras en total para este capítulo
 - Mantén el estilo personalizado establecido arriba
 - Establece las bases del tema para los siguientes capítulos
 ${chapterStructure ? `- Desarrolla el tema específico del capítulo: "${chapterStructure[0] || 'Sin título'}"` : ''}
@@ -1458,18 +3037,27 @@ IMPORTANTE:
 - RESPONDE SOLO CON EL TEXTO DEL GUIÓN, NADA MÁS`;
   } else {
     // Secciones posteriores
-    return `Ahora dame el capítulo ${currentSection} de ${totalSections} del mismo tema.${chapterContext}
+    return `Ahora dame el capítulo ${currentSection} de ${totalSections} del mismo tema.${chapterContext}${previousContext}
 
 MANTÉN EXACTAMENTE EL MISMO ESTILO PERSONALIZADO: ${customInstructions}
 
+INSTRUCCIONES CRÍTICAS PARA CONTINUIDAD NARRATIVA:
+- Esta es la CONTINUACIÓN de un video que ya comenzó, NO hagas nueva introducción o bienvenida
+- NO repitas conceptos, situaciones o anécdotas ya mencionadas en capítulos anteriores
+- CONTINÚA directamente desde donde se quedó la narrativa anterior
+- Usa transiciones naturales apropiadas para tu estilo personalizado
+- Haz referencias sutiles al contenido previo cuando sea relevante
+- EVITA reiniciar la narrativa - ya estamos dentro del video
+- CONSTRUYE sobre las situaciones ya presentadas, explora nuevos aspectos
+
 ESTRUCTURA REQUERIDA PARA EL CAPÍTULO ${currentSection}:
 - Exactamente 3 párrafos detallados
-- Máximo 300 palabras en total para este capítulo
-- Mínimo 250 palabras por capítulo
-- Mantén continuidad narrativa con los capítulos anteriores
+- Entre ${wordsMin} y ${wordsMax} palabras en total para este capítulo
+- Mantén continuidad narrativa fluida con los capítulos anteriores
 - Progresa de manera lógica en el desarrollo del tema
 - Sigue el mismo estilo y enfoque que estableciste en los capítulos anteriores
 - APLICA ESTRICTAMENTE el estilo personalizado: ${customInstructions}
+- Explora nuevos aspectos sin repetir contenido ya cubierto
 ${chapterStructure ? `- ENFÓCATE en el contenido específico del CAPÍTULO ${currentSection}: "${chapterStructure[currentSection - 1] || 'Sin título'}"` : ''}
 
 FORMATO DE RESPUESTA OBLIGATORIO:
@@ -1479,6 +3067,7 @@ FORMATO DE RESPUESTA OBLIGATORIO:
 - NO incluyas notas, aclaraciones o pensamientos
 - El texto debe estar listo para ser usado directamente en TTS
 - Comienza directamente con el contenido del guión
+- INICIA con una transición natural, NO con bienvenida
 
 ${currentSection === totalSections ? `IMPORTANTE: Como este es el ÚLTIMO capítulo (${currentSection}/${totalSections}), DEBES incluir una despedida profesional al final que invite a:
 - Comentar sus opiniones sobre el tema presentado
@@ -1490,7 +3079,7 @@ Ejemplo de despedida: "Y así concluye este episodio sobre [tema]... Si este con
 
 🎯 RECORDATORIO CRÍTICO: Debes seguir fielmente este estilo: ${customInstructions}
 
-RECUERDA: RESPONDE SOLO CON EL TEXTO DEL GUIÓN, SIN COMENTARIOS NI EXPLICACIONES ADICIONALES.`;
+RECUERDA: ESTE ES UN CAPÍTULO INTERMEDIO DE UN VIDEO YA INICIADO - CONTINÚA LA NARRATIVA SIN INTRODUCCIONES.`;
   }
   
   if (currentSection === 1) {
@@ -1574,7 +3163,7 @@ RECUERDA: RESPONDE SOLO CON EL TEXTO DEL GUIÓN, SIN COMENTARIOS NI EXPLICACIONE
 }
 
 // Función para generar prompt estilo profesional (original)
-function generateProfessionalPrompt(topic, sections, section, chapterStructure = null, previousChapterContent = null) {
+function generateProfessionalPrompt(topic, sections, section, chapterStructure = null, previousChapterContent = null, wordsMin = 800, wordsMax = 1100) {
   // Generar texto de estructura de capítulos si está disponible
   let chapterContext = '';
   if (chapterStructure && chapterStructure.length > 0) {
@@ -1621,8 +3210,7 @@ ${chapterStructure ? `- ENFÓCATE en el contenido específico del CAPÍTULO 1: "
 
 ESTRUCTURA REQUERIDA PARA EL CAPÍTULO 1:
 - Exactamente 3 párrafos detallados
-- Máximo 300 palabras en total para este capítulo
-- Mínimo 250 palabras por capítulo
+- Entre ${wordsMin} y ${wordsMax} palabras en total para este capítulo
 - Mantén un tono profesional y enganchante
 - Establece las bases del tema para los siguientes capítulos
 ${chapterStructure ? `- Desarrolla el tema específico del capítulo: "${chapterStructure[0] || 'Sin título'}"` : ''}
@@ -1643,15 +3231,23 @@ IMPORTANTE:
   } else {
     return `Ahora dame el capítulo ${section} de ${sections} del mismo tema.${chapterContext}${previousContext}
 
+INSTRUCCIONES CRÍTICAS PARA CONTINUIDAD NARRATIVA:
+- Esta es la CONTINUACIÓN de un video que ya comenzó, NO hagas nueva introducción o bienvenida
+- NO repitas conceptos, datos o anécdotas ya mencionados en capítulos anteriores
+- CONTINÚA directamente desde donde se quedó la narrativa anterior
+- Usa transiciones naturales como "Ahora bien...", "Continuando con...", "Además de esto...", "Por otro lado..."
+- Haz referencias sutiles al contenido previo cuando sea relevante (ej: "Como vimos anteriormente...", "Retomando ese punto...")
+- EVITA frases como "Bienvenidos", "Hola", "En este video" - ya estamos dentro del video
+- CONSTRUYE sobre la información ya presentada, no la repitas
+
 ESTRUCTURA REQUERIDA PARA EL CAPÍTULO ${section}:
 - Exactamente 3 párrafos detallados
-- Máximo 300 palabras en total para este capítulo
-- Mínimo 250 palabras por capítulo
-- Mantén continuidad narrativa con los capítulos anteriores
+- Entre ${wordsMin} y ${wordsMax} palabras en total para este capítulo
+- Mantén continuidad narrativa fluida con los capítulos anteriores
 - Progresa de manera lógica en el desarrollo del tema
-- Sigue el mismo estilo y enfoque que estableciste en los capítulos anteriores
 - CONECTA directamente con el contenido de los capítulos anteriores
-- Haz referencias sutiles a información ya mencionada cuando sea relevante
+- Explora nuevos aspectos del tema sin repetir información ya cubierta
+- Si necesitas mencionar algo ya dicho, hazlo brevemente como referencia y expande con nueva información
 ${chapterStructure ? `- ENFÓCATE en el contenido específico del CAPÍTULO ${section}: "${chapterStructure[section - 1] || 'Sin título'}"` : ''}
 
 FORMATO DE RESPUESTA OBLIGATORIO:
@@ -1661,6 +3257,7 @@ FORMATO DE RESPUESTA OBLIGATORIO:
 - NO incluyas notas, aclaraciones o pensamientos
 - El texto debe estar listo para ser usado directamente en TTS
 - Comienza directamente con el contenido del guión
+- INICIA con una transición natural, NO con bienvenida
 
 ${section === sections ? `IMPORTANTE: Como este es el ÚLTIMO capítulo (${section}/${sections}), DEBES incluir una despedida profesional al final que invite a:
 - Comentar sus opiniones sobre el tema presentado
@@ -1668,14 +3265,14 @@ ${section === sections ? `IMPORTANTE: Como este es el ÚLTIMO capítulo (${secti
 - Dar like si disfrutaron el contenido
 - Sugerir futuros temas que les gustaría ver
 
-Ejemplo de despedida: "Y así concluye este episodio sobre [tema]... Si este contenido te ha resultado interesante, déjanos un like y suscríbete a al canal para más contenido. Compártenos en los comentarios qué otros temas te gustaría que cubramos..."` : 'NO incluyas despedida ya que este no es el último capítulo.'}
+Ejemplo de despedida: "Y así concluye este episodio sobre [tema]... Si este contenido te ha resultado interesante, déjanos un like y suscríbete al canal para más contenido. Compártenos en los comentarios qué otros temas te gustaría que cubramos..."` : 'NO incluyas despedida ya que este no es el último capítulo.'}
 
-RECUERDA: RESPONDE SOLO CON EL TEXTO DEL GUIÓN, SIN COMENTARIOS NI EXPLICACIONES ADICIONALES.`;
+RECUERDA: ESTE ES UN CAPÍTULO INTERMEDIO DE UN VIDEO YA INICIADO - NO HAGAS BIENVENIDAS NI INTRODUCCIONES GENERALES.`;
   }
 }
 
 // Función para generar prompt estilo cómico/sarcástico
-function generateComedyPrompt(topic, sections, section, chapterStructure = null, previousChapterContent = null) {
+function generateComedyPrompt(topic, sections, section, chapterStructure = null, previousChapterContent = null, wordsMin = 800, wordsMax = 1100) {
   // Generar texto de estructura de capítulos si está disponible
   let chapterContext = '';
   if (chapterStructure && chapterStructure.length > 0) {
@@ -1728,8 +3325,7 @@ ${chapterStructure ? `
 
 ESTRUCTURA REQUERIDA PARA EL CAPÍTULO 1:
 - Exactamente 3 párrafos detallados
-- Máximo 300 palabras en total para este capítulo
-- Mínimo 250 palabras por capítulo
+- Entre ${wordsMin} y ${wordsMax} palabras en total para este capítulo
 - Mantén un tono sarcástico, irónico y absurdo y muy ácido.
 - Establece las bases del tema para los siguientes capítulos
 ${chapterStructure ? `- Desarrolla el tema específico del capítulo: "${chapterStructure[0] || 'Sin título'}"` : ''}
@@ -1758,26 +3354,31 @@ IMPORTANTE:
 
 Mantén el mismo estilo sarcástico, irónico, con humor negro y groserías.
 
+INSTRUCCIONES CRÍTICAS PARA CONTINUIDAD NARRATIVA:
+- Esta es la CONTINUACIÓN de un video que ya comenzó, NO hagas nueva introducción o bienvenida
+- NO repitas chistes, groserías o referencias ya mencionadas en capítulos anteriores  
+- CONTINÚA directamente desde donde se quedó la narrativa anterior
+- Usa transiciones cómicas naturales apropiadas para el estilo sarcástico
+- Haz referencias humorísticas al contenido previo cuando sea relevante
+- EVITA reiniciar la narrativa - ya estamos dentro del video cómico
+- CONSTRUYE sobre las situaciones ya presentadas, explora nuevos aspectos con humor ácido
+
 ESTRUCTURA REQUERIDA PARA EL CAPÍTULO ${section}:
 - Exactamente 3 párrafos detallados
-- Máximo 300 palabras en total para este capítulo
-- Mínimo 250 palabras por capítulo
-- Mantén continuidad narrativa con los capítulos anteriores
-- Progresa de manera lógica en el desarrollo del tema
-- Sigue el mismo estilo y enfoque que estableciste en los capítulos anteriores
-- CONECTA directamente con el contenido de los capítulos anteriores
-- Haz referencias sutiles a información ya mencionada cuando sea relevante
-${chapterStructure ? `- ENFÓCATE en el contenido específico del CAPÍTULO ${section}: "${chapterStructure[section - 1] || 'Sin título'}"` : ''}
-- Mínimo 250 palabras por capítulo
-- Mantén continuidad narrativa con los capítulos anteriores
+- Entre ${wordsMin} y ${wordsMax} palabras en total para este capítulo
+- Mantén continuidad narrativa fluida con los capítulos anteriores
 - Progresa de manera lógica en el desarrollo del tema
 - Sigue el mismo estilo cómico y absurdo que estableciste
+- CONECTA directamente con el contenido de los capítulos anteriores
+- Haz referencias sutiles a información ya mencionada cuando sea relevante
+- Explora nuevos aspectos del tema sin repetir contenido ya cubierto
 ${chapterStructure ? `- ENFÓCATE en el contenido específico del CAPÍTULO ${section}: "${chapterStructure[section - 1] || 'Sin título'}"` : ''}
 
 🎭 FORMATO DEL GUION:
 - Usa múltiples voces indicadas con corchetes al menos 4 en cada párrafo
 - Usa onomatopeyas y efectos sonoros ridículos
 - Las escenas deben sentirse teatrales y exageradas
+- INICIA con una transición natural, NO con bienvenida
 
 PALABRAS Y EXPRESIONES A USAR:
 Usa muchas palabras como: pinche, wey, pendejo, cabrón, verga, chinga tu madre, me vale verga, come verga.
@@ -1797,17 +3398,1581 @@ ${section === sections ? `IMPORTANTE: Como este es el ÚLTIMO capítulo (${secti
 
 Ejemplo de despedida cómica: "Y así concluye este pinche episodio sobre [tema]... Si te cagaste de risa, déjanos un like y suscríbete al canal para más contenido cabrón. Compártenos en los comentarios qué otros temas te gustaría que cubramos, wey..."` : 'NO incluyas despedida ya que este no es el último capítulo.'}
 
-RECUERDA: RESPONDE SOLO CON EL TEXTO DEL GUIÓN, SIN COMENTARIOS NI EXPLICACIONES ADICIONALES.`;
+RECUERDA: ESTE ES UN CAPÍTULO INTERMEDIO DE UN VIDEO YA INICIADO - CONTINÚA LA NARRATIVA SIN INTRODUCCIONES.`;
   }
 }
 
+// NUEVO ENDPOINT PARA GENERACIÓN AUTOMÁTICA POR LOTES
+app.post('/generate-batch-automatic', async (req, res) => {
+  try {
+    const { topic, folderName, voice, totalSections, minWords, maxWords, imageCount, promptModifier, imageModel, llmModel, skipImages, googleImages, localAIImages, comfyUISettings, scriptStyle, customStyleInstructions, applioVoice, applioModel, applioPitch, useApplio } = req.body;
+    
+    console.log('\n' + '='.repeat(80));
+    console.log('🚀 INICIANDO GENERACIÓN AUTOMÁTICA POR LOTES');
+    console.log('='.repeat(80));
+    console.log(`🎯 Tema: "${topic}"`);
+    console.log(`📊 Total de secciones: ${totalSections}`);
+    console.log(`🎤 Sistema de audio: ${useApplio ? 'Applio' : 'Google TTS'}`);
+    console.log(`🖼️ Sistema de imágenes: ${localAIImages ? 'IA Local (ComfyUI)' : googleImages ? 'Google Images' : skipImages ? 'Sin imágenes' : 'IA en la nube'}`);
+    console.log('='.repeat(80) + '\n');
+    
+    const selectedVoice = voice || 'Orus';
+    const sections = totalSections || 3;
+    const selectedStyle = scriptStyle || 'professional';
+    const numImages = imageCount || 5;
+    const wordsMin = minWords || 800;
+    const wordsMax = maxWords || 1100;
+    const additionalInstructions = promptModifier || '';
+    const selectedImageModel = imageModel || 'gemini2';
+    const selectedLlmModel = llmModel || 'gemini-2.5-pro';
+    let shouldSkipImages = skipImages === true;
+    let shouldUseGoogleImages = googleImages === true;
+    let shouldUseLocalAI = localAIImages === true;
+    
+    if (!topic) {
+      return res.status(400).json({ error: 'Tema requerido' });
+    }
+
+    const allSections = [];
+    const allImagePrompts = [];
+    
+    // Crear clave única para la conversación primero
+    // Si hay folderName personalizado, usarlo; sino usar el topic
+    const baseNameForKey = folderName && folderName.trim() 
+      ? folderName.trim() 
+      : topic;
+    const projectKey = createSafeFolderName(baseNameForKey);
+    console.log(`🔑 PROJECT KEY GENERADO: "${projectKey}" (de: "${baseNameForKey}")`);
+
+    // Crear estructura de carpetas usando el mismo projectKey
+    const folderStructure = createProjectStructure(topic, 1, projectKey);
+    console.log(`📁 Estructura de proyecto creada: ${folderStructure.projectDir}`);
+
+    // =======================================================================
+    // FASE 1: GENERAR TODOS LOS GUIONES + PROMPTS DE IMÁGENES
+    // =======================================================================
+    console.log('\n' + '📝'.repeat(20));
+    console.log('📝 FASE 1: GENERANDO TODOS LOS GUIONES Y PROMPTS');
+    console.log('📝'.repeat(20));
+    
+    const conversation = getOrCreateConversation(projectKey);
+    conversation.topic = topic;
+    conversation.totalSections = sections;
+    conversation.history = [];
+    
+    // Generar estructura de capítulos primero
+    console.log(`📋 Generando estructura de ${sections} capítulos...`);
+    
+    let chapterPrompt;
+    if (selectedStyle && selectedStyle.startsWith('custom_') && customStyleInstructions) {
+      chapterPrompt = `Eres un experto en crear estructuras narrativas personalizadas.
+
+TEMA SOLICITADO: "${topic}"
+TOTAL DE CAPÍTULOS: ${sections}
+ESTILO PERSONALIZADO: ${customStyleInstructions}
+
+Tu tarea es crear una ESTRUCTURA NARRATIVA que respete completamente el estilo personalizado definido.
+
+INSTRUCCIONES ESPECÍFICAS PARA ESTE ESTILO:
+- Analiza cuidadosamente las instrucciones del estilo personalizado
+- Crea títulos que reflejen EXACTAMENTE lo que pide el estilo
+- Si el estilo menciona "situaciones cotidianas", crea capítulos sobre actividades diarias del personaje
+- Si el estilo habla de "progresión del día", organiza los capítulos cronológicamente  
+- Si pide "técnicas de hipnotización", enfócate en momentos relajantes del personaje
+- IGNORA formatos educativos genéricos, sigue SOLO el estilo personalizado
+
+PARA "${topic}" CON ESTE ESTILO ESPECÍFICO:
+Genera títulos que narren momentos, actividades y situaciones del personaje, no información educativa sobre la serie.
+
+FORMATO DE RESPUESTA OBLIGATORIO:
+Debes responder ÚNICAMENTE con los títulos separados por "||CAPITULO||"
+
+VERIFICACIÓN: Tu respuesta debe tener exactamente ${sections - 1} delimitadores "||CAPITULO||" para generar ${sections} títulos.
+
+RESPONDE SOLO CON LOS TÍTULOS SEPARADOS POR "||CAPITULO||", NADA MÁS.`;
+    } else {
+      chapterPrompt = `Eres un experto en narrativa para YouTube especializado en contenido educativo y entretenimiento.
+
+TEMA SOLICITADO: "${topic}"
+TOTAL DE CAPÍTULOS: ${sections}
+
+Tu tarea es crear una ESTRUCTURA NARRATIVA completa dividiendo el tema en ${sections} capítulos/secciones coherentes y bien organizadas.
+
+INSTRUCCIONES:
+- Crea EXACTAMENTE ${sections} títulos de capítulos
+- Cada capítulo debe tener un título descriptivo y atractivo
+- Los capítulos deben seguir un hilo narrativo lógico
+- Progresión natural del tema de inicio a conclusión
+- Títulos que generen curiosidad y mantengan el interés
+
+FORMATO DE RESPUESTA OBLIGATORIO:
+Debes responder ÚNICAMENTE con los títulos separados por "||CAPITULO||"
+
+EJEMPLO PARA 3 CAPÍTULOS:
+Capítulo 1: El Origen de la Leyenda||CAPITULO||Capítulo 2: Los Secretos Revelados||CAPITULO||Capítulo 3: El Legado Eterno
+
+VERIFICACIÓN: Tu respuesta debe tener exactamente ${sections - 1} delimitadores "||CAPITULO||" para generar ${sections} títulos.
+
+RESPONDE SOLO CON LOS TÍTULOS SEPARADOS POR "||CAPITULO||", NADA MÁS.`;
+    }
+    
+    let chapterStructure = [];
+    try {
+      const chapterResponse = await generateUniversalContent(
+        selectedLlmModel,
+        chapterPrompt,
+        "Eres un experto en estructura narrativa. Tu ÚNICA tarea es crear títulos de capítulos separados por '||CAPITULO||'. NUNCA generes texto adicional fuera de los títulos."
+      );
+
+      const chaptersText = chapterResponse || '';
+      chapterStructure = chaptersText.split('||CAPITULO||').filter(title => title.trim()).slice(0, sections);
+      
+      console.log('📖 ESTRUCTURA DE CAPÍTULOS GENERADA:');
+      chapterStructure.forEach((title, index) => {
+        console.log(`📚 Capítulo ${index + 1}: ${title.trim()}`);
+      });
+      
+      conversation.chapterStructure = chapterStructure;
+    } catch (error) {
+      console.error('❌ Error generando estructura de capítulos:', error);
+      chapterStructure = [];
+    }
+    
+    // Generar todos los guiones
+    console.log(`\n📝 Generando guiones para ${sections} secciones...`);
+    
+    for (let section = 1; section <= sections; section++) {
+      console.log(`📝 Generando guión de la sección ${section}/${sections}...`);
+      
+      try {
+        const promptContent = generateScriptPrompt(selectedStyle, topic, sections, section, customStyleInstructions, chapterStructure, section === 1 ? null : allSections, wordsMin, wordsMax);
+        
+        if (section === 1) {
+          conversation.history = [{ role: 'user', parts: [{ text: promptContent }] }];
+        } else {
+          conversation.history.push({ role: 'user', parts: [{ text: promptContent }] });
+        }
+        
+        const scriptResponse = await generateUniversalContent(
+          selectedLlmModel,
+          conversation.history,  // Pasar el historial completo como segundo parámetro
+          null  // No system instruction adicional
+        );
+        
+        console.log(`🔍 DEBUG: scriptResponse tipo:`, typeof scriptResponse);
+        console.log(`🔍 DEBUG: scriptResponse contenido:`, scriptResponse);
+        console.log(`🔍 DEBUG: scriptResponse longitud:`, scriptResponse ? scriptResponse.length : 'NULL');
+        
+        const scriptText = scriptResponse || '';
+        conversation.history.push({ role: 'model', parts: [{ text: scriptText }] });
+        
+        allSections.push({
+          section: section,
+          title: chapterStructure[section - 1] || `Sección ${section}`,
+          script: scriptText,
+          cleanScript: scriptText.replace(/[*_#]/g, '').trim()
+        });
+        
+        console.log(`✅ Guión ${section} generado (${scriptText.length} caracteres)`);
+        
+        // Guardar el guión en archivo TXT
+        try {
+          const sectionFolderStructure = createProjectStructure(topic, section, projectKey);
+          const scriptFileName = `${projectKey}_seccion_${section}_guion.txt`;
+          const scriptFilePath = path.join(sectionFolderStructure.sectionDir, scriptFileName);
+          
+          const scriptContent = `GUIÓN DE SECCIÓN ${section}
+===============================
+Tema: ${topic}
+Sección: ${section} de ${sections}
+Capítulo: ${chapterStructure[section - 1] || `Sección ${section}`}
+Longitud: ${scriptText.length} caracteres
+Fecha de generación: ${new Date().toLocaleString()}
+${folderName ? `Nombre del proyecto: ${folderName}` : ''}
+
+CONTENIDO DEL GUIÓN:
+${scriptText}
+
+===============================
+Guión generado automáticamente por IA
+`;
+          
+          fs.writeFileSync(scriptFilePath, scriptContent, 'utf8');
+          console.log(`💾 Guión guardado: ${scriptFilePath}`);
+          
+        } catch (saveError) {
+          console.error(`❌ Error guardando guión de sección ${section}:`, saveError);
+        }
+        
+        // Generar prompts de imágenes para esta sección
+        if (!shouldSkipImages) {
+          console.log(`🎨 Generando prompts de imágenes para sección ${section}...`);
+          
+          if (shouldUseGoogleImages) {
+            // Para Google Images (Bing): generar keywords de búsqueda simples
+            console.log(`🔍 Generando keywords de búsqueda para Google Images/Bing...`);
+            
+            const keywordsPrompt = `Basándote en este guión de la sección ${section} sobre "${topic}": "${scriptText}", 
+            
+extrae EXACTAMENTE ${numImages} keywords o frases cortas de búsqueda para encontrar imágenes relacionadas con esta sección.
+
+IMPORTANTE:
+- Cada keyword debe ser de 1-4 palabras máximo
+- Deben ser términos que se puedan buscar en Google Images
+- Enfócate en elementos visuales específicos mencionados en esta sección
+- DEBES separar cada keyword con "||PROMPT||" (sin espacios adicionales)
+- NO incluyas descripciones largas, solo keywords de búsqueda
+
+EJEMPLO de respuesta:
+castillo medieval||PROMPT||espada dorada||PROMPT||batalla épica||PROMPT||dragón volando||PROMPT||héroe guerrero
+
+FORMATO DE RESPUESTA OBLIGATORIO:
+keyword1||PROMPT||keyword2||PROMPT||keyword3||PROMPT||... hasta keyword${numImages}`;
+
+            const keywordsResponse = await generateUniversalContent(
+              selectedLlmModel,
+              keywordsPrompt,
+              `Eres un experto en SEO y búsqueda de imágenes. Tu ÚNICA tarea es extraer keywords simples separados por "||PROMPT||". NO generes descripciones largas.`
+            );
+            
+            const keywordsText = keywordsResponse || '';
+            const sectionImagePrompts = keywordsText.split('||PROMPT||').filter(p => p.trim()).slice(0, numImages);
+            
+            allImagePrompts.push({
+              section: section,
+              prompts: sectionImagePrompts
+            });
+            
+            console.log(`✅ ${sectionImagePrompts.length} keywords de búsqueda generados para sección ${section}`);
+            
+          } else {
+            // Para IA generativa: generar prompts descriptivos detallados
+            console.log(`🎨 Generando prompts descriptivos para IA generativa...`);
+            
+            // Obtener prompts anteriores para mantener consistencia
+            console.log(`🧠 Recuperando contexto de prompts anteriores...`);
+            const { previousPrompts, contextInfo } = getPreviousImagePrompts(projectKey, section);
+            
+            // Construir contexto de consistencia
+            const consistencyContext = buildConsistencyContext(previousPrompts, contextInfo);
+          
+          // Construir prompt base para el LLM
+          let basePrompt = `Basándote en este guión de la sección ${section} sobre "${topic}": "${scriptText}", crea EXACTAMENTE ${numImages} prompts detallados para generar ${numImages} imágenes que ilustren visualmente el contenido ESPECÍFICO de esta sección.
+
+IMPORTANTE: Debes crear EXACTAMENTE ${numImages} prompts, ni más ni menos.
+
+ENFOQUE ESPECÍFICO PARA ESTA SECCIÓN:
+- Estas imágenes deben representar SOLO el contenido de la sección ${section}, no de todo el proyecto
+- Cada imagen debe mostrar diferentes aspectos, momentos o elementos clave mencionados en esta sección específica
+- NO dividas la sección en partes cronológicas - en su lugar, crea ${numImages} perspectivas diferentes del mismo contenido de la sección
+- Enfócate en elementos específicos, personajes, lugares, objetos, emociones o conceptos mencionados en esta sección
+- Mantén consistencia visual con las secciones anteriores${consistencyContext}
+
+TIPOS DE PROMPTS PARA ESTA SECCIÓN:
+- Imagen principal: La escena o momento central de la sección
+- Detalles importantes: Objetos, elementos o características específicas mencionadas
+- Perspectivas diferentes: Diferentes ángulos o enfoques del mismo contenido
+- Atmósfera: Imágenes que capturen el mood o ambiente de la sección
+- Elementos secundarios: Aspectos adicionales que complementen la narrativa de esta sección
+
+INSTRUCCIONES CRÍTICAS PARA EL FORMATO:
+- DEBES crear ${numImages} prompts independientes que representen la MISMA sección desde diferentes perspectivas
+- NO dividas el contenido en secuencia cronológica - todas las imágenes son de la MISMA sección
+- DEBES separar cada prompt con "||PROMPT||" (sin espacios adicionales)
+- DEBES asegurarte de que haya exactamente ${numImages} prompts en tu respuesta
+- Todas las imágenes deben estar relacionadas con el contenido específico de la sección ${section}
+- Incluye detalles específicos mencionados en el texto del guión de esta sección
+
+REQUISITOS OBLIGATORIOS para cada prompt:
+- Formato: Aspecto 16:9 (widescreen)
+- Estilo: Realista, alta calidad, 4K
+
+FORMATO DE RESPUESTA OBLIGATORIO:
+DEBES presentar EXACTAMENTE ${numImages} prompts separados por "||PROMPT||" (sin espacios antes o después del delimitador).
+
+ESTRUCTURA REQUERIDA:
+Prompt 1 aquí||PROMPT||Prompt 2 aquí||PROMPT||Prompt 3 aquí||PROMPT||... hasta el Prompt ${numImages}
+
+VERIFICACIÓN FINAL: Tu respuesta debe contener exactamente ${numImages - 1} ocurrencias del delimitador "||PROMPT||" para generar ${numImages} prompts.`;
+            
+            // Integrar instrucciones adicionales en el prompt del LLM
+            const finalPromptForLLM = integrateAdditionalInstructions(basePrompt, additionalInstructions);
+            
+            console.log(`🧠 Creando prompts para secuencia de ${numImages} imágenes con contexto de consistencia...`);
+            if (previousPrompts.length > 0) {
+              console.log(`🔗 Usando ${previousPrompts.length} prompts anteriores para mantener consistencia`);
+            }
+            if (additionalInstructions && additionalInstructions.trim()) {
+              console.log(`📝 Integrando instrucciones adicionales en el LLM: "${additionalInstructions.trim()}"`);
+            }
+            
+            const imagePromptsResponse = await generateUniversalContent(
+              selectedLlmModel,
+              finalPromptForLLM,
+              `Eres un experto en arte conceptual y narrativa visual. Tu ÚNICA tarea es crear prompts separados por "||PROMPT||".`
+            );
+            
+            const promptsText = imagePromptsResponse || '';
+            const sectionImagePrompts = promptsText.split('||PROMPT||').filter(p => p.trim()).slice(0, numImages);
+            
+            allImagePrompts.push({
+              section: section,
+              prompts: sectionImagePrompts
+            });
+            
+            console.log(`✅ ${sectionImagePrompts.length} keywords de búsqueda generados para sección ${section}`);
+          }
+        }
+        
+        // ===============================================================
+        // GUARDADO PROGRESIVO Y ACTUALIZACIÓN DE PROGRESO
+        // ===============================================================
+        
+        console.log(`📊 ACTUALIZANDO PROGRESO: Sección ${section}/${sections} completada`);
+        
+        // Calcular tiempo de generación de esta sección
+        const sectionStartTime = Date.now() - 30000; // Estimación aproximada
+        const sectionEndTime = Date.now();
+        const sectionDuration = sectionEndTime - sectionStartTime;
+        
+        // Actualizar progreso de la Fase 1 (Scripts)
+        const progressData = updateProjectProgress(
+          projectKey, 
+          'script', 
+          section,      // completedItems (actual)
+          sections,     // totalItems 
+          'sección', 
+          sectionDuration
+        );
+        
+        // Preparar datos del proyecto para guardado progresivo
+        const projectDataForSave = {
+          topic: topic,
+          folderName: folderName,
+          totalSections: sections,
+          voice: selectedVoice,
+          imageModel: selectedImageModel,
+          llmModel: selectedLlmModel,
+          scriptStyle: selectedStyle,
+          customStyleInstructions: customStyleInstructions,
+          promptModifier: additionalInstructions,
+          imageCount: numImages,
+          skipImages: shouldSkipImages,
+          googleImages: shouldUseGoogleImages,
+          localAIImages: shouldUseLocalAI,
+          useApplio: useApplio || false,
+          applioVoice: applioVoice,
+          applioModel: applioModel,
+          applioPitch: applioPitch,
+          chapterStructure: chapterStructure,
+          createdAt: new Date().toISOString()
+        };
+        
+        // Crear información de la sección completada
+        const completedSectionData = {
+          section: section,
+          title: chapterStructure[section - 1] || `Sección ${section}`,
+          script: allSections[section - 1].script,
+          imagePrompts: allImagePrompts.find(ip => ip.section === section)?.prompts || [],
+          completedAt: new Date().toISOString(),
+          scriptFile: {
+            path: `outputs/${projectKey}/seccion_${section}/${projectKey}_seccion_${section}_guion.txt`,
+            filename: `${projectKey}_seccion_${section}_guion.txt`,
+            saved: true
+          },
+          promptsFile: shouldSkipImages ? null : {
+            path: `outputs/${projectKey}/seccion_${section}/${projectKey}_seccion_${section}_prompts_imagenes.txt`,
+            filename: `${projectKey}_seccion_${section}_prompts_imagenes.txt`,
+            saved: true
+          }
+        };
+        
+        // Guardar estado progresivo
+        const currentCompletedSections = allSections.map((sec, index) => {
+          const sectionData = {
+            section: sec.section,
+            title: sec.title,
+            script: sec.script,
+            imagePrompts: allImagePrompts.find(ip => ip.section === sec.section)?.prompts || [],
+            completedAt: new Date().toISOString(),
+            scriptFile: {
+              path: `outputs/${projectKey}/seccion_${sec.section}/${projectKey}_seccion_${sec.section}_guion.txt`,
+              filename: `${projectKey}_seccion_${sec.section}_guion.txt`,
+              saved: true
+            },
+            promptsFile: shouldSkipImages ? null : {
+              path: `outputs/${projectKey}/seccion_${sec.section}/${projectKey}_seccion_${sec.section}_prompts_imagenes.txt`,
+              filename: `${projectKey}_seccion_${sec.section}_prompts_imagenes.txt`,
+              saved: true
+            }
+          };
+          return sectionData;
+        });
+        
+        saveProgressiveProjectState(projectKey, projectDataForSave, currentCompletedSections, [], []);
+        
+      } catch (error) {
+        console.error(`❌ Error generando sección ${section}:`, error);
+        allSections.push({
+          section: section,
+          title: `Sección ${section}`,
+          script: `Error generando contenido: ${error.message}`,
+          cleanScript: `Error generando contenido: ${error.message}`
+        });
+      }
+    }
+    
+    console.log(`\n✅ FASE 1 COMPLETADA:`);
+    console.log(`📝 ${allSections.length} guiones generados`);
+    console.log(`🎨 ${allImagePrompts.length} sets de prompts de imágenes generados`);
+    
+    res.json({
+      success: true,
+      phase: 'scripts_completed',
+      message: `Fase 1 completada: ${allSections.length} guiones y prompts generados`,
+      data: {
+        sections: allSections,
+        imagePrompts: allImagePrompts,
+        chapterStructure: chapterStructure,
+        projectKey: projectKey,
+        additionalInstructions: additionalInstructions, // Pasar las instrucciones adicionales
+        topic: topic,
+        folderName: folderName
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Error en generación automática por lotes:', error);
+    res.status(500).json({ error: 'Error en generación automática: ' + error.message });
+  }
+});
+
+// ENDPOINT PARA CONTINUAR CON FASE 2: GENERACIÓN DE AUDIO POR LOTES
+app.post('/generate-batch-audio', async (req, res) => {
+  try {
+    const { projectData, useApplio, voice, applioVoice, applioModel, applioPitch, folderName } = req.body;
+    
+    console.log('\n' + '🎵'.repeat(20));
+    console.log('🎵 FASE 2: GENERANDO TODOS LOS ARCHIVOS DE AUDIO');
+    console.log('🎵'.repeat(20));
+    
+    const { sections, projectKey } = projectData;
+    const audioMethod = useApplio ? 'Applio' : 'Google TTS';
+    
+    // Obtener el tema base del proyecto
+    const baseTopic = projectData.sections[0].title.split(':')[0] || 'Proyecto';
+    
+    console.log(`🎤 Generando audio para ${sections.length} secciones con ${audioMethod}...`);
+    
+    // Si usamos Applio, inicializarlo una vez
+    if (useApplio) {
+      console.log('🔄 Iniciando Applio para generación de audio...');
+      const applioStarted = await startApplio();
+      if (!applioStarted) {
+        throw new Error('No se pudo iniciar Applio');
+      }
+    }
+    
+    const audioResults = [];
+    
+    // Generar audio para todas las secciones
+    for (let i = 0; i < sections.length; i++) {
+      const section = sections[i];
+      console.log(`🎵 Generando audio ${i + 1}/${sections.length}: ${section.title}`);
+      
+      // Crear estructura de carpetas individual para esta sección
+      const sectionFolderStructure = createProjectStructure(baseTopic, section.section, folderName);
+      
+      try {
+        let audioPath;
+        
+        if (useApplio) {
+          // Generar con Applio
+          const selectedApplioVoice = applioVoice || 'es-ES-ElviraNeural.pth';
+          const selectedApplioModel = applioModel || 'rmvpe';
+          const selectedPitch = applioPitch || 0;
+          
+          const fileName = `${createSafeFolderName(section.title)}_seccion_${section.section}_${Date.now()}.wav`;
+          const filePath = path.join(sectionFolderStructure.sectionDir, fileName);
+          
+          console.log(`📁 Guardando audio en: ${filePath}`);
+          
+          // Generar audio con Applio
+          const result = await applioClient.textToSpeech(section.cleanScript, filePath, {
+            model: selectedApplioModel,
+            speed: 0,
+            pitch: selectedPitch,
+            voicePath: selectedApplioVoice
+          });
+          
+          if (!result.success) {
+            throw new Error('Applio no generó el audio correctamente');
+          }
+          
+          // Retornar ruta relativa para acceso web
+          audioPath = path.relative('./public', filePath).replace(/\\/g, '/');
+          
+          console.log(`✅ Audio Applio generado: ${audioPath}`);
+          
+        } else {
+          // Generar con Google TTS
+          audioPath = await generateStoryAudio(
+            section.cleanScript, 
+            voice || 'Orus', 
+            sectionFolderStructure.sectionDir, 
+            section.title, 
+            section.section
+          );
+          
+          console.log(`✅ Audio Google TTS generado: ${audioPath}`);
+        }
+        
+        audioResults.push({
+          section: section.section,
+          title: section.title,
+          audioPath: audioPath,
+          success: true
+        });
+
+        // 📊 GUARDADO PROGRESIVO: Actualizar progreso después de cada audio
+        try {
+          const progressData = updateProjectProgress(projectKey, 'audio', i + 1, sections.length);
+          
+          // Guardar estado del proyecto con audios completados hasta ahora
+          const updatedProjectData = {
+            ...projectData,
+            audioResults: audioResults,
+            audioMethod: audioMethod,
+            audioConfig: useApplio ? { 
+              voice: applioVoice, 
+              model: applioModel, 
+              pitch: applioPitch 
+            } : { voice: voice },
+            phase: 'audio',
+            lastUpdate: new Date().toISOString()
+          };
+          
+          await saveProgressiveProjectState(projectKey, updatedProjectData, progressData);
+          
+          console.log(`📊 Progreso guardado: Audio ${i + 1}/${sections.length} (${progressData.percentage}%) - Tiempo estimado restante: ${progressData.estimatedTimeRemaining}`);
+          
+        } catch (progressError) {
+          console.error('⚠️ Error guardando progreso de audio:', progressError.message);
+          // No interrumpir la generación por errores de guardado
+        }
+        
+      } catch (error) {
+        console.error(`❌ Error generando audio para sección ${section.section}:`, error);
+        audioResults.push({
+          section: section.section,
+          title: section.title,
+          audioPath: null,
+          success: false,
+          error: error.message
+        });
+
+        // 📊 GUARDADO PROGRESIVO: Actualizar progreso incluso en caso de error
+        try {
+          const progressData = updateProjectProgress(projectKey, 'audio', i + 1, sections.length);
+          
+          const updatedProjectData = {
+            ...projectData,
+            audioResults: audioResults,
+            audioMethod: audioMethod,
+            audioConfig: useApplio ? { 
+              voice: applioVoice, 
+              model: applioModel, 
+              pitch: applioPitch 
+            } : { voice: voice },
+            phase: 'audio',
+            lastUpdate: new Date().toISOString()
+          };
+          
+          await saveProgressiveProjectState(projectKey, updatedProjectData, progressData);
+          
+          console.log(`📊 Progreso guardado (con error): Audio ${i + 1}/${sections.length} (${progressData.percentage}%)`);
+          
+        } catch (progressError) {
+          console.error('⚠️ Error guardando progreso de audio:', progressError.message);
+        }
+      }
+    }
+    
+    const successfulAudio = audioResults.filter(r => r.success).length;
+    
+    console.log(`\n✅ FASE 2 COMPLETADA:`);
+    console.log(`🎵 ${successfulAudio}/${sections.length} archivos de audio generados con ${audioMethod}`);
+    
+    res.json({
+      success: true,
+      phase: 'audio_completed',
+      message: `Fase 2 completada: ${successfulAudio}/${sections.length} audios generados con ${audioMethod}`,
+      data: {
+        audioResults: audioResults,
+        projectKey: projectKey,
+        audioMethod: audioMethod
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Error en generación de audio por lotes:', error);
+    res.status(500).json({ error: 'Error en generación de audio: ' + error.message });
+  }
+});
+
+// ENDPOINT PARA GENERAR SOLO AUDIOS FALTANTES CON APPLIO
+app.post('/generate-missing-applio-audios', async (req, res) => {
+  try {
+    const { folderName, applioVoice, applioModel, applioPitch, totalSections, scriptStyle = 'professional', customStyleInstructions = '', wordsMin = 800, wordsMax = 1100 } = req.body;
+    
+    console.log('\n' + '🔍'.repeat(20));
+    console.log('🔍 VERIFICANDO Y GENERANDO AUDIOS FALTANTES CON APPLIO');
+    console.log('🔍'.repeat(20));
+    
+    console.log('🎤 Configuración de generación:', {
+      proyecto: folderName,
+      voz: applioVoice,
+      modelo: applioModel,
+      pitch: applioPitch,
+      secciones: totalSections
+    });
+    
+    // Verificar que el proyecto existe
+    const projectState = loadProjectState(folderName);
+    if (!projectState) {
+      return res.status(404).json({ error: 'Proyecto no encontrado' });
+    }
+    
+    // Verificar qué audios faltan
+    const missingAudioSections = [];
+    const projectDir = path.join('./public/outputs', folderName);
+    
+    for (let i = 0; i < projectState.completedSections.length; i++) {
+      const section = projectState.completedSections[i];
+      const sectionDir = path.join(projectDir, `seccion_${section.section}`);
+      
+      // Verificar si la carpeta de la sección existe
+      if (!fs.existsSync(sectionDir)) {
+        console.log(`📁 Creando carpeta faltante para sección ${section.section}: ${sectionDir}`);
+        fs.mkdirSync(sectionDir, { recursive: true });
+      }
+      
+      // Buscar archivos de audio en la carpeta de la sección
+      let hasAudioFile = false;
+      
+      if (fs.existsSync(sectionDir)) {
+        const files = fs.readdirSync(sectionDir);
+        hasAudioFile = files.some(file => 
+          file.endsWith('.wav') || 
+          file.endsWith('.mp3') || 
+          file.endsWith('.m4a') ||
+          file.endsWith('.ogg')
+        );
+        
+        if (hasAudioFile) {
+          const audioFiles = files.filter(file => 
+            file.endsWith('.wav') || file.endsWith('.mp3') || 
+            file.endsWith('.m4a') || file.endsWith('.ogg')
+          );
+          console.log(`✅ Sección ${section.section} ya tiene audio: ${audioFiles.join(', ')}`);
+        }
+      }
+      
+      if (!hasAudioFile) {
+        console.log(`🎵 Sección ${section.section} necesita audio`);
+        missingAudioSections.push(section);
+      }
+    }
+    
+    console.log(`📊 Análisis completo: ${missingAudioSections.length}/${projectState.completedSections.length} secciones necesitan audio`);
+    
+    if (missingAudioSections.length === 0) {
+      return res.json({
+        success: true,
+        message: 'Todos los audios ya existen, no se generó ninguno nuevo',
+        data: {
+          generatedCount: 0,
+          totalSections: projectState.completedSections.length,
+          skippedSections: projectState.completedSections.length,
+          missingAudioSections: []
+        }
+      });
+    }
+    
+    // Inicializar Applio solo si hay audios que generar
+    console.log('🔄 Iniciando Applio para generación de audios faltantes...');
+    const applioStarted = await startApplio();
+    if (!applioStarted) {
+      throw new Error('No se pudo iniciar Applio');
+    }
+    
+    const generationResults = [];
+    
+    // Generar audio solo para las secciones que lo necesitan
+    for (let i = 0; i < missingAudioSections.length; i++) {
+      const section = missingAudioSections[i];
+      console.log(`🎵 Generando audio faltante ${i + 1}/${missingAudioSections.length}: Sección ${section.section}`);
+      
+      try {
+        // Obtener el directorio de la sección
+        const sectionDir = path.join(projectDir, `seccion_${section.section}`);
+        
+        // Crear nombre de archivo único
+        const fileName = `${folderName}_seccion_${section.section}_applio_${Date.now()}.wav`;
+        const filePath = path.join(sectionDir, fileName);
+        
+        console.log(`📁 Generando audio en: ${filePath}`);
+        console.log(`📝 Script completo: ${section.script.substring(0, 100)}...`);
+        
+        // Extraer solo el contenido del guión sin metadatos
+        const scriptResult = extractScriptContent(section.script);
+        let cleanScript = scriptResult.content;
+        
+        // Si el script está vacío, generar el contenido faltante
+        if (scriptResult.isEmpty && scriptResult.hasStructure) {
+          console.log(`🔧 Generando guión faltante para sección ${section.section}...`);
+          
+          // Obtener información adicional del proyecto para la generación
+          const chapterTitle = section.title && section.title !== `Sección ${section.section}` 
+            ? section.title 
+            : null;
+          
+          // Obtener secciones anteriores para contexto
+          const previousSections = projectState.completedSections
+            .filter(s => s.section < section.section)
+            .sort((a, b) => a.section - b.section);
+          
+          const generationResult = await generateMissingScript(
+            projectState.topic || 'Proyecto de gaming',
+            section.section,
+            projectState.totalSections,
+            chapterTitle,
+            previousSections,
+            scriptStyle,
+            customStyleInstructions,
+            wordsMin,
+            wordsMax
+          );
+          
+          if (generationResult.success) {
+            cleanScript = generationResult.script;
+            console.log(`✅ Guión generado: ${cleanScript.length} caracteres`);
+            
+            // Actualizar el archivo TXT con el nuevo contenido
+            try {
+              const sectionDir = path.join(projectDir, `seccion_${section.section}`);
+              const scriptFiles = fs.readdirSync(sectionDir).filter(file => 
+                file.endsWith('.txt') && !file.includes('metadata') && !file.includes('keywords')
+              );
+              
+              if (scriptFiles.length > 0) {
+                const scriptFilePath = path.join(sectionDir, scriptFiles[0]);
+                const originalContent = fs.readFileSync(scriptFilePath, 'utf8');
+                
+                // Reconstruir el archivo con el nuevo contenido
+                const updatedContent = originalContent.replace(
+                  /(CONTENIDO DEL GUIÓN:\s*\n)(.*?)(===============================)/s,
+                  `$1${cleanScript}\n\n$3`
+                );
+                
+                fs.writeFileSync(scriptFilePath, updatedContent, 'utf8');
+                console.log(`📝 Archivo TXT actualizado con el nuevo guión`);
+              }
+            } catch (updateError) {
+              console.warn(`⚠️ No se pudo actualizar el archivo TXT:`, updateError.message);
+            }
+            
+          } else {
+            console.error(`❌ No se pudo generar el guión: ${generationResult.error}`);
+            throw new Error(`No se pudo generar el guión faltante: ${generationResult.error}`);
+          }
+        } else if (scriptResult.isEmpty) {
+          throw new Error('El script está vacío y no se puede generar audio');
+        }
+        
+        console.log(`🧹 Script limpio: ${cleanScript.substring(0, 100)}...`);
+        
+        // Generar audio con Applio usando solo el contenido del guión
+        const result = await applioClient.textToSpeech(cleanScript, filePath, {
+          model: applioModel || 'rmvpe',
+          speed: 0,
+          pitch: applioPitch || 0,
+          voicePath: applioVoice || 'es-ES-ElviraNeural.pth'
+        });
+        
+        if (!result.success) {
+          throw new Error('Applio no generó el audio correctamente');
+        }
+        
+        // Retornar ruta relativa para acceso web
+        const audioPath = path.relative('./public', filePath).replace(/\\/g, '/');
+        
+        generationResults.push({
+          section: section.section,
+          audioPath: audioPath,
+          success: true,
+          message: `Audio generado exitosamente`
+        });
+        
+        console.log(`✅ Audio generado: ${audioPath}`);
+        
+      } catch (error) {
+        console.error(`❌ Error generando audio para sección ${section.section}:`, error);
+        generationResults.push({
+          section: section.section,
+          audioPath: null,
+          success: false,
+          error: error.message
+        });
+      }
+    }
+    
+    const successfulGeneration = generationResults.filter(r => r.success).length;
+    
+    console.log(`\n✅ GENERACIÓN DE AUDIOS FALTANTES COMPLETADA:`);
+    console.log(`🎵 ${successfulGeneration}/${missingAudioSections.length} audios faltantes generados con Applio`);
+    console.log(`⏭️ ${projectState.completedSections.length - missingAudioSections.length} audios ya existían`);
+    
+    res.json({
+      success: true,
+      message: `${successfulGeneration}/${missingAudioSections.length} audios faltantes generados exitosamente`,
+      data: {
+        generationResults: generationResults,
+        generatedCount: successfulGeneration,
+        totalSections: projectState.completedSections.length,
+        skippedSections: projectState.completedSections.length - missingAudioSections.length,
+        missingAudioSections: missingAudioSections.map(s => s.section),
+        applioConfig: {
+          voice: applioVoice,
+          model: applioModel,
+          pitch: applioPitch
+        }
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Error en generación de audios faltantes:', error);
+    res.status(500).json({ error: 'Error generando audios faltantes: ' + error.message });
+  }
+});
+
+// ENDPOINT PARA REGENERAR AUDIOS CON APPLIO (MANTENER PARA COMPATIBILIDAD)
+app.post('/regenerate-applio-audios', async (req, res) => {
+  try {
+    const { folderName, applioVoice, applioModel, applioPitch, totalSections, scriptStyle = 'professional', customStyleInstructions = '', wordsMin = 800, wordsMax = 1100 } = req.body;
+    
+    console.log('\n' + '🔄'.repeat(20));
+    console.log('🔄 REGENERANDO AUDIOS CON APPLIO');
+    console.log('🔄'.repeat(20));
+    
+    console.log('🎤 Configuración de regeneración:', {
+      proyecto: folderName,
+      voz: applioVoice,
+      modelo: applioModel,
+      pitch: applioPitch,
+      secciones: totalSections
+    });
+    
+    // Verificar que el proyecto existe
+    const projectState = loadProjectState(folderName);
+    if (!projectState) {
+      return res.status(404).json({ error: 'Proyecto no encontrado' });
+    }
+    
+    // Inicializar Applio
+    console.log('🔄 Iniciando Applio para regeneración de audio...');
+    const applioStarted = await startApplio();
+    if (!applioStarted) {
+      throw new Error('No se pudo iniciar Applio');
+    }
+    
+    const regenerationResults = [];
+    
+    // Regenerar audio para todas las secciones completadas
+    for (let i = 0; i < projectState.completedSections.length; i++) {
+      const section = projectState.completedSections[i];
+      console.log(`🎵 Regenerando audio ${i + 1}/${totalSections}: Sección ${section.section}`);
+      
+      try {
+        // Obtener el directorio de la sección
+        const projectDir = path.join('./public/outputs', folderName);
+        const sectionDir = path.join(projectDir, `seccion_${section.section}`);
+        
+        // Crear nombre de archivo único
+        const fileName = `${folderName}_seccion_${section.section}_regenerado_${Date.now()}.wav`;
+        const filePath = path.join(sectionDir, fileName);
+        
+        console.log(`📁 Regenerando audio en: ${filePath}`);
+        console.log(`📝 Script completo: ${section.script.substring(0, 100)}...`);
+        
+        // Extraer solo el contenido del guión sin metadatos
+        const scriptResult = extractScriptContent(section.script);
+        let cleanScript = scriptResult.content;
+        
+        // Si el script está vacío, generar el contenido faltante
+        if (scriptResult.isEmpty && scriptResult.hasStructure) {
+          console.log(`🔧 Generando guión faltante para sección ${section.section}...`);
+          
+          // Obtener información adicional del proyecto para la generación
+          const chapterTitle = section.title && section.title !== `Sección ${section.section}` 
+            ? section.title 
+            : null;
+          
+          // Obtener secciones anteriores para contexto
+          const previousSections = projectState.completedSections
+            .filter(s => s.section < section.section)
+            .sort((a, b) => a.section - b.section);
+          
+          const generationResult = await generateMissingScript(
+            projectState.topic || 'Proyecto de gaming',
+            section.section,
+            projectState.totalSections,
+            chapterTitle,
+            previousSections,
+            scriptStyle,
+            customStyleInstructions,
+            wordsMin,
+            wordsMax
+          );
+          
+          if (generationResult.success) {
+            cleanScript = generationResult.script;
+            console.log(`✅ Guión generado: ${cleanScript.length} caracteres`);
+            
+            // Actualizar el archivo TXT con el nuevo contenido
+            try {
+              const projectDir = path.join('./public/outputs', folderName);
+              const sectionDir = path.join(projectDir, `seccion_${section.section}`);
+              const scriptFiles = fs.readdirSync(sectionDir).filter(file => 
+                file.endsWith('.txt') && !file.includes('metadata') && !file.includes('keywords')
+              );
+              
+              if (scriptFiles.length > 0) {
+                const scriptFilePath = path.join(sectionDir, scriptFiles[0]);
+                const originalContent = fs.readFileSync(scriptFilePath, 'utf8');
+                
+                // Reconstruir el archivo con el nuevo contenido
+                const updatedContent = originalContent.replace(
+                  /(CONTENIDO DEL GUIÓN:\s*\n)(.*?)(===============================)/s,
+                  `$1${cleanScript}\n\n$3`
+                );
+                
+                fs.writeFileSync(scriptFilePath, updatedContent, 'utf8');
+                console.log(`📝 Archivo TXT actualizado con el nuevo guión`);
+              }
+            } catch (updateError) {
+              console.warn(`⚠️ No se pudo actualizar el archivo TXT:`, updateError.message);
+            }
+            
+          } else {
+            console.error(`❌ No se pudo generar el guión: ${generationResult.error}`);
+            throw new Error(`No se pudo generar el guión faltante: ${generationResult.error}`);
+          }
+        } else if (scriptResult.isEmpty) {
+          throw new Error('El script está vacío y no se puede generar audio');
+        }
+        
+        console.log(`🧹 Script limpio: ${cleanScript.substring(0, 100)}...`);
+        
+        // Generar audio con Applio usando solo el contenido del guión
+        const result = await applioClient.textToSpeech(cleanScript, filePath, {
+          model: applioModel || 'rmvpe',
+          speed: 0,
+          pitch: applioPitch || 0,
+          voicePath: applioVoice || 'es-ES-ElviraNeural.pth'
+        });
+        
+        if (!result.success) {
+          throw new Error('Applio no generó el audio correctamente');
+        }
+        
+        // Retornar ruta relativa para acceso web
+        const audioPath = path.relative('./public', filePath).replace(/\\/g, '/');
+        
+        regenerationResults.push({
+          section: section.section,
+          audioPath: audioPath,
+          success: true,
+          message: `Audio regenerado exitosamente`
+        });
+        
+        console.log(`✅ Audio regenerado: ${audioPath}`);
+        
+      } catch (error) {
+        console.error(`❌ Error regenerando audio para sección ${section.section}:`, error);
+        regenerationResults.push({
+          section: section.section,
+          audioPath: null,
+          success: false,
+          error: error.message
+        });
+      }
+    }
+    
+    const successfulRegeneration = regenerationResults.filter(r => r.success).length;
+    
+    console.log(`\n✅ REGENERACIÓN COMPLETADA:`);
+    console.log(`🎵 ${successfulRegeneration}/${totalSections} audios regenerados con Applio`);
+    
+    res.json({
+      success: true,
+      message: `${successfulRegeneration}/${totalSections} audios regenerados exitosamente`,
+      data: {
+        regenerationResults: regenerationResults,
+        successfulRegeneration: successfulRegeneration,
+        totalSections: totalSections,
+        applioConfig: {
+          voice: applioVoice,
+          model: applioModel,
+          pitch: applioPitch
+        }
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Error en regeneración de audios:', error);
+    res.status(500).json({ error: 'Error regenerando audios: ' + error.message });
+  }
+});
+
+// ENDPOINT PARA REGENERAR SOLO LOS GUIONES FALTANTES (SIN AUDIO)
+app.post('/generate-missing-scripts', async (req, res) => {
+  try {
+    const { folderName, scriptStyle = 'professional', customStyleInstructions = '', wordsMin = 800, wordsMax = 1100 } = req.body;
+    
+    console.log('\n' + '📝'.repeat(20));
+    console.log('📝 REGENERANDO GUIONES FALTANTES');
+    console.log('📝'.repeat(20));
+    
+    // Verificar que el proyecto existe
+    const projectState = loadProjectState(folderName);
+    if (!projectState) {
+      return res.status(404).json({ error: 'Proyecto no encontrado' });
+    }
+    
+    console.log(`📝 Verificando guiones faltantes en proyecto: ${folderName}`);
+    console.log(`📊 Total de secciones: ${projectState.completedSections.length}`);
+    
+    // Verificar qué secciones tienen guiones vacíos
+    const missingSectionScripts = [];
+    const projectDir = path.join('./public/outputs', folderName);
+    
+    for (let i = 0; i < projectState.completedSections.length; i++) {
+      const section = projectState.completedSections[i];
+      const sectionDir = path.join(projectDir, `seccion_${section.section}`);
+      
+      if (fs.existsSync(sectionDir)) {
+        const scriptFiles = fs.readdirSync(sectionDir).filter(file => 
+          file.endsWith('.txt') && !file.includes('metadata') && !file.includes('keywords')
+        );
+        
+        if (scriptFiles.length > 0) {
+          const scriptFilePath = path.join(sectionDir, scriptFiles[0]);
+          const fullContent = fs.readFileSync(scriptFilePath, 'utf8');
+          const scriptResult = extractScriptContent(fullContent);
+          
+          if (scriptResult.isEmpty && scriptResult.hasStructure) {
+            console.log(`📝 Sección ${section.section} necesita regeneración de guión`);
+            missingSectionScripts.push({
+              ...section,
+              scriptFilePath: scriptFilePath,
+              originalContent: fullContent
+            });
+          } else if (scriptResult.content.length > 0) {
+            console.log(`✅ Sección ${section.section} ya tiene guión (${scriptResult.content.length} caracteres)`);
+          }
+        }
+      }
+    }
+    
+    console.log(`📊 Análisis de guiones: ${missingSectionScripts.length}/${projectState.completedSections.length} secciones necesitan regeneración`);
+    
+    if (missingSectionScripts.length === 0) {
+      return res.json({
+        success: true,
+        message: 'Todos los guiones ya existen, no se regeneró ninguno',
+        data: {
+          generatedCount: 0,
+          totalSections: projectState.completedSections.length,
+          skippedSections: projectState.completedSections.length,
+          missingScripts: []
+        }
+      });
+    }
+    
+    const scriptResults = [];
+    
+    // Generar guiones solo para las secciones que lo necesitan
+    for (let i = 0; i < missingSectionScripts.length; i++) {
+      const section = missingSectionScripts[i];
+      console.log(`📝 Generando guión ${i + 1}/${missingSectionScripts.length}: Sección ${section.section}`);
+      
+      try {
+        // Obtener información adicional del proyecto para la generación
+        const chapterTitle = section.title && section.title !== `Sección ${section.section}` 
+          ? section.title 
+          : null;
+        
+        // Obtener secciones anteriores para contexto
+        const previousSections = projectState.completedSections
+          .filter(s => s.section < section.section)
+          .sort((a, b) => a.section - b.section);
+        
+        const generationResult = await generateMissingScript(
+          projectState.topic || 'Proyecto de gaming',
+          section.section,
+          projectState.totalSections,
+          chapterTitle,
+          previousSections,
+          scriptStyle,
+          customStyleInstructions,
+          wordsMin,
+          wordsMax
+        );
+        
+        if (generationResult.success) {
+          // Actualizar el archivo TXT con el nuevo contenido
+          const updatedContent = section.originalContent.replace(
+            /(CONTENIDO DEL GUIÓN:\s*\n)(.*?)(===============================)/s,
+            `$1${generationResult.script}\n\n$3`
+          );
+          
+          fs.writeFileSync(section.scriptFilePath, updatedContent, 'utf8');
+          
+          scriptResults.push({
+            section: section.section,
+            scriptLength: generationResult.script.length,
+            success: true,
+            message: `Guión generado exitosamente`
+          });
+          
+          console.log(`✅ Guión generado para sección ${section.section}: ${generationResult.script.length} caracteres`);
+          
+        } else {
+          scriptResults.push({
+            section: section.section,
+            success: false,
+            error: generationResult.error
+          });
+          console.error(`❌ Error generando guión para sección ${section.section}: ${generationResult.error}`);
+        }
+        
+      } catch (error) {
+        console.error(`❌ Error procesando sección ${section.section}:`, error);
+        scriptResults.push({
+          section: section.section,
+          success: false,
+          error: error.message
+        });
+      }
+    }
+    
+    const successfulGeneration = scriptResults.filter(r => r.success).length;
+    
+    console.log(`\n✅ REGENERACIÓN DE GUIONES COMPLETADA:`);
+    console.log(`📝 ${successfulGeneration}/${missingSectionScripts.length} guiones faltantes regenerados`);
+    console.log(`⏭️ ${projectState.completedSections.length - missingSectionScripts.length} guiones ya existían`);
+    
+    res.json({
+      success: true,
+      message: `${successfulGeneration}/${missingSectionScripts.length} guiones faltantes regenerados exitosamente`,
+      data: {
+        scriptResults: scriptResults,
+        generatedCount: successfulGeneration,
+        totalSections: projectState.completedSections.length,
+        skippedSections: projectState.completedSections.length - missingSectionScripts.length,
+        missingScripts: missingSectionScripts.map(s => s.section)
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Error en regeneración de guiones:', error);
+    res.status(500).json({ error: 'Error regenerando guiones: ' + error.message });
+  }
+});
+
+// ENDPOINT PARA CONTINUAR CON FASE 3: GENERACIÓN DE IMÁGENES POR LOTES
+app.post('/generate-batch-images', async (req, res) => {
+  try {
+    const { projectData, skipImages, googleImages, localAIImages, imageModel, comfyUISettings, folderName } = req.body;
+    
+    console.log('\n' + '🎨'.repeat(20));
+    console.log('🎨 FASE 3: GENERANDO TODAS LAS IMÁGENES');
+    console.log('🎨'.repeat(20));
+    
+    const { sections, imagePrompts, projectKey, additionalInstructions, topic } = projectData;
+    let shouldSkipImages = skipImages === true;
+    let shouldUseGoogleImages = googleImages === true;
+    let shouldUseLocalAI = localAIImages === true;
+    
+    console.log(`📝 Instrucciones adicionales recibidas: "${additionalInstructions || 'Ninguna'}"`);
+    
+    // Crear estructura de carpetas base para este proyecto
+    const baseTopic = topic || sections[0].title.split(':')[0] || 'Proyecto';
+    
+    if (shouldSkipImages) {
+      console.log('⏭️ Saltando generación de imágenes...');
+      return res.json({
+        success: true,
+        phase: 'images_skipped',
+        message: 'Fase 3: Generación de imágenes omitida',
+        data: { projectKey: projectKey }
+      });
+    }
+
+    const imageMethod = shouldUseLocalAI ? 'ComfyUI (IA Local)' : shouldUseGoogleImages ? 'Google Images' : 'IA en la nube';
+    console.log(`🖼️ Generando imágenes para ${sections.length} secciones con ${imageMethod}...`);
+
+    const allImageResults = [];
+
+    // Procesar cada sección
+    for (let sectionIndex = 0; sectionIndex < sections.length; sectionIndex++) {
+      const section = sections[sectionIndex];
+      const sectionImagePrompts = imagePrompts[sectionIndex]?.prompts || [];
+
+      if (sectionImagePrompts.length === 0) {
+        console.log(`⚠️ No hay prompts de imágenes para sección ${section.section}`);
+        continue;
+      }
+
+      console.log(`🎨 Generando ${sectionImagePrompts.length} imágenes para sección ${section.section}: ${section.title}`);
+
+      // Crear estructura de carpetas individual para esta sección usando el folderName ya normalizado
+      const sectionFolderStructure = createProjectStructure(baseTopic, section.section, folderName);      try {
+        let sectionImages = [];
+        
+        if (shouldUseLocalAI) {
+          // Determinar si esta es la última sección para cerrar ComfyUI
+          const isLastSection = sectionIndex === sections.length - 1;
+          
+          // Generar con ComfyUI - los prompts ya tienen las instrucciones integradas desde Fase 1
+          sectionImages = await generateLocalAIImages(
+            sectionImagePrompts,
+            '', // Los prompts ya vienen con instrucciones integradas desde Fase 1
+            sectionFolderStructure.sectionDir,
+            section.section,
+            comfyUISettings,
+            !isLastSection // keepAlive = true para todas excepto la última
+          );
+          
+        } else if (shouldUseGoogleImages) {
+          // Buscar imágenes de Google
+          console.log(`🔍 Buscando imágenes de Google para sección ${section.section}...`);
+          
+          // CORREGIDO: Pasar todos los keywords de una vez para generar nombres únicos
+          const googleImages = await searchAndDownloadBingImages(sectionImagePrompts, sectionFolderStructure.sectionDir);
+          
+          if (googleImages && googleImages.length > 0) {
+            googleImages.forEach((image, index) => {
+              sectionImages.push({
+                path: image.path,
+                prompt: image.keywords,
+                filename: image.filename,
+                source: 'Google Images',
+                index: index + 1
+              });
+            });
+            
+            // ✅ NUEVO: Crear images_metadata.json para cargar keywords posteriormente (batch)
+            try {
+              const metadataPath = path.join(sectionFolderStructure.sectionDir, 'images_metadata.json');
+              const metadata = {};
+              
+              googleImages.forEach((img, index) => {
+                metadata[img.filename] = {
+                  originalUrl: img.url,
+                  keywords: img.keywords || '',
+                  timestamp: new Date().toISOString(),
+                  source: 'bing',
+                  section: section.section
+                };
+              });
+              
+              fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2));
+              console.log(`📝 Metadata de imágenes guardada en: ${metadataPath} (batch section ${section.section})`);
+            } catch (metadataError) {
+              console.warn(`⚠️ Error guardando images_metadata.json (batch): ${metadataError.message}`);
+            }
+          }
+          
+        } else {
+          // Generar con IA en la nube
+          console.log(`🤖 Generando con IA en la nube (modelo: ${imageModel})...`);
+          
+          for (let promptIndex = 0; promptIndex < sectionImagePrompts.length; promptIndex++) {
+            const prompt = sectionImagePrompts[promptIndex];
+            
+            try {
+              const enhancedPrompt = `${prompt.trim()}.`;
+              const imageResponse = await generateImageWithModel(ai, enhancedPrompt, imageModel);
+              
+              if (imageResponse.generatedImages && imageResponse.generatedImages.length > 0) {
+                const generatedImage = imageResponse.generatedImages[0];
+                const imageData = generatedImage.image.imageBytes;
+                
+                // Guardar imagen
+                const timestamp = Date.now();
+                const imageFileName = `seccion_${section.section}_imagen_${promptIndex + 1}_${timestamp}.png`;
+                const imageFilePath = path.join(sectionFolderStructure.sectionDir, imageFileName);
+                
+                const imageBuffer = Buffer.from(imageData, 'base64');
+                fs.writeFileSync(imageFilePath, imageBuffer);
+                
+                // Retornar ruta relativa para acceso web
+                const relativePath = path.relative('./public', imageFilePath).replace(/\\/g, '/');
+                
+                sectionImages.push({
+                  path: relativePath,
+                  prompt: prompt,
+                  filename: imageFileName,
+                  source: `IA en la nube (${imageModel === 'gemini2' ? 'Gemini 2.0' : 'Imagen 4.0'})`,
+                  index: promptIndex + 1
+                });
+                
+                console.log(`✅ Imagen ${promptIndex + 1} generada con IA en la nube`);
+                
+              } else {
+                throw new Error('No se generó imagen');
+              }
+              
+            } catch (imageError) {
+              console.error(`❌ Error generando imagen ${promptIndex + 1} con IA:`, imageError);
+              sectionImages.push({
+                path: null,
+                prompt: prompt,
+                filename: null,
+                source: 'IA en la nube Error',
+                index: promptIndex + 1,
+                error: imageError.message
+              });
+            }
+          }
+        }
+        
+        // Guardar los prompts de esta sección en archivo TXT
+        try {
+          const promptsFileName = `${createSafeFolderName(baseTopic)}_seccion_${section.section}_prompts_imagenes.txt`;
+          const promptsFilePath = path.join(sectionFolderStructure.sectionDir, promptsFileName);
+          
+          const promptsContent = `PROMPTS DE IMÁGENES - SECCIÓN ${section.section}
+===============================
+Tema: ${baseTopic}
+Sección: ${section.section} de ${sections.length}
+Título: ${section.title}
+Cantidad de prompts: ${sectionImagePrompts.length}
+Fecha de generación: ${new Date().toLocaleString()}
+${folderName ? `Nombre del proyecto: ${folderName}` : ''}
+Método de generación: ${imageMethod}
+
+PROMPTS GENERADOS:
+${sectionImagePrompts.map((prompt, index) => `
+${index + 1}. ${prompt.trim()}
+`).join('')}
+
+===============================
+ESTADÍSTICAS DE GENERACIÓN:
+- Prompts totales: ${sectionImagePrompts.length}
+- Imágenes exitosas: ${sectionImages.filter(img => img.path).length}
+- Imágenes fallidas: ${sectionImages.filter(img => !img.path).length}
+
+===============================
+Generado automáticamente por el sistema de creación de contenido (Modo Batch)
+`;
+          
+          fs.writeFileSync(promptsFilePath, promptsContent, 'utf8');
+          console.log(`📝 Prompts de sección ${section.section} guardados en: ${promptsFilePath}`);
+          
+        } catch (saveError) {
+          console.error(`❌ Error guardando prompts de sección ${section.section}:`, saveError);
+          // No detener el proceso por este error, solo registrarlo
+        }
+        
+        allImageResults.push({
+          section: section.section,
+          title: section.title,
+          images: sectionImages,
+          success: sectionImages.filter(img => img.path).length > 0
+        });
+        
+        const successfulImages = sectionImages.filter(img => img.path).length;
+        console.log(`✅ Sección ${section.section}: ${successfulImages}/${sectionImagePrompts.length} imágenes generadas`);
+
+        // 📊 GUARDADO PROGRESIVO: Actualizar progreso después de cada sección de imágenes
+        try {
+          const progressData = updateProjectProgress(projectKey, 'images', sectionIndex + 1, sections.length);
+          
+          // Guardar estado del proyecto con imágenes completadas hasta ahora
+          const updatedProjectData = {
+            ...projectData,
+            imageResults: allImageResults,
+            imageMethod: imageMethod,
+            imageConfig: shouldUseLocalAI ? { 
+              method: 'localAI', 
+              settings: comfyUISettings 
+            } : shouldUseGoogleImages ? { 
+              method: 'google' 
+            } : { 
+              method: 'cloud', 
+              model: imageModel 
+            },
+            phase: 'images',
+            lastUpdate: new Date().toISOString()
+          };
+          
+          await saveProgressiveProjectState(projectKey, updatedProjectData, progressData);
+          
+          console.log(`📊 Progreso guardado: Sección ${sectionIndex + 1}/${sections.length} imágenes (${progressData.percentage}%) - Tiempo estimado restante: ${progressData.estimatedTimeRemaining}`);
+          
+        } catch (progressError) {
+          console.error('⚠️ Error guardando progreso de imágenes:', progressError.message);
+          // No interrumpir la generación por errores de guardado
+        }
+        
+      } catch (error) {
+        console.error(`❌ Error generando imágenes para sección ${section.section}:`, error);
+        allImageResults.push({
+          section: section.section,
+          title: section.title,
+          images: [],
+          success: false,
+          error: error.message
+        });
+
+        // 📊 GUARDADO PROGRESIVO: Actualizar progreso incluso en caso de error
+        try {
+          const progressData = updateProjectProgress(projectKey, 'images', sectionIndex + 1, sections.length);
+          
+          const updatedProjectData = {
+            ...projectData,
+            imageResults: allImageResults,
+            imageMethod: imageMethod,
+            imageConfig: shouldUseLocalAI ? { 
+              method: 'localAI', 
+              settings: comfyUISettings 
+            } : shouldUseGoogleImages ? { 
+              method: 'google' 
+            } : { 
+              method: 'cloud', 
+              model: imageModel 
+            },
+            phase: 'images',
+            lastUpdate: new Date().toISOString()
+          };
+          
+          await saveProgressiveProjectState(projectKey, updatedProjectData, progressData);
+          
+          console.log(`📊 Progreso guardado (con error): Sección ${sectionIndex + 1}/${sections.length} imágenes (${progressData.percentage}%)`);
+          
+        } catch (progressError) {
+          console.error('⚠️ Error guardando progreso de imágenes:', progressError.message);
+        }
+      }
+    }
+    
+    const totalSuccessfulImages = allImageResults.reduce((total, section) => {
+      return total + (section.images?.filter(img => img.path).length || 0);
+    }, 0);
+    
+    const totalExpectedImages = imagePrompts.reduce((total, section) => {
+      return total + (section.prompts?.length || 0);
+    }, 0);
+    
+    console.log(`\n✅ FASE 3 COMPLETADA:`);
+    console.log(`🖼️ ${totalSuccessfulImages}/${totalExpectedImages} imágenes generadas con ${imageMethod}`);
+    
+    // Asegurar que ComfyUI se cierre al final de la fase 3 (solo si se usó)
+    if (shouldUseLocalAI) {
+      console.log('🛑 Cerrando ComfyUI al finalizar Fase 3...');
+      await stopComfyUI();
+      console.log('✅ ComfyUI cerrado, GPU liberada');
+    }
+    
+    // Generar archivo project_state.json para persistencia del proyecto
+    try {
+      await generateProjectStateFile(projectData, {
+        topic,
+        voice: selectedVoice,
+        totalSections,
+        imageCount,
+        promptModifier,
+        imageModel,
+        llmModel,
+        scriptStyle,
+        customStyleInstructions,
+        applioVoice,
+        applioModel,
+        applioPitch
+      });
+      console.log('📄 Archivo project_state.json generado exitosamente');
+    } catch (stateError) {
+      console.error('❌ Error generando project_state.json:', stateError.message);
+    }
+    
+    res.json({
+      success: true,
+      phase: 'images_completed',
+      message: `Fase 3 completada: ${totalSuccessfulImages}/${totalExpectedImages} imágenes generadas con ${imageMethod}`,
+      data: {
+        imageResults: allImageResults,
+        projectKey: projectKey,
+        imageMethod: imageMethod,
+        totalImages: totalSuccessfulImages
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Error en generación de imágenes por lotes:', error);
+    
+    // Asegurar que ComfyUI se cierre en caso de error
+    try {
+      console.log('🛑 Cerrando ComfyUI debido a error en batch...');
+      await stopComfyUI();
+      console.log('✅ ComfyUI cerrado después del error');
+    } catch (closeError) {
+      console.error('❌ Error cerrando ComfyUI:', closeError);
+    }
+    
+    res.status(500).json({ error: 'Error en generación de imágenes: ' + error.message });
+  }
+});
+
+// ENDPOINT PARA OBTENER PROGRESO EN TIEMPO REAL
+app.get('/progress/:projectKey', (req, res) => {
+  try {
+    const { projectKey } = req.params;
+    
+    if (!projectProgressTracker[projectKey]) {
+      return res.json({ 
+        success: false, 
+        error: 'Proyecto no encontrado' 
+      });
+    }
+    
+    const progressData = projectProgressTracker[projectKey];
+    
+    res.json({
+      success: true,
+      progress: progressData
+    });
+    
+  } catch (error) {
+    console.error('❌ Error obteniendo progreso:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Error obteniendo progreso: ' + error.message 
+    });
+  }
+});
+
 app.post('/generate', async (req, res) => {
   try {
-    const { topic, folderName, voice, totalSections, currentSection, previousSections, imageCount, promptModifier, imageModel, llmModel, skipImages, googleImages, scriptStyle, customStyleInstructions, applioVoice, applioModel, applioPitch } = req.body;
+    const { topic, folderName, voice, totalSections, currentSection, previousSections, minWords, maxWords, imageCount, promptModifier, imageModel, llmModel, skipImages, googleImages, localAIImages, comfyUISettings, scriptStyle, customStyleInstructions, applioVoice, applioModel, applioPitch } = req.body;
     
     const selectedVoice = voice || 'Orus';
     const sections = totalSections || 3;
     const section = currentSection || 1;
+    const wordsMin = minWords || 800;
+    const wordsMax = maxWords || 1100;
     const selectedStyle = scriptStyle || 'professional'; // Default al estilo profesional
     const numImages = imageCount || 5; // Default a 5 imágenes si no se especifica
     const additionalInstructions = promptModifier || ''; // Instrucciones adicionales para imágenes
@@ -1815,24 +4980,27 @@ app.post('/generate', async (req, res) => {
     const selectedLlmModel = llmModel || 'gemini-2.5-pro';
     let shouldSkipImages = skipImages === true;
     let shouldUseGoogleImages = googleImages === true;
+    let shouldUseLocalAI = localAIImages === true;
     
-    console.log(`🎯 Solicitud recibida: ${shouldUseGoogleImages ? 'ENLACES GOOGLE' : shouldSkipImages ? 'SIN IMÁGENES' : numImages + ' imágenes'} para la sección ${section}`);
+    console.log(`🎯 Solicitud recibida: ${shouldUseLocalAI ? 'IA LOCAL' : shouldUseGoogleImages ? 'ENLACES GOOGLE' : shouldSkipImages ? 'SIN IMÁGENES' : numImages + ' imágenes'} para la sección ${section}`);
     
     if (!topic) {
       return res.status(400).json({ error: 'Tema requerido' });
     }
 
-    // Crear estructura de carpetas
-    const folderStructure = createProjectStructure(topic, section, folderName);
-    console.log(`📁 Estructura de carpetas creada: ${folderStructure.sectionDir}`);
-
     // Crear clave única para la conversación (proyecto)
-    // Usar siempre el tema como clave de conversación para mantener continuidad
-    // incluso si cambia el nombre de la carpeta
-    const projectKey = createSafeFolderName(topic);
+    // Usar el mismo folderName que se usa para la estructura de carpetas
+    const actualFolderName = folderName && folderName.trim() 
+      ? createSafeFolderName(folderName.trim())
+      : createSafeFolderName(topic);
+    const projectKey = actualFolderName;
     const conversation = getOrCreateConversation(projectKey);
+
+    // Crear estructura de carpetas usando el actualFolderName ya normalizado
+    const folderStructure = createProjectStructure(topic, section, actualFolderName);
+    console.log(`📁 Estructura de carpetas creada: ${folderStructure.sectionDir}`);
     
-    console.log(`💬 Usando conversación: ${projectKey} (basada en tema: "${topic}")`);
+    console.log(`💬 Usando conversación: ${projectKey} (folderName: "${actualFolderName}")`);
     console.log(`📝 Historial actual: ${conversation.history.length} mensajes`);
 
     // Paso 1: Generar guión usando conversación continua
@@ -1920,7 +5088,7 @@ RESPONDE SOLO CON LOS TÍTULOS SEPARADOS POR "||CAPITULO||", NADA MÁS.`;
 
         console.log(`✅ Respuesta de capítulos recibida exitosamente`);
 
-        const chaptersText = chapterResponse.text || '';
+        const chaptersText = chapterResponse || '';
         console.log(`📝 Respuesta de estructura: ${chaptersText ? chaptersText.substring(0, 200) + '...' : 'RESPUESTA VACÍA'}`);
         
         const chapterTitles = chaptersText.split('||CAPITULO||').filter(title => title.trim()).slice(0, sections);
@@ -1962,7 +5130,7 @@ RESPONDE SOLO CON LOS TÍTULOS SEPARADOS POR "||CAPITULO||", NADA MÁS.`;
       console.log(`📝 PASO 2: Generando contenido del Capítulo 1: ${chapterStructure[0] || 'Sin título'}...`);
       
       // Ahora generar el contenido de la primera sección con contexto de estructura
-      promptContent = generateScriptPrompt(selectedStyle, topic, sections, section, customStyleInstructions, chapterStructure, null);
+      promptContent = generateScriptPrompt(selectedStyle, topic, sections, section, customStyleInstructions, chapterStructure, null, wordsMin, wordsMax);
 
       // Limpiar historial y agregar mensaje inicial
       conversation.history = [
@@ -2013,7 +5181,7 @@ RESPONDE SOLO CON LOS TÍTULOS SEPARADOS POR "||CAPITULO||", NADA MÁS.`;
       });
       console.log('─'.repeat(50) + '\n');
       
-      promptContent = generateScriptPrompt(selectedStyle, topic, sections, section, customStyleInstructions, chapterStructure, previousChapterContent);
+      promptContent = generateScriptPrompt(selectedStyle, topic, sections, section, customStyleInstructions, chapterStructure, previousChapterContent, wordsMin, wordsMax);
 
       // Agregar nueva pregunta al historial
       conversation.history.push({ role: 'user', parts: [{ text: promptContent }] });
@@ -2025,11 +5193,11 @@ RESPONDE SOLO CON LOS TÍTULOS SEPARADOS POR "||CAPITULO||", NADA MÁS.`;
     // Generar respuesta usando el historial de conversación
     let systemInstruction;
     if (selectedStyle === 'comedy') {
-      systemInstruction = "Eres un escritor de guiones cómicos para YouTube con tono sarcástico y humor negro. IMPORTANTE: Responde ÚNICAMENTE con el texto del guión, sin explicaciones, comentarios, etiquetas o texto adicional. El texto debe estar listo para TTS. Incluye groserías, humor absurdo y múltiples voces entre corchetes. ESTRUCTURA OBLIGATORIA: Exactamente 3 párrafos detallados, máximo 300 palabras total, mínimo 200 palabras. Solo el guión puro.";
+      systemInstruction = `Eres un escritor de guiones cómicos para YouTube con tono sarcástico y humor negro. IMPORTANTE: Responde ÚNICAMENTE con el texto del guión, sin explicaciones, comentarios, etiquetas o texto adicional. El texto debe estar listo para TTS. Incluye groserías, humor absurdo y múltiples voces entre corchetes. ESTRUCTURA OBLIGATORIA: Exactamente 3 párrafos detallados, entre ${wordsMin} y ${wordsMax} palabras total. Solo el guión puro.`;
     } else if (selectedStyle && selectedStyle.startsWith('custom_') && customStyleInstructions) {
-      systemInstruction = `Eres un escritor de guiones para YouTube especializado en el estilo personalizado que el usuario ha definido. IMPORTANTE: Responde ÚNICAMENTE con el texto del guión siguiendo exactamente estas instrucciones de estilo: ${customStyleInstructions}. Sin explicaciones, comentarios, etiquetas o texto adicional. El texto debe estar listo para TTS aplicando fielmente el estilo especificado. ESTRUCTURA OBLIGATORIA: Exactamente 3 párrafos detallados, máximo 250 palabras total, mínimo 200 palabras por sección. Solo el guión puro.`;
+      systemInstruction = `Eres un escritor de guiones para YouTube especializado en el estilo personalizado que el usuario ha definido. IMPORTANTE: Responde ÚNICAMENTE con el texto del guión siguiendo exactamente estas instrucciones de estilo: ${customStyleInstructions}. Sin explicaciones, comentarios, etiquetas o texto adicional. El texto debe estar listo para TTS aplicando fielmente el estilo especificado. ESTRUCTURA OBLIGATORIA: Exactamente 3 párrafos detallados, entre ${wordsMin} y ${wordsMax} palabras total. Solo el guión puro.`;
     } else {
-      systemInstruction = "Eres un escritor profesional de guiones para YouTube. IMPORTANTE: Responde ÚNICAMENTE con el texto del guión, sin explicaciones, comentarios, etiquetas o texto adicional. El texto debe estar listo para TTS. No incluyas pensamientos, notas o aclaraciones. ESTRUCTURA OBLIGATORIA: Exactamente 3 párrafos detallados, máximo 300 palabras total, mínimo 200 palabras. Solo el guión puro.";
+      systemInstruction = `Eres un escritor profesional de guiones para YouTube. IMPORTANTE: Responde ÚNICAMENTE con el texto del guión, sin explicaciones, comentarios, etiquetas o texto adicional. El texto debe estar listo para TTS. No incluyas pensamientos, notas o aclaraciones. ESTRUCTURA OBLIGATORIA: Exactamente 3 párrafos detallados, entre ${wordsMin} y ${wordsMax} palabras total. Solo el guión puro.`;
     }
 
     const scriptResponse = await generateUniversalContent(
@@ -2039,7 +5207,7 @@ RESPONDE SOLO CON LOS TÍTULOS SEPARADOS POR "||CAPITULO||", NADA MÁS.`;
     );
 
     console.log(`🔍 scriptResponse:`, typeof scriptResponse, scriptResponse);
-    const script = scriptResponse.text || scriptResponse.message?.content || scriptResponse;
+    const script = scriptResponse || '';
     console.log(`🔍 script extraído:`, typeof script);
     console.log(`🔍 script preview:`, script && typeof script === 'string' && script.length > 0 ? script.substring(0, 100) + '...' : 'VACÍO O INVÁLIDO');
     
@@ -2086,7 +5254,7 @@ RESPONDE SOLO CON LOS TÍTULOS SEPARADOS POR "||CAPITULO||", NADA MÁS.`;
 
     // Guardar el guión como archivo de texto en la carpeta de la sección
     try {
-      const scriptFileName = `${folderStructure.safeTopicName}_seccion_${section}_guion.txt`;
+      const scriptFileName = `${actualFolderName}_seccion_${section}_guion.txt`;
       const scriptFilePath = path.join(folderStructure.sectionDir, scriptFileName);
       
       const scriptContent = `GUIÓN DE LA SECCIÓN ${section}
@@ -2110,16 +5278,26 @@ Generado automáticamente por el sistema de creación de contenido
       // No detener el proceso por este error, solo registrarlo
     }
 
-    // Verificar si se deben omitir las imágenes o usar Bing Images
-    if (shouldSkipImages || shouldUseGoogleImages) {
-      const modeDescription = shouldUseGoogleImages ? 'Descargando imágenes específicas de Bing' : 'Omitiendo generación de imágenes, pero generando prompts para mostrar';
-      console.log(`🚫 ${modeDescription}`);
+    // Verificar si se deben omitir las imágenes, usar Google Images o usar IA Local
+    if (shouldSkipImages || shouldUseGoogleImages || shouldUseLocalAI) {
+      let modeDescription = 'Modo desconocido';
+      if (shouldUseLocalAI) {
+        modeDescription = 'Generando imágenes con IA Local (ComfyUI + Flux)';
+      } else if (shouldUseGoogleImages) {
+        modeDescription = 'Descargando imágenes específicas de Bing';
+      } else {
+        modeDescription = 'Omitiendo generación de imágenes, pero generando prompts para mostrar';
+      }
+      
+      console.log(`🎨 ${modeDescription}`);
       console.log(`🔍 DEBUG SKIP - shouldSkipImages: ${shouldSkipImages}`);
       console.log(`🔍 DEBUG BING - shouldUseGoogleImages: ${shouldUseGoogleImages}`);
-      console.log(`🔍 DEBUG SKIP - numImages: ${numImages}`);
+      console.log(`🔍 DEBUG AI LOCAL - shouldUseLocalAI: ${shouldUseLocalAI}`);
+      console.log(`🔍 DEBUG - numImages: ${numImages}`);
       
       let enhancedPrompts = [];
       let downloadedImages = [];
+      let localAIImages = []; // Declarar para imágenes de IA Local
       let imageKeywords = []; // Declarar aquí para uso posterior
       
       if (shouldUseGoogleImages) {
@@ -2142,12 +5320,34 @@ Generado automáticamente por el sistema de creación de contenido
             try {
               const keywordsToSave = downloadedImages.map(img => img.keywords || '').filter(k => k.trim());
               if (keywordsToSave.length > 0) {
-                const keywordsFilePath = path.join(folderStructure.sectionDir, `${folderStructure.folderName}_seccion_${section}_keywords.txt`);
+                const keywordsFilePath = path.join(folderStructure.sectionDir, `${actualFolderName}_seccion_${section}_keywords.txt`);
                 fs.writeFileSync(keywordsFilePath, keywordsToSave.join('\n'), 'utf8');
                 console.log(`💾 Keywords guardadas en: ${keywordsFilePath}`);
               }
             } catch (keywordSaveError) {
               console.warn(`⚠️ Error guardando keywords: ${keywordSaveError.message}`);
+            }
+            
+            // ✅ NUEVO: Crear images_metadata.json para cargar keywords posteriormente
+            try {
+              const metadataPath = path.join(folderStructure.sectionDir, 'images_metadata.json');
+              const metadata = {};
+              
+              downloadedImages.forEach((img, index) => {
+                metadata[img.filename] = {
+                  originalUrl: img.url,
+                  keywords: img.keywords || '',
+                  timestamp: new Date().toISOString(),
+                  source: 'bing',
+                  section: section
+                };
+              });
+              
+              fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2));
+              console.log(`📝 Metadata de imágenes guardada en: ${metadataPath}`);
+              console.log(`📊 Metadata guardado:`, metadata);
+            } catch (metadataError) {
+              console.warn(`⚠️ Error guardando images_metadata.json: ${metadataError.message}`);
             }
             
             // Crear "prompts" mostrando las palabras clave específicas que se usaron
@@ -2167,27 +5367,157 @@ Generado automáticamente por el sistema de creación de contenido
           console.error(`❌ Error descargando imágenes de Bing:`, error.message);
           enhancedPrompts = [`Error generando keywords o descargando imágenes: ${error.message}`];
         }
+      } else if (shouldUseLocalAI) {
+        console.log(`🤖 Generando ${numImages} imágenes con IA Local (ComfyUI + Flux)...`);
+        
+        try {
+          // Paso 1: Obtener prompts anteriores para mantener consistencia
+          console.log(`🧠 Recuperando contexto de prompts anteriores...`);
+          const { previousPrompts, contextInfo } = getPreviousImagePrompts(projectKey, section);
+          
+          // Paso 2: Construir contexto de consistencia
+          const consistencyContext = buildConsistencyContext(previousPrompts, contextInfo);
+          
+          // Paso 3: Construir prompt base para el LLM
+          let basePrompt = `Basándote en este guión de la sección ${section} sobre "${topic}": "${cleanScript}", crea EXACTAMENTE ${numImages} prompts detallados para generar ${numImages} imágenes que ilustren visualmente el contenido ESPECÍFICO de esta sección.
+
+            IMPORTANTE: Debes crear EXACTAMENTE ${numImages} prompts, ni más ni menos.
+
+            ENFOQUE ESPECÍFICO PARA ESTA SECCIÓN:
+            - Estas imágenes deben representar SOLO el contenido de la sección ${section}, no de todo el proyecto
+            - Cada imagen debe mostrar diferentes aspectos, momentos o elementos clave mencionados en esta sección específica
+            - NO dividas la sección en partes cronológicas - en su lugar, crea ${numImages} perspectivas diferentes del mismo contenido de la sección
+            - Enfócate en elementos específicos, personajes, lugares, objetos, emociones o conceptos mencionados en esta sección
+            - Mantén consistencia visual con las secciones anteriores${consistencyContext}
+
+            TIPOS DE PROMPTS PARA ESTA SECCIÓN:
+            - Imagen principal: La escena o momento central de la sección
+            - Detalles importantes: Objetos, elementos o características específicas mencionadas
+            - Perspectivas diferentes: Diferentes ángulos o enfoques del mismo contenido
+            - Atmósfera: Imágenes que capturen el mood o ambiente de la sección
+            - Elementos secundarios: Aspectos adicionales que complementen la narrativa de esta sección
+
+            INSTRUCCIONES CRÍTICAS PARA EL FORMATO:
+            - DEBES crear ${numImages} prompts independientes que representen la MISMA sección desde diferentes perspectivas
+            - NO dividas el contenido en secuencia cronológica - todas las imágenes son de la MISMA sección`;
+          
+          // Paso 4: Integrar instrucciones adicionales en el prompt del LLM
+          const finalPromptForLLM = integrateAdditionalInstructions(basePrompt, additionalInstructions);
+          
+          console.log(`🧠 Creando prompts para secuencia de ${numImages} imágenes con contexto de consistencia...`);
+          if (previousPrompts.length > 0) {
+            console.log(`🔗 Usando ${previousPrompts.length} prompts anteriores para mantener consistencia`);
+          }
+          if (additionalInstructions && additionalInstructions.trim()) {
+            console.log(`📝 Integrando instrucciones adicionales en el LLM: "${additionalInstructions.trim()}"`);
+          }
+          
+          const promptsResponse = await generateUniversalContent(
+            selectedLlmModel,
+            finalPromptForLLM + `
+            - DEBES separar cada prompt con "||PROMPT||" (sin espacios adicionales)
+            - DEBES asegurarte de que haya exactamente ${numImages} prompts en tu respuesta
+            - Las imágenes deben contar la historia del guión de forma visual secuencial
+            - Incluye detalles específicos mencionados en el texto del guión
+
+            REQUISITOS OBLIGATORIOS para cada prompt:
+            - Formato: Aspecto 16:9 (widescreen)
+            - Estilo: Realista, alta calidad, 4K
+            
+            FORMATO DE RESPUESTA OBLIGATORIO:
+            DEBES presentar EXACTAMENTE ${numImages} prompts separados por "||PROMPT||" (sin espacios antes o después del delimitador).
+            
+            ESTRUCTURA REQUERIDA:
+            Prompt 1 aquí||PROMPT||Prompt 2 aquí||PROMPT||Prompt 3 aquí||PROMPT||... hasta el Prompt ${numImages}
+            
+            VERIFICACIÓN FINAL: Tu respuesta debe contener exactamente ${numImages - 1} ocurrencias del delimitador "||PROMPT||" para generar ${numImages} prompts.`,
+            `Eres un experto en arte conceptual y narrativa visual. Tu ÚNICA tarea es crear prompts separados por "||PROMPT||". 
+
+REGLAS CRÍTICAS:
+1. SIEMPRE usa el delimitador exacto "||PROMPT||" (sin espacios adicionales)
+2. NUNCA generes texto adicional fuera de los prompts
+3. CUENTA cuidadosamente para generar el número exacto solicitado
+4. DIVIDE el contenido equitativamente entre todos los prompts
+5. Cada prompt debe ser independiente y descriptivo
+
+Si te piden N prompts, tu respuesta debe tener exactamente (N-1) delimitadores "||PROMPT||".`
+          );
+
+          const promptsText = promptsResponse || '';
+          console.log(`📝 Respuesta del modelo para IA Local: ${promptsText ? promptsText.substring(0, 200) + '...' : 'RESPUESTA VACÍA'}`);
+          
+          const imagePrompts = promptsText.split('||PROMPT||').filter(p => p.trim()).slice(0, numImages);
+          console.log(`🎨 ${imagePrompts.length} prompts secuenciales generados para IA Local`);
+
+          // Paso 2: Generar las imágenes usando ComfyUI + Flux
+          console.log(`🖼️ Generando secuencia de ${numImages} imágenes con ComfyUI + Flux...`);
+          
+          // Registrar configuración recibida
+          if (comfyUISettings) {
+            console.log(`⚙️ Configuración ComfyUI recibida del frontend:`, comfyUISettings);
+            console.log(`🔧 Pasos configurados en frontend: ${comfyUISettings.steps}`);
+            console.log(`🎯 Guidance configurado en frontend: ${comfyUISettings.guidance}`);
+            console.log(`📐 Resolución configurada: ${comfyUISettings.width}x${comfyUISettings.height}`);
+          } else {
+            console.log(`⚠️ No se recibió configuración ComfyUI, usando valores por defecto`);
+          }
+          
+          localAIImages = await generateLocalAIImages(imagePrompts, additionalInstructions, folderStructure.sectionDir, section, comfyUISettings);
+          
+          if (localAIImages.length > 0) {
+            console.log(`✅ ${localAIImages.length} imágenes generadas con IA Local exitosamente`);
+            
+            // Usar los prompts originales como descripción de las imágenes generadas
+            enhancedPrompts = localAIImages.map((img, index) => 
+              `IA Local ${index + 1}: ${img.prompt || imagePrompts[index] || 'Imagen generada'}`
+            );
+            
+            console.log(`📋 Prompts de IA Local generados:`, enhancedPrompts);
+          } else {
+            console.log(`⚠️ No se pudieron generar imágenes con IA Local, usando prompts como fallback`);
+            enhancedPrompts = imagePrompts.map((prompt, index) => 
+              `IA Local prompt ${index + 1}: ${prompt}`
+            );
+          }
+        } catch (error) {
+          console.error(`❌ Error generando imágenes con IA Local:`, error.message);
+          enhancedPrompts = [`Error generando imágenes con IA Local: ${error.message}`];
+        }
       } else {
         console.log(`🎨 Generando prompts para secuencia de ${numImages} imágenes (solo texto)...`);
-        const promptsResponse = await generateUniversalContent(
-          selectedLlmModel,
-          `Basándote en este guión de la sección ${section} sobre "${topic}": "${cleanScript}", crea EXACTAMENTE ${numImages} prompts detallados para generar una SECUENCIA de ${numImages} imágenes que ilustren visualmente el contenido del guión en orden cronológico.
+        
+        // Paso 1: Obtener prompts anteriores para mantener consistencia
+        console.log(`🧠 Recuperando contexto de prompts anteriores...`);
+        const { previousPrompts, contextInfo } = getPreviousImagePrompts(projectKey, section);
+        
+        // Paso 2: Construir contexto de consistencia
+        const consistencyContext = buildConsistencyContext(previousPrompts, contextInfo);
+        
+        // Paso 3: Construir prompt base para el LLM
+        let basePrompt = `Basándote en este guión de la sección ${section} sobre "${topic}": "${cleanScript}", crea EXACTAMENTE ${numImages} prompts detallados para generar ${numImages} imágenes que ilustren visualmente el contenido ESPECÍFICO de esta sección.
 
           IMPORTANTE: Debes crear EXACTAMENTE ${numImages} prompts, ni más ni menos.
 
-          ENFOQUE:
-          - Las imágenes deben seguir la narrativa del guión paso a paso
-          - Cada imagen debe representar una parte específica del guión en orden
-          - Enfócate en elementos del lore interno del juego mencionados en el guión
-          - Ilustra lugares, personajes, eventos y elementos específicos del guión
-          - Mantén consistencia visual entre las ${numImages} imágenes
+          ENFOQUE ESPECÍFICO PARA ESTA SECCIÓN:
+          - Estas imágenes deben representar SOLO el contenido de la sección ${section}, no de todo el proyecto
+          - Cada imagen debe mostrar diferentes aspectos, momentos o elementos clave mencionados en esta sección específica
+          - NO dividas la sección en partes cronológicas - en su lugar, crea ${numImages} perspectivas diferentes del mismo contenido de la sección
+          - Enfócate en elementos específicos, personajes, lugares, objetos, emociones o conceptos mencionados en esta sección
+          - Mantén consistencia visual con las secciones anteriores${consistencyContext}
+
+          TIPOS DE PROMPTS PARA ESTA SECCIÓN:
+          - Imagen principal: La escena o momento central de la sección
+          - Detalles importantes: Objetos, elementos o características específicas mencionadas
+          - Perspectivas diferentes: Diferentes ángulos o enfoques del mismo contenido
+          - Atmósfera: Imágenes que capturen el mood o ambiente de la sección
+          - Elementos secundarios: Aspectos adicionales que complementen la narrativa de esta sección
 
           INSTRUCCIONES CRÍTICAS PARA EL FORMATO:
-          - DEBES dividir el guión en EXACTAMENTE ${numImages} partes cronológicas
-          - DEBES crear un prompt independiente para cada parte
+          - DEBES crear ${numImages} prompts independientes que representen la MISMA sección desde diferentes perspectivas
+          - NO dividas el contenido en secuencia cronológica - todas las imágenes son de la MISMA sección
           - DEBES separar cada prompt con "||PROMPT||" (sin espacios adicionales)
           - DEBES asegurarte de que haya exactamente ${numImages} prompts en tu respuesta
-          - Las imágenes deben contar la historia del guión de forma visual secuencial
+          - Todas las imágenes deben estar relacionadas con el contenido específico de la sección ${section}
           - Incluye detalles específicos mencionados en el texto del guión
 
           REQUISITOS OBLIGATORIOS para cada prompt:
@@ -2202,7 +5532,22 @@ Generado automáticamente por el sistema de creación de contenido
           EJEMPLO PARA 3 PROMPTS (adaptar a ${numImages}):
           Un bosque oscuro con árboles ancianos||PROMPT||Una batalla épica entre guerreros||PROMPT||Un castillo en ruinas bajo la luna
           
-          VERIFICACIÓN FINAL: Tu respuesta debe contener exactamente ${numImages - 1} ocurrencias del delimitador "||PROMPT||" para generar ${numImages} prompts.`,
+          VERIFICACIÓN FINAL: Tu respuesta debe contener exactamente ${numImages - 1} ocurrencias del delimitador "||PROMPT||" para generar ${numImages} prompts.`;
+        
+        // Paso 4: Integrar instrucciones adicionales en el prompt del LLM
+        const finalPromptForLLM = integrateAdditionalInstructions(basePrompt, additionalInstructions);
+        
+        console.log(`🧠 Creando prompts para secuencia de ${numImages} imágenes con contexto de consistencia...`);
+        if (previousPrompts.length > 0) {
+          console.log(`🔗 Usando ${previousPrompts.length} prompts anteriores para mantener consistencia`);
+        }
+        if (additionalInstructions && additionalInstructions.trim()) {
+          console.log(`📝 Integrando instrucciones adicionales en el LLM: "${additionalInstructions.trim()}"`);
+        }
+        
+        const promptsResponse = await generateUniversalContent(
+          selectedLlmModel,
+          finalPromptForLLM,
           `Eres un experto en arte conceptual y narrativa visual. Tu ÚNICA tarea es crear prompts separados por "||PROMPT||". 
 
 REGLAS CRÍTICAS:
@@ -2215,7 +5560,7 @@ REGLAS CRÍTICAS:
 Si te piden N prompts, tu respuesta debe tener exactamente (N-1) delimitadores "||PROMPT||".`
         );
 
-        const promptsText = promptsResponse.text || '';
+        const promptsText = promptsResponse || '';
         console.log(`📝 DEBUG SKIP - Respuesta del modelo: ${promptsText ? promptsText.substring(0, 200) + '...' : 'RESPUESTA VACÍA'}`);
         console.log(`🔍 DEBUG SKIP - Buscando delimitadores "||PROMPT||" en la respuesta...`);
         
@@ -2225,18 +5570,9 @@ Si te piden N prompts, tu respuesta debe tener exactamente (N-1) delimitadores "
         console.log(`🔢 DEBUG SKIP - Se solicitaron ${numImages} prompts, se generaron ${imagePrompts.length} prompts válidos`);
         console.log(`🎨 DEBUG SKIP - Primeros 3 prompts:`, imagePrompts.slice(0, 3));
         
-        // Aplicar instrucciones adicionales a los prompts si existen
+        // Ya no aplicamos instrucciones adicionales aquí - están integradas en el LLM
         enhancedPrompts = imagePrompts;
-        if (additionalInstructions && additionalInstructions.trim()) {
-          console.log(`✅ DEBUG SKIP - Aplicando instrucciones adicionales a prompts: "${additionalInstructions}"`);
-          enhancedPrompts = imagePrompts.map((prompt, index) => {
-            const enhanced = `${prompt.trim()}. ${additionalInstructions.trim()}`;
-            console.log(`🎨 DEBUG SKIP - Prompt ${index + 1} mejorado: ${enhanced.substring(0, 100)}...`);
-            return enhanced;
-          });
-        } else {
-          console.log(`❌ DEBUG SKIP - No hay instrucciones adicionales para aplicar a prompts`);
-        }
+        console.log(`✅ Las instrucciones adicionales ya están integradas en los prompts por el LLM`);
       }
 
       // Guardar los prompts como archivo de texto en la carpeta de la sección
@@ -2251,7 +5587,7 @@ Sección: ${section} de ${sections}
 Cantidad de prompts: ${enhancedPrompts.length}
 Fecha de generación: ${new Date().toLocaleString()}
 ${folderName ? `Nombre del proyecto: ${folderName}` : ''}
-${additionalInstructions ? `Instrucciones adicionales aplicadas: ${additionalInstructions}` : 'Sin instrucciones adicionales'}
+${additionalInstructions ? `Instrucciones adicionales integradas en LLM: ${additionalInstructions}` : 'Sin instrucciones adicionales'}
 
 PROMPTS GENERADOS:
 ${enhancedPrompts.map((prompt, index) => `
@@ -2326,7 +5662,24 @@ Generado automáticamente por el sistema de creación de contenido
       };
 
       // Agregar datos específicos según el modo
-      if (shouldUseGoogleImages && downloadedImages.length > 0) {
+      if (shouldUseLocalAI) {
+        // Modo IA Local: incluir imágenes generadas
+        const localImages = localAIImages ? localAIImages.filter(img => img.path) : []; // Solo imágenes exitosas
+        
+        response.localAIImages = localImages.map(img => ({
+          url: `/${img.path}`,
+          caption: `IA Local: ${img.filename ? img.filename.replace(/\.[^/.]+$/, '') : 'Imagen generada'}`,
+          filename: img.filename,
+          path: img.path,
+          prompt: img.prompt
+        }));
+        response.localAIMode = true;
+        response.imagesGenerated = localImages.length;
+        response.mode = 'local_ai';
+        response.imagePrompts = enhancedPrompts;
+        console.log(`🤖 Respuesta configurada para modo IA Local con ${localImages.length} imágenes generadas`);
+        
+      } else if (shouldUseGoogleImages && downloadedImages.length > 0) {
         // Modo Bing Images: filtrar solo imágenes exitosas que realmente existen
         const existingImages = downloadedImages.filter(img => {
           // Si la imagen fue marcada como fallida, no incluirla
@@ -2445,26 +5798,40 @@ Generado automáticamente por el sistema de creación de contenido
 
     // Paso 2: Crear prompts para imágenes secuenciales basadas en el guión
     console.log(`🎨 Generando prompts para secuencia de ${numImages} imágenes...`);
-    const promptsResponse = await ai.models.generateContent({
-      model: `models/${selectedLlmModel}`,
-      contents: `Basándote en este guión de la sección ${section} sobre "${topic}" ": "${cleanScript}", crea EXACTAMENTE ${numImages} prompts detallados para generar una SECUENCIA de ${numImages} imágenes que ilustren visualmente el contenido del guión en orden cronológico.
+    
+    // Obtener prompts anteriores para mantener consistencia
+    console.log(`🧠 Recuperando contexto de prompts anteriores...`);
+    const { previousPrompts, contextInfo } = getPreviousImagePrompts(projectKey, section);
+    
+    // Construir contexto de consistencia
+    const consistencyContext = buildConsistencyContext(previousPrompts, contextInfo);
+    
+    // Construir prompt base para el LLM
+    let basePrompt = `Basándote en este guión de la sección ${section} sobre "${topic}" ": "${cleanScript}", crea EXACTAMENTE ${numImages} prompts detallados para generar ${numImages} imágenes que ilustren visualmente el contenido ESPECÍFICO de esta sección.
 
       IMPORTANTE: Debes crear EXACTAMENTE ${numImages} prompts, ni más ni menos.
 
-      ENFOQUE:
-      - Las imágenes deben seguir la narrativa del guión paso a paso
-      - Cada imagen debe representar una parte específica del guión en orden
-      - Enfócate en elementos del lore interno del juego mencionados en el guión
-      - Ilustra lugares, personajes, eventos y elementos específicos del guión
-      - Mantén consistencia visual entre las ${numImages} imágenes
+      ENFOQUE ESPECÍFICO PARA ESTA SECCIÓN:
+      - Estas imágenes deben representar SOLO el contenido de la sección ${section}, no de todo el proyecto
+      - Cada imagen debe mostrar diferentes aspectos, momentos o elementos clave mencionados en esta sección específica
+      - NO dividas la sección en partes cronológicas - en su lugar, crea ${numImages} perspectivas diferentes del mismo contenido de la sección
+      - Enfócate en elementos específicos, personajes, lugares, objetos, emociones o conceptos mencionados en esta sección
+      - Mantén consistencia visual con las secciones anteriores${consistencyContext}
+
+      TIPOS DE PROMPTS PARA ESTA SECCIÓN:
+      - Imagen principal: La escena o momento central de la sección
+      - Detalles importantes: Objetos, elementos o características específicas mencionadas
+      - Perspectivas diferentes: Diferentes ángulos o enfoques del mismo contenido
+      - Atmósfera: Imágenes que capturen el mood o ambiente de la sección
+      - Elementos secundarios: Aspectos adicionales que complementen la narrativa de esta sección
 
       INSTRUCCIONES CRÍTICAS PARA EL FORMATO:
-      - DEBES dividir el guión en EXACTAMENTE ${numImages} partes cronológicas
-      - DEBES crear un prompt independiente para cada parte
+      - DEBES crear ${numImages} prompts independientes que representen la MISMA sección desde diferentes perspectivas
+      - NO dividas el contenido en secuencia cronológica - todas las imágenes son de la MISMA sección
       - DEBES separar cada prompt con "||PROMPT||" (sin espacios adicionales)
       - DEBES asegurarte de que haya exactamente ${numImages} prompts en tu respuesta
-      - Las imágenes deben contar la historia del guión de forma visual secuencial
-      - Incluye detalles específicos mencionados en el texto del guión
+      - Todas las imágenes deben estar relacionadas con el contenido específico de la sección ${section}
+      - Incluye detalles específicos mencionados en el texto del guión de esta sección
 
       REQUISITOS OBLIGATORIOS para cada prompt:
       - Formato: Aspecto 16:9 (widescreen)
@@ -2478,7 +5845,22 @@ Generado automáticamente por el sistema de creación de contenido
       EJEMPLO PARA 3 PROMPTS (adaptar a ${numImages}):
       Un bosque oscuro con árboles ancianos||PROMPT||Una batalla épica entre guerreros||PROMPT||Un castillo en ruinas bajo la luna
       
-      VERIFICACIÓN FINAL: Tu respuesta debe contener exactamente ${numImages - 1} ocurrencias del delimitador "||PROMPT||" para generar ${numImages} prompts.`,
+      VERIFICACIÓN FINAL: Tu respuesta debe contener exactamente ${numImages - 1} ocurrencias del delimitador "||PROMPT||" para generar ${numImages} prompts.`;
+    
+    // Integrar instrucciones adicionales en el prompt del LLM
+    const finalPromptForLLM = integrateAdditionalInstructions(basePrompt, additionalInstructions);
+    
+    console.log(`🧠 Creando prompts para secuencia de ${numImages} imágenes con contexto de consistencia...`);
+    if (previousPrompts.length > 0) {
+      console.log(`🔗 Usando ${previousPrompts.length} prompts anteriores para mantener consistencia`);
+    }
+    if (additionalInstructions && additionalInstructions.trim()) {
+      console.log(`📝 Integrando instrucciones adicionales en el LLM: "${additionalInstructions.trim()}"`);
+    }
+    
+    const promptsResponse = await ai.models.generateContent({
+      model: `models/${selectedLlmModel}`,
+      contents: finalPromptForLLM,
       config: {
         systemInstruction: `Eres un experto en arte conceptual y narrativa visual. Tu ÚNICA tarea es crear prompts separados por "||PROMPT||". 
 
@@ -2509,18 +5891,11 @@ Si te piden N prompts, tu respuesta debe tener exactamente (N-1) delimitadores "
     const imagePromises = imagePrompts.map(async (prompt, index) => {
       try {
         console.log(`🖼️ Generando imagen ${index + 1}/${numImages}...`);
-        console.log(`📋 Prompt base para imagen ${index + 1}: ${prompt.trim().substring(0, 100)}...`);
+        console.log(`📋 Prompt para imagen ${index + 1}: ${prompt.trim().substring(0, 100)}...`);
         
-        // Construir el prompt completo con estilo y agregar instrucciones adicionales al final
-        let enhancedPrompt = `${prompt.trim()}.`;
-
-        // Agregar instrucciones adicionales del usuario AL FINAL del prompt si existen
-        if (additionalInstructions && additionalInstructions.trim()) {
-          enhancedPrompt += `. ${additionalInstructions.trim()}`;
-          console.log(`✅ Instrucciones adicionales aplicadas al final de imagen ${index + 1}:`, additionalInstructions);
-        } else {
-          console.log(`❌ No hay instrucciones adicionales para imagen ${index + 1} (valor: "${additionalInstructions}")`);
-        }
+        // Usar el prompt directamente ya que las instrucciones adicionales están integradas en el LLM
+        const enhancedPrompt = prompt.trim();
+        console.log(`✅ Las instrucciones adicionales ya están integradas en el prompt por el LLM`);
         
         console.log(`📝 Prompt completo para imagen ${index + 1}: ${enhancedPrompt}`);
         console.log(`🤖 Usando modelo: ${selectedImageModel === 'gemini2' ? 'Gemini 2.0 Flash (nativo)' : 'Imagen 4.0'}`);
@@ -2751,14 +6126,19 @@ app.post('/generate-audio', async (req, res) => {
     const section = currentSection || 1;
     const customNarrationStyle = narrationStyle || null;
     
+    // Crear nombre normalizado consistente
+    const actualFolderName = folderName && folderName.trim() 
+      ? createSafeFolderName(folderName.trim())
+      : createSafeFolderName(topic);
+    
     // Si no se proporciona script, intentar leerlo del archivo guardado
     let scriptContent = script;
     if (!scriptContent) {
       console.log(`🔍 Script no proporcionado, intentando leer archivo de sección ${section}...`);
       
       try {
-        const folderStructure = createProjectStructure(topic, section, folderName);
-        const scriptFileName = `${folderStructure.safeTopicName}_seccion_${section}_guion.txt`;
+        const folderStructure = createProjectStructure(topic, section, actualFolderName);
+        const scriptFileName = `${actualFolderName}_seccion_${section}_guion.txt`;
         const scriptFilePath = path.join(folderStructure.sectionDir, scriptFileName);
         
         if (fs.existsSync(scriptFilePath)) {
@@ -2777,8 +6157,8 @@ app.post('/generate-audio', async (req, res) => {
       return res.status(400).json({ error: 'Guión vacío o no válido' });
     }
     
-    // Crear estructura de carpetas para el audio
-    const folderStructure = createProjectStructure(topic, section, folderName);
+    // Crear estructura de carpetas para el audio usando el nombre normalizado
+    const folderStructure = createProjectStructure(topic, section, actualFolderName);
     
     console.log(`🎵 Generando audio del guión con voz ${selectedVoice}...`);
     if (customNarrationStyle) {
@@ -2899,6 +6279,106 @@ app.post('/regenerate-image', async (req, res) => {
   }
 });
 
+// Nuevo endpoint para generar imagen con ComfyUI + Flux
+app.post('/generate-comfyui-image', async (req, res) => {
+  try {
+    const { prompt, options = {} } = req.body;
+    
+    if (!prompt) {
+      return res.status(400).json({ error: 'Prompt es requerido' });
+    }
+
+    console.log(`🎨 [PRUEBA COMFYUI] Generando imagen: "${prompt.substring(0, 50)}..."`);
+    console.log(`📊 [PRUEBA COMFYUI] Opciones recibidas del frontend:`, options);
+    
+    try {
+      // Configurar opciones (usar las del frontend si están disponibles)
+      const comfyOptions = {
+        width: parseInt(options.width) || 1280,
+        height: parseInt(options.height) || 720,
+        steps: parseInt(options.steps) || 25,
+        cfg: options.cfg || 1,
+        guidance: parseFloat(options.guidance) || 3.5,
+        sampler: options.sampler || "euler",
+        scheduler: options.scheduler || "simple",
+        model: options.model || "flux1-dev-fp8.safetensors",
+        negativePrompt: options.negativePrompt || "low quality, blurry, distorted",
+        timeout: Math.max(180, parseInt(options.steps) * 6) || 180
+      };
+      
+      console.log(`⚙️ [PRUEBA COMFYUI] Configuración final que se enviará a ComfyUI:`, {
+        resolution: `${comfyOptions.width}x${comfyOptions.height}`,
+        steps: comfyOptions.steps,
+        guidance: comfyOptions.guidance,
+        sampler: comfyOptions.sampler,
+        scheduler: comfyOptions.scheduler,
+        timeout: comfyOptions.timeout
+      });
+      
+      console.log(`🚀 [PRUEBA COMFYUI] Iniciando generación con ${comfyOptions.steps} pasos...`);
+      
+      // Generar imagen con ComfyUI usando reinicio automático
+      const result = await generateImageWithAutoRestart(prompt, comfyOptions);
+      
+      if (result.success) {
+        res.json({
+          success: true,
+          imageUrl: result.imageUrl,
+          filename: result.filename,
+          promptId: result.promptId,
+          prompt: prompt,
+          options: comfyOptions
+        });
+      } else {
+        res.status(500).json({
+          error: 'Error generando imagen con ComfyUI',
+          details: result.error || 'Error desconocido'
+        });
+      }
+      
+    } catch (error) {
+      console.error('❌ Error en generación ComfyUI:', error.message);
+      res.status(500).json({
+        error: 'Error interno generando imagen',
+        details: error.message
+      });
+    }
+  } catch (error) {
+    console.error('❌ Error general en endpoint ComfyUI:', error);
+    res.status(500).json({ error: 'Error procesando solicitud de ComfyUI' });
+  }
+});
+
+// Endpoint para verificar estado de ComfyUI
+app.get('/comfyui-status', async (req, res) => {
+  try {
+    const connectionCheck = await comfyUIClient.checkConnection();
+    
+    if (connectionCheck.success) {
+      const modelsInfo = await comfyUIClient.getAvailableModels();
+      res.json({
+        success: true,
+        connected: true,
+        stats: connectionCheck.data,
+        models: modelsInfo.success ? modelsInfo.models : [],
+        fluxAvailable: modelsInfo.success ? modelsInfo.models.includes('flux1-dev-fp8.safetensors') : false
+      });
+    } else {
+      res.json({
+        success: false,
+        connected: false,
+        error: connectionCheck.error
+      });
+    }
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      connected: false,
+      error: error.message
+    });
+  }
+});
+
 // Nueva ruta para generar audio de sección específica usando cliente Applio Node.js
 app.post('/generate-section-audio', async (req, res) => {
   try {
@@ -2915,24 +6395,48 @@ app.post('/generate-section-audio', async (req, res) => {
     const selectedApplioModel = applioModel || "fr-FR-RemyMultilingualNeural";
     const selectedPitch = parseInt(applioPitch) || 0;
     
-    // Crear estructura de carpetas
-    const folderStructure = createProjectStructure(topic, section, folderName);
+    // Crear nombre normalizado consistente
+    const actualFolderName = folderName && folderName.trim() 
+      ? createSafeFolderName(folderName.trim())
+      : createSafeFolderName(topic);
     
-    console.log(`🎵 Generando audio con Applio Node.js para sección ${section}...`);
+    // Crear estructura de carpetas usando el nombre normalizado
+    const folderStructure = createProjectStructure(topic, section, actualFolderName);
+    
+    console.log(`🎵 Generando audio con Applio para sección ${section}...`);
     console.log(`🎤 Voz de Applio seleccionada: ${selectedApplioVoice}`);
     console.log(`🎛️ Modelo TTS seleccionado: ${selectedApplioModel}`);
     console.log(`🎵 Pitch seleccionado: ${selectedPitch}`);
     
     try {
-      // Verificar conexión con Applio primero
+      // 1. Iniciar Applio automáticamente
+      console.log('🚀 [DEBUG] Iniciando Applio para la sección...');
+      console.log('🔍 [DEBUG] Estado antes de startApplio:', {
+        applioStarted: applioStarted,
+        section: section
+      });
+      
+      const applioStartResult = await startApplio();
+      if (!applioStartResult) {
+        throw new Error('No se pudo iniciar Applio automáticamente');
+      }
+      
+      console.log('🔍 [DEBUG] startApplio completado exitosamente');
+      
+      // 2. Verificar conexión con Applio (ya debería estar listo por startApplio)
       const isConnected = await applioClient.checkConnection();
       if (!isConnected) {
         throw new Error('Applio no está disponible en el puerto 6969');
       }
       
-      // Crear nombre del archivo
-      const safeTopicName = createSafeFolderName(topic);
-      const fileName = `${safeTopicName}_seccion_${section}_applio_${Date.now()}.wav`;
+      console.log('✅ Applio iniciado y listo para generar audio');
+      console.log('🔍 [DEBUG] Estado después de verificación:', {
+        applioStarted: applioStarted,
+        connected: isConnected
+      });
+      
+      // Crear nombre del archivo usando el nombre normalizado consistente
+      const fileName = `${actualFolderName}_seccion_${section}_applio_${Date.now()}.wav`;
       const filePath = path.join(folderStructure.sectionDir, fileName);
       
       console.log(`📁 Guardando audio en: ${filePath}`);
@@ -2952,6 +6456,14 @@ app.post('/generate-section-audio', async (req, res) => {
       console.log(`✅ Audio Applio generado exitosamente: ${filePath}`);
       console.log(`📊 Tamaño del archivo: ${(result.size / 1024).toFixed(1)} KB`);
       
+      // Applio permanece abierto para futuras generaciones
+      console.log('ℹ️ Applio permanece abierto para futuras generaciones de audio');
+      console.log('🔍 [DEBUG] Audio generado, estado de Applio:', {
+        applioStarted: applioStarted,
+        section: section,
+        timestamp: new Date().toISOString()
+      });
+      
       // Retornar la ruta relativa para acceso web
       const relativePath = path.relative('./public', filePath).replace(/\\/g, '/');
       
@@ -2961,11 +6473,21 @@ app.post('/generate-section-audio', async (req, res) => {
         method: 'Applio Node.js',
         section: section,
         size: result.size,
-        message: `Audio generado con Applio para la sección ${section}`
+        message: `Audio generado con Applio para la sección ${section}`,
+        applioStatus: 'permanece_abierto'
       });
       
+      console.log('🔍 [DEBUG] Respuesta enviada, Applio sigue disponible');
+      
     } catch (applioError) {
-      console.error('❌ Error con cliente Applio Node.js:', applioError);
+      console.error('❌ Error con cliente Applio:', applioError);
+      console.log('🔍 [DEBUG] Error en generación, estado de Applio:', {
+        applioStarted: applioStarted,
+        error: applioError.message
+      });
+      
+      // No cerrar Applio en caso de error, solo registrar el error
+      console.log('⚠️ Error generando audio, pero Applio permanece abierto para reintentarlo');
       
       if (applioError.message.includes('6969') || applioError.message.includes('Timeout')) {
         res.status(503).json({ 
@@ -3495,15 +7017,12 @@ tag1, tag2, tag3, ...
 5. [prompt completo para miniatura]
     `;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash-exp",
-      contents: [{
-        role: "user",
-        parts: [{ text: prompt }]
-      }]
-    });
-
-    const responseText = response.text;
+    const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
+    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
+    
+    const response = await model.generateContent(prompt);
+    const result = await response.response;
+    const responseText = await result.text();
 
     // Validar que los prompts de miniatura no estén incompletos
     const thumbnailSection = responseText.match(/\*\*PROMPTS PARA MINIATURAS:\*\*([\s\S]*?)(?=\n\n|$)/);
@@ -3703,6 +7222,173 @@ app.get('/api/projects/:folderName', (req, res) => {
   }
 });
 
+// Endpoint para diagnosticar y reparar un proyecto específico
+app.get('/api/projects/:folderName/diagnose', (req, res) => {
+  try {
+    const { folderName } = req.params;
+    const projectDir = path.join('./public/outputs', folderName);
+    const projectStateFile = path.join(projectDir, 'project_state.json');
+    
+    console.log(`🔍 Diagnosticando proyecto: ${folderName}`);
+    
+    const diagnosis = {
+      projectName: folderName,
+      projectDirExists: fs.existsSync(projectDir),
+      projectStateFileExists: fs.existsSync(projectStateFile),
+      errors: [],
+      warnings: [],
+      repairAttempted: false,
+      repairSuccessful: false
+    };
+    
+    if (!diagnosis.projectDirExists) {
+      diagnosis.errors.push('El directorio del proyecto no existe');
+      return res.json({ success: false, diagnosis });
+    }
+    
+    if (!diagnosis.projectStateFileExists) {
+      diagnosis.errors.push('El archivo project_state.json no existe');
+      return res.json({ success: false, diagnosis });
+    }
+    
+    // Leer y analizar el archivo
+    try {
+      const fileContent = fs.readFileSync(projectStateFile, 'utf8');
+      diagnosis.fileSize = fileContent.length;
+      diagnosis.filePreview = fileContent.substring(0, 200) + (fileContent.length > 200 ? '...' : '');
+      
+      if (!fileContent.trim()) {
+        diagnosis.errors.push('El archivo JSON está vacío');
+        return res.json({ success: false, diagnosis });
+      }
+      
+      // Intentar parsear
+      try {
+        const projectState = JSON.parse(fileContent);
+        diagnosis.parseSuccessful = true;
+        diagnosis.projectData = {
+          topic: projectState.topic,
+          totalSections: projectState.totalSections,
+          completedSections: projectState.completedSections?.length || 0,
+          lastModified: projectState.lastModified
+        };
+      } catch (parseError) {
+        diagnosis.errors.push(`Error de JSON: ${parseError.message}`);
+        
+        // Intentar reparar
+        diagnosis.repairAttempted = true;
+        
+        if (!fileContent.trim().endsWith('}') && !fileContent.trim().endsWith(']')) {
+          let repairedContent = fileContent.trim();
+          
+          // Contar llaves abiertas vs cerradas
+          const openBraces = (repairedContent.match(/\{/g) || []).length;
+          const closeBraces = (repairedContent.match(/\}/g) || []).length;
+          
+          if (openBraces > closeBraces) {
+            // Agregar llaves faltantes
+            for (let i = 0; i < openBraces - closeBraces; i++) {
+              repairedContent += '}';
+            }
+            
+            try {
+              const repairedState = JSON.parse(repairedContent);
+              
+              // Crear backup del archivo original
+              const backupPath = projectStateFile + '.backup.' + Date.now();
+              fs.copyFileSync(projectStateFile, backupPath);
+              
+              // Guardar archivo reparado
+              fs.writeFileSync(projectStateFile, JSON.stringify(repairedState, null, 2), 'utf8');
+              
+              diagnosis.repairSuccessful = true;
+              diagnosis.repairDetails = `Agregadas ${openBraces - closeBraces} llaves faltantes`;
+              diagnosis.backupPath = path.basename(backupPath);
+              diagnosis.projectData = {
+                topic: repairedState.topic,
+                totalSections: repairedState.totalSections,
+                completedSections: repairedState.completedSections?.length || 0,
+                lastModified: repairedState.lastModified
+              };
+            } catch (repairError) {
+              diagnosis.errors.push(`Error en reparación: ${repairError.message}`);
+            }
+          } else {
+            diagnosis.warnings.push('El archivo parece completo pero no se puede parsear');
+          }
+        }
+      }
+      
+    } catch (readError) {
+      diagnosis.errors.push(`Error leyendo archivo: ${readError.message}`);
+    }
+    
+    const isHealthy = diagnosis.errors.length === 0 && (diagnosis.parseSuccessful || diagnosis.repairSuccessful);
+    
+    res.json({ 
+      success: isHealthy, 
+      diagnosis,
+      message: isHealthy ? 'Proyecto saludable' : 'Proyecto tiene problemas'
+    });
+    
+  } catch (error) {
+    console.error('❌ Error diagnosticando proyecto:', error);
+    res.status(500).json({ success: false, error: 'Error diagnosticando proyecto: ' + error.message });
+  }
+});
+
+// Endpoint para reconstruir manualmente un proyecto específico
+app.post('/api/projects/:folderName/reconstruct', (req, res) => {
+  try {
+    const { folderName } = req.params;
+    
+    console.log(`🔧 Solicitud de reconstrucción manual para proyecto: ${folderName}`);
+    
+    const reconstructedState = reconstructProjectState(folderName);
+    
+    if (!reconstructedState) {
+      return res.status(500).json({ 
+        success: false, 
+        error: 'No se pudo reconstruir el proyecto. Verifica que las carpetas existan.' 
+      });
+    }
+    
+    // Guardar el estado reconstruido
+    const projectStateFile = path.join('./public/outputs', folderName, 'project_state.json');
+    
+    // Crear backup del archivo existente si existe
+    if (fs.existsSync(projectStateFile)) {
+      const backupPath = projectStateFile + '.backup.' + Date.now();
+      fs.copyFileSync(projectStateFile, backupPath);
+      console.log(`🗃️ Backup creado: ${path.basename(backupPath)}`);
+    }
+    
+    fs.writeFileSync(projectStateFile, JSON.stringify(reconstructedState, null, 2), 'utf8');
+    
+    res.json({ 
+      success: true, 
+      message: 'Proyecto reconstruido exitosamente',
+      data: {
+        projectName: folderName,
+        totalSections: reconstructedState.totalSections,
+        completedSections: reconstructedState.completedSections.length,
+        reconstructedAt: reconstructedState.reconstructedAt,
+        sectionsAnalyzed: reconstructedState.completedSections.map(s => ({
+          section: s.section,
+          hasScript: s.hasScript,
+          hasAudio: s.hasAudio,
+          hasImages: s.hasImages,
+          fileCount: s.fileCount
+        }))
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Error reconstruyendo proyecto:', error);
+    res.status(500).json({ success: false, error: 'Error reconstruyendo proyecto: ' + error.message });
+  }
+});
+
 // Endpoint para obtener imágenes de una sección específica
 app.get('/api/project-images/:folderName/:sectionNumber', (req, res) => {
   try {
@@ -3727,12 +7413,18 @@ app.get('/api/project-images/:folderName/:sectionNumber', (req, res) => {
     console.log(`🖼️ Archivos de imagen encontrados: ${imageFiles.length}`);
     
     // Crear URLs para las imágenes
-    const images = imageFiles.map(filename => ({
-      url: `/outputs/${folderName}/seccion_${sectionNumber}/${filename}`,
-      filename: filename,
-      caption: `Imagen: ${filename}`,
-      path: path.join(sectionDir, filename)
-    }));
+    const images = imageFiles.map(filename => {
+      // Detectar si es imagen de Bing/Google por el nombre del archivo
+      const isBingImage = filename.startsWith('bing_image_');
+      
+      return {
+        url: `/outputs/${folderName}/seccion_${sectionNumber}/${filename}`,
+        filename: filename,
+        caption: `Imagen: ${filename}`,
+        path: path.join(sectionDir, filename),
+        source: isBingImage ? 'Google Images' : 'AI Generated'
+      };
+    });
     
     // Buscar archivo de keywords
     let keywords = [];
@@ -3770,6 +7462,42 @@ app.get('/api/project-images/:folderName/:sectionNumber', (req, res) => {
       }
     }
     
+    // 🔍 INTENTAR CARGAR KEYWORDS DESDE images_metadata.json
+    if (keywords.length === 0) {
+      const metadataFile = path.join(sectionDir, 'images_metadata.json');
+      console.log(`🔍 Buscando archivo de metadata: ${metadataFile}`);
+      if (fs.existsSync(metadataFile)) {
+        try {
+          const metadataContent = fs.readFileSync(metadataFile, 'utf8');
+          const metadata = JSON.parse(metadataContent);
+          console.log(`📊 Metadata cargado:`, metadata);
+          
+          // Extraer keywords para cada imagen en orden
+          const imageKeywords = [];
+          for (const image of images) {
+            const filename = image.filename;
+            if (metadata[filename] && metadata[filename].keywords) {
+              imageKeywords.push(metadata[filename].keywords);
+              console.log(`🔑 Keyword para ${filename}: ${metadata[filename].keywords}`);
+            } else {
+              imageKeywords.push(''); // Placeholder vacío si no hay keyword
+              console.log(`⚠️ No se encontró keyword para ${filename}`);
+            }
+          }
+          
+          if (imageKeywords.length > 0) {
+            keywords = imageKeywords;
+            console.log(`📋 Keywords finales cargadas desde images_metadata.json: ${keywords.length} items`);
+            console.log(`📋 Keywords array:`, keywords);
+          }
+        } catch (error) {
+          console.warn(`⚠️ Error leyendo images_metadata.json: ${error.message}`);
+        }
+      } else {
+        console.log(`❌ Archivo images_metadata.json no encontrado`);
+      }
+    }
+    
     // Buscar archivo de prompts
     let prompts = [];
     const promptsFile = path.join(sectionDir, `${folderName}_seccion_${sectionNumber}_prompts_imagenes.txt`);
@@ -3785,15 +7513,48 @@ app.get('/api/project-images/:folderName/:sectionNumber', (req, res) => {
     
     console.log(`✅ Respondiendo con ${images.length} imágenes, ${keywords.length} keywords, ${prompts.length} prompts`);
     
-    res.json({ 
+    // Si no hay keywords suficientes o hay keywords vacíos, llenar con keywords por defecto
+    if (keywords.length < images.length) {
+      console.log(`⚠️ Hay ${images.length} imágenes pero solo ${keywords.length} keywords. Rellenando con valores por defecto.`);
+      const defaultKeywords = [];
+      for (let i = 0; i < images.length; i++) {
+        if (keywords[i] && keywords[i].trim()) {
+          defaultKeywords.push(keywords[i]);
+        } else {
+          // Generar keyword por defecto basado en el tema del proyecto
+          const projectTopic = folderName.includes('guldan') ? 'guldan' : 'imagen';
+          defaultKeywords.push(`${projectTopic} ${i + 1}`);
+        }
+      }
+      keywords = defaultKeywords;
+      console.log(`📋 Keywords finales después del relleno:`, keywords);
+    } else {
+      // Verificar si hay keywords vacíos y rellenarlos
+      const defaultKeywords = [];
+      let hasEmptyKeywords = false;
+      for (let i = 0; i < keywords.length; i++) {
+        if (keywords[i] && keywords[i].trim()) {
+          defaultKeywords.push(keywords[i]);
+        } else {
+          // Generar keyword por defecto basado en el tema del proyecto  
+          const projectTopic = folderName.includes('guldan') ? 'guldan' : 'imagen';
+          defaultKeywords.push(`${projectTopic} ${i + 1}`);
+          hasEmptyKeywords = true;
+        }
+      }
+      if (hasEmptyKeywords) {
+        keywords = defaultKeywords;
+        console.log(`📋 Keywords rellenados (habían algunos vacíos):`, keywords);
+      }
+    }
+    
+    res.json({
       success: true, 
       images: images,
       keywords: keywords,
       prompts: prompts,
       sectionNumber: parseInt(sectionNumber)
-    });
-    
-  } catch (error) {
+    });  } catch (error) {
     console.error('❌ Error obteniendo imágenes del proyecto:', error);
     res.status(500).json({ success: false, error: 'Error obteniendo imágenes del proyecto' });
   }
@@ -3876,8 +7637,19 @@ app.post('/api/refresh-image', async (req, res) => {
       return res.status(400).json({ error: 'Faltan parámetros requeridos' });
     }
 
-    // Convertir espacios a underscores para coincidir con la estructura de carpetas
-    const normalizedFolderName = folderName.replace(/ /g, '_');
+    // Intentar extraer el folderName real desde las URLs de las imágenes actuales
+    let actualFolderName = folderName;
+    if (currentImages && currentImages.length > 0) {
+      const firstImageUrl = currentImages[0].url;
+      const urlMatch = firstImageUrl.match(/\/outputs\/([^\/]+)\//);
+      if (urlMatch) {
+        actualFolderName = urlMatch[1];
+        console.log(`🔍 Folder name extraído de URL de imagen: "${actualFolderName}"`);
+      }
+    }
+    
+    // Usar la función estándar para normalización consistente
+    const normalizedFolderName = createSafeFolderName(actualFolderName);
     console.log(`🔄 Carpeta normalizada: "${folderName}" → "${normalizedFolderName}"`);
     
     const imagesDir = path.join('./public/outputs', normalizedFolderName, `seccion_${sectionNum}`);
@@ -3924,7 +7696,7 @@ app.post('/api/refresh-image', async (req, res) => {
     
     // Convertir keywords a string si es un array, o usarlo directamente si es string
     const searchQuery = Array.isArray(keywords) ? keywords.join(' ') : keywords;
-    const imageUrls = await searchBingImages(searchQuery, 30); // Buscar 30 imágenes para más variación
+    const imageUrls = await searchBingImages(searchQuery, 60); // Buscar 60 imágenes para máxima variación
     
     if (imageUrls && imageUrls.length > 0) {
       // Obtener URLs de imágenes existentes para evitar duplicados
@@ -4164,7 +7936,7 @@ app.post('/generate-project-video', async (req, res) => {
     updateVideoProgress(sessionId, 5, 'Analizando estructura del proyecto...');
     
     // Normalizar nombre de la carpeta
-    const normalizedFolderName = folderName.toLowerCase().replace(/\s+/g, '_');
+    const normalizedFolderName = createSafeFolderName(folderName);
     const projectPath = path.join(process.cwd(), 'public', 'outputs', normalizedFolderName);
     
     if (!fs.existsSync(projectPath)) {
@@ -4222,25 +7994,98 @@ app.post('/generate-project-video', async (req, res) => {
   }
 });
 
+// Endpoint para generar video simple (sin animaciones)
+app.post('/generate-simple-video', async (req, res) => {
+  try {
+    const { folderName } = req.body;
+    
+    if (!folderName) {
+      return res.status(400).json({ error: 'Nombre de carpeta requerido' });
+    }
+
+    console.log(`🎬 Iniciando generación de video simple para proyecto: ${folderName}`);
+    console.log(`🎬 Configuración: duración automática basada en audio (sin animaciones)`);
+    
+    // Normalizar nombre de la carpeta
+    const normalizedFolderName = createSafeFolderName(folderName);
+    const projectPath = path.join(process.cwd(), 'public', 'outputs', normalizedFolderName);
+    
+    if (!fs.existsSync(projectPath)) {
+      return res.status(404).json({ error: 'Proyecto no encontrado' });
+    }
+
+    // Organizar archivos por secciones
+    const secciones = await organizarArchivosPorSecciones(projectPath);
+    
+    if (secciones.length === 0) {
+      return res.status(404).json({ error: 'No se encontraron secciones con imágenes' });
+    }
+
+    console.log(`🎬 Encontradas ${secciones.length} secciones para procesar (modo simple)`);
+    
+    // Generar video simple (sin animaciones) - sin parámetro duration
+    const outputPath = await procesarVideoSimple(secciones, normalizedFolderName);
+    
+    // Verificar que el archivo existe antes de enviarlo
+    if (!fs.existsSync(outputPath)) {
+      throw new Error('El archivo de video no se generó correctamente');
+    }
+    
+    console.log('🎬 Enviando video simple al cliente');
+    
+    const filename = `${normalizedFolderName}_video_simple.mp4`;
+    
+    res.download(outputPath, filename, (err) => {
+      if (err) {
+        console.error('❌ Error enviando video simple:', err);
+      } else {
+        console.log('✅ Video simple enviado exitosamente');
+        
+        // Limpiar archivo temporal después de un tiempo
+        setTimeout(() => {
+          try {
+            if (fs.existsSync(outputPath)) {
+              fs.unlinkSync(outputPath);
+              console.log('🗑️ Archivo temporal de video simple limpiado');
+            }
+          } catch (e) {
+            console.log('⚠️ No se pudo limpiar archivo temporal:', e.message);
+          }
+        }, 60000); // Limpiar después de 1 minuto
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error al procesar video simple:', error);
+    res.status(500).json({ error: 'Error interno del servidor' });
+  }
+});
+
 // Función para organizar archivos por secciones desde el proyecto
 async function organizarArchivosPorSecciones(projectPath) {
   const secciones = [];
   
   try {
+    console.log(`🔍 Explorando directorio del proyecto: ${projectPath}`);
     const items = fs.readdirSync(projectPath);
+    console.log(`📁 Elementos encontrados en ${projectPath}:`, items);
     
     // Buscar carpetas de secciones
     for (const item of items) {
       const itemPath = path.join(projectPath, item);
       const stats = fs.statSync(itemPath);
       
+      console.log(`🔍 Revisando elemento: ${item} (${stats.isDirectory() ? 'directorio' : 'archivo'})`);
+      
       if (stats.isDirectory() && item.startsWith('seccion_')) {
+        console.log(`🎯 Carpeta de sección encontrada: ${item}`);
         const numeroSeccion = parseInt(item.replace('seccion_', ''));
         const imagenes = [];
         const audios = [];
         
         // Buscar archivos en la carpeta de sección
         const sectionFiles = fs.readdirSync(itemPath);
+        console.log(`📂 Archivos en ${item}:`, sectionFiles);
         
         for (const file of sectionFiles) {
           const filePath = path.join(itemPath, file);
@@ -4248,6 +8093,7 @@ async function organizarArchivosPorSecciones(projectPath) {
           
           if (fileStats.isFile()) {
             const ext = path.extname(file).toLowerCase();
+            console.log(`📄 Archivo: ${file} - Extensión: ${ext}`);
             
             if (['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'].includes(ext)) {
               imagenes.push({
@@ -4255,11 +8101,15 @@ async function organizarArchivosPorSecciones(projectPath) {
                 name: file,
                 mtime: fileStats.mtime
               });
+              console.log(`🖼️ Imagen agregada: ${file}`);
             } else if (['.mp3', '.wav', '.m4a', '.aac', '.ogg'].includes(ext)) {
               audios.push({
                 path: filePath,
                 name: file
               });
+              console.log(`🎵 Audio agregado: ${file}`);
+            } else {
+              console.log(`⚠️ Archivo ignorado (extensión no reconocida): ${file}`);
             }
           }
         }
@@ -4268,6 +8118,10 @@ async function organizarArchivosPorSecciones(projectPath) {
           // Ordenar imágenes por nombre para mantener orden consistente
           imagenes.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
           
+          console.log(`📁 Sección ${numeroSeccion} encontrada: ${imagenes.length} imágenes, ${audios.length} audios`);
+          console.log(`🖼️ Imágenes en sección ${numeroSeccion}:`, imagenes.map(img => img.name));
+          console.log(`🎵 Audios en sección ${numeroSeccion}:`, audios.map(aud => aud.name));
+          
           secciones.push({
             numero: numeroSeccion,
             nombre: `Sección ${numeroSeccion}`,
@@ -4275,7 +8129,11 @@ async function organizarArchivosPorSecciones(projectPath) {
             audios: audios,
             path: itemPath
           });
+        } else {
+          console.log(`⚠️ Sección ${numeroSeccion} no tiene imágenes válidas`);
         }
+      } else if (stats.isDirectory()) {
+        console.log(`📁 Directorio ignorado (no es sección): ${item}`);
       }
     }
     
@@ -4286,6 +8144,8 @@ async function organizarArchivosPorSecciones(projectPath) {
     secciones.forEach(seccion => {
       console.log(`  - ${seccion.nombre}: ${seccion.imagenes.length} imágenes, ${seccion.audios.length} audios`);
     });
+    
+    console.log(`📊 Total: ${secciones.length} secciones, ${secciones.reduce((total, s) => total + s.imagenes.length, 0)} imágenes totales`);
     
     return secciones;
     
@@ -4576,6 +8436,734 @@ async function combinarSeccionesVideo(videosSeccionesTemp, finalOutputPath, sess
     
     ffmpegProcess.on('error', (err) => {
       console.error('❌ Error ejecutando FFmpeg:', err);
+      reject(err);
+    });
+  });
+}
+
+// Función para procesar video simple (sin animaciones)
+async function procesarVideoSimple(secciones, projectName) {
+  const outputDir = path.join(process.cwd(), 'temp');
+  if (!fs.existsSync(outputDir)) {
+    fs.mkdirSync(outputDir, { recursive: true });
+  }
+  
+  const finalOutputPath = path.join(outputDir, `${projectName}_video_simple_${Date.now()}.mp4`);
+  const videosSeccionesTemp = [];
+  
+  try {
+    console.log(`🎬 Procesando video simple con ${secciones.length} secciones`);
+    
+    // Procesar cada sección individualmente (sin parámetro duration)
+    for (let i = 0; i < secciones.length; i++) {
+      const seccion = secciones[i];
+      
+      console.log(`📹 Procesando sección ${i + 1}/${secciones.length}: ${seccion.nombre}`);
+      
+      const videoSeccionPath = await procesarSeccionVideoSimple(seccion);
+      
+      if (videoSeccionPath && fs.existsSync(videoSeccionPath)) {
+        videosSeccionesTemp.push(videoSeccionPath);
+        console.log(`✅ ${seccion.nombre} procesada (simple): ${videoSeccionPath}`);
+      }
+    }
+    
+    if (videosSeccionesTemp.length === 0) {
+      throw new Error('No se pudieron procesar las secciones');
+    }
+    
+    // Combinar todas las secciones
+    console.log('🔗 Combinando todas las secciones (video simple)...');
+    await combinarSeccionesVideoSimple(videosSeccionesTemp, finalOutputPath);
+    
+    // Limpiar videos temporales de secciones
+    videosSeccionesTemp.forEach(video => {
+      try {
+        if (fs.existsSync(video)) {
+          fs.unlinkSync(video);
+          console.log(`🗑️ Video temporal limpiado: ${path.basename(video)}`);
+        }
+      } catch (e) {
+        console.log('⚠️ No se pudo limpiar video temporal:', e.message);
+      }
+    });
+    
+    return finalOutputPath;
+    
+  } catch (error) {
+    // Limpiar videos temporales en caso de error
+    videosSeccionesTemp.forEach(video => {
+      try {
+        if (fs.existsSync(video)) {
+          fs.unlinkSync(video);
+        }
+      } catch (e) {
+        console.log('⚠️ No se pudo limpiar video temporal:', e.message);
+      }
+    });
+    throw error;
+  }
+}
+
+// Función para procesar una sección individual sin animaciones
+async function procesarSeccionVideoSimple(seccion) {
+  try {
+    const outputPath = path.join(process.cwd(), 'temp', `seccion_simple_${seccion.numero}_${Date.now()}.mp4`);
+    
+    // Validar que la sección tiene imágenes
+    if (!seccion.imagenes || seccion.imagenes.length === 0) {
+      throw new Error(`${seccion.nombre} no tiene imágenes para procesar`);
+    }
+    
+    // Buscar archivo de audio para esta sección
+    let audioPath = null;
+    let finalDuration = 3; // Duración por defecto si no hay audio (3 segundos por imagen)
+    
+    if (seccion.audios && seccion.audios.length > 0) {
+      // Usar el primer archivo de audio encontrado
+      audioPath = seccion.audios[0].path;
+      if (fs.existsSync(audioPath)) {
+        console.log(`🎵 Audio encontrado para ${seccion.nombre}: ${audioPath}`);
+        
+        // Obtener duración del audio usando ffprobe
+        try {
+          const audioDuration = await getAudioDuration(audioPath);
+          if (audioDuration > 0) {
+            // ✅ CORREGIDO: No dividir la duración, usar duración completa
+            // Calcular duración por imagen para que el video dure lo mismo que el audio
+            finalDuration = audioDuration / seccion.imagenes.length;
+            console.log(`🎵 Duración del audio: ${audioDuration.toFixed(2)} segundos`);
+            console.log(`📐 Duración calculada por imagen: ${finalDuration.toFixed(2)} segundos`);
+            console.log(`📐 Duración total del video: ${(finalDuration * seccion.imagenes.length).toFixed(2)} segundos`);
+          }
+        } catch (error) {
+          console.warn(`⚠️ No se pudo obtener duración del audio: ${error.message}`);
+        }
+      } else {
+        console.warn(`⚠️ Archivo de audio no existe: ${audioPath}`);
+        audioPath = null;
+      }
+    } else {
+      console.log(`📢 No se encontró audio para ${seccion.nombre}, usando duración por defecto: ${finalDuration}s por imagen`);
+    }
+    
+    // Validar que todas las imágenes existen
+    const imagenesValidadas = [];
+    for (const imagen of seccion.imagenes) {
+      let imagePath = imagen.path;
+      
+      // Si la ruta no es absoluta, convertirla
+      if (!path.isAbsolute(imagePath)) {
+        imagePath = path.resolve(imagePath);
+      }
+      
+      if (!fs.existsSync(imagePath)) {
+        console.error(`❌ Imagen no encontrada: ${imagePath}`);
+        throw new Error(`Imagen no encontrada: ${imagePath}`);
+      }
+      
+      // Verificar que es un archivo de imagen válido
+      const ext = path.extname(imagePath).toLowerCase();
+      if (!['.jpg', '.jpeg', '.png', '.bmp', '.gif', '.webp'].includes(ext)) {
+        console.error(`❌ Formato de imagen no soportado: ${ext}`);
+        throw new Error(`Formato de imagen no soportado: ${ext}`);
+      }
+      
+      imagenesValidadas.push(imagePath);
+      console.log(`✅ Imagen validada: ${imagePath}`);
+    }
+    
+    console.log(`📹 Procesando ${seccion.nombre} con ${imagenesValidadas.length} imágenes validadas${audioPath ? ' y audio' : ''} (SIN ANIMACIONES)`);
+    
+    // Crear video simple usando solo imágenes estáticas
+    await generarVideoSimpleConImagenes(imagenesValidadas, audioPath, outputPath, finalDuration);
+    
+    console.log(`✅ Video simple de sección ${seccion.nombre} generado: ${outputPath}`);
+    return outputPath;
+        
+  } catch (error) {
+    console.error(`❌ Error en procesarSeccionVideoSimple:`, error);
+    throw error;
+  }
+}
+
+// Función para generar video simple con imágenes estáticas
+async function generarVideoSimpleConImagenes(imagenes, audioPath, outputPath, duracionPorImagen) {
+  return new Promise((resolve, reject) => {
+    console.log(`📹 Generando video simple con ${imagenes.length} imágenes estáticas`);
+    console.log(`⏱️ Duración por imagen: ${duracionPorImagen.toFixed(2)} segundos`);
+    
+    // ✅ NUEVO ENFOQUE: Crear lista de archivos para concat demuxer pero sin audio
+    const listFile = path.join(path.dirname(outputPath), `imagelist_${Date.now()}.txt`);
+    
+    // Verificar que todas las imágenes existen
+    console.log(`🔍 Verificando existencia de ${imagenes.length} imágenes:`);
+    for (let i = 0; i < imagenes.length; i++) {
+      const imagePath = imagenes[i];
+      if (fs.existsSync(imagePath)) {
+        console.log(`✅ Imagen ${i+1}: ${path.basename(imagePath)} - EXISTE`);
+      } else {
+        console.error(`❌ Imagen ${i+1}: ${path.basename(imagePath)} - NO EXISTE`);
+        return reject(new Error(`Imagen no encontrada: ${imagePath}`));
+      }
+    }
+    
+    // Crear lista de concatenación con duraciones precisas
+    const imageList = imagenes.map(imagePath => {
+      return `file '${imagePath.replace(/\\/g, '/')}'
+duration ${duracionPorImagen.toFixed(3)}`;
+    }).join('\n');
+    
+    // Agregar la última imagen una vez más sin duración (requerimiento de concat demuxer)
+    const finalImageList = imageList + `\nfile '${imagenes[imagenes.length - 1].replace(/\\/g, '/')}'`;
+    
+    fs.writeFileSync(listFile, finalImageList);
+    console.log(`📝 Lista de imágenes creada: ${listFile}`);
+    console.log(`� Contenido de la lista (${imagenes.length} imágenes):`);
+    console.log(finalImageList);
+    
+    // Usar spawn directo como VideoCreator para máxima velocidad
+    const args = [
+      '-f', 'concat',
+      '-safe', '0',
+      '-i', listFile
+    ];
+    
+    // Si hay audio, agregarlo
+    if (audioPath) {
+      args.push('-i', audioPath);
+      console.log(`🎵 Audio agregado: ${path.basename(audioPath)}`);
+    }
+    
+    // Configuración optimizada VideoCreator style
+    args.push(
+      '-vf', 'scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black',
+      '-c:v', 'libx264',
+      '-preset', 'fast',
+      '-crf', '23',
+      '-pix_fmt', 'yuv420p',
+      '-movflags', '+faststart'
+    );
+    
+    // Si hay audio, configurarlo
+    if (audioPath) {
+      args.push(
+        '-c:a', 'aac',
+        '-b:a', '128k',
+        '-map', '0:v',  // Video del concat
+        '-map', '1:a'   // Audio del segundo input
+      );
+    }
+    
+    args.push('-y', outputPath);
+    
+    console.log('📹 Comando FFmpeg (VideoCreator style):', `ffmpeg ${args.join(' ')}`);
+    
+    const ffmpegProcess = spawn('ffmpeg', args);
+    
+    let stderrData = '';
+    
+    ffmpegProcess.stderr.on('data', (data) => {
+      stderrData += data.toString();
+      
+      // Extraer progreso del stderr
+      const progressMatch = stderrData.match(/time=(\d{2}):(\d{2}):(\d{2})/);
+      if (progressMatch) {
+        const [, hours, minutes, seconds] = progressMatch;
+        const currentTime = parseInt(hours) * 3600 + parseInt(minutes) * 60 + parseInt(seconds);
+        const totalTime = duracionPorImagen * imagenes.length;
+        const percent = Math.min((currentTime / totalTime) * 100, 100);
+        
+        if (percent > 0) {
+          console.log(`⏳ Progreso video simple: ${Math.round(percent)}%`);
+        }
+      }
+    });
+    
+    ffmpegProcess.on('close', (code) => {
+      // Limpiar archivo de lista temporal
+      try {
+        if (fs.existsSync(listFile)) {
+          fs.unlinkSync(listFile);
+          console.log('🗑️ Archivo de lista temporal limpiado');
+        }
+      } catch (e) {
+        console.log('⚠️ No se pudo limpiar archivo de lista:', e.message);
+      }
+      
+      if (code === 0) {
+        console.log('✅ Video simple generado exitosamente con método VideoCreator');
+        
+        // Verificar propiedades del video generado
+        if (fs.existsSync(outputPath)) {
+          const stats = fs.statSync(outputPath);
+          console.log(`📊 Archivo generado: ${(stats.size / 1024 / 1024).toFixed(2)} MB`);
+          
+          // Verificar duración real
+          exec(`ffprobe -v quiet -show_entries format=duration -of csv=p=0 "${outputPath}"`, (error, stdout) => {
+            if (!error && stdout.trim()) {
+              const actualDuration = parseFloat(stdout.trim());
+              console.log(`⏱️ Duración real del video: ${actualDuration.toFixed(2)} segundos`);
+              console.log(`🎯 Duración esperada: ${(duracionPorImagen * imagenes.length).toFixed(2)} segundos`);
+            }
+          });
+        }
+        
+        resolve(outputPath);
+      } else {
+        console.error('❌ Error en FFmpeg (VideoCreator method):', stderrData);
+        reject(new Error(`FFmpeg exited with code ${code}: ${stderrData}`));
+      }
+    });
+    
+    ffmpegProcess.on('error', (err) => {
+      console.error('❌ Error ejecutando FFmpeg:', err);
+      
+      // Limpiar archivo de lista temporal en caso de error
+      try {
+        if (fs.existsSync(listFile)) {
+          fs.unlinkSync(listFile);
+        }
+      } catch (e) {
+        console.log('⚠️ No se pudo limpiar archivo de lista:', e.message);
+      }
+      
+      reject(err);
+    });
+  });
+}
+
+// Función optimizada para generar video simple con imágenes (método videos temporales)
+async function generarVideoSimpleConImagenesOptimizado(imagenes, audioPath, outputPath, duracionPorImagen) {
+  return new Promise(async (resolve, reject) => {
+    console.log(`📹 Generando video simple con ${imagenes.length} imágenes estáticas (método videos temporales)`);
+    console.log(`⏱️ Duración por imagen: ${duracionPorImagen.toFixed(2)} segundos`);
+    
+    // Verificar que todas las imágenes existen
+    console.log(`🔍 Verificando existencia de ${imagenes.length} imágenes:`);
+    for (let i = 0; i < imagenes.length; i++) {
+      const imagePath = imagenes[i];
+      if (fs.existsSync(imagePath)) {
+        console.log(`✅ Imagen ${i+1}: ${path.basename(imagePath)} - EXISTE`);
+      } else {
+        console.error(`❌ Imagen ${i+1}: ${path.basename(imagePath)} - NO EXISTE`);
+        return reject(new Error(`Imagen no encontrada: ${imagePath}`));
+      }
+    }
+    
+    const tempDir = path.join(process.cwd(), 'temp');
+    const tempVideos = [];
+    
+    try {
+      // Crear videos temporales de cada imagen
+      console.log(`🎬 Creando ${imagenes.length} videos temporales...`);
+      
+      for (let i = 0; i < imagenes.length; i++) {
+        const imagePath = imagenes[i];
+        const tempVideoPath = path.join(tempDir, `temp_vid_${i}_${Date.now()}.mp4`);
+        
+        console.log(`📸 Procesando imagen ${i + 1}/${imagenes.length}: ${path.basename(imagePath)}`);
+        
+        await new Promise((resolveVid, rejectVid) => {
+          ffmpeg()
+            .input(imagePath)
+            .inputOptions([
+              '-loop', '1',
+              '-t', duracionPorImagen.toString()
+            ])
+            .outputOptions([
+              '-vf', 'scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black',
+              '-c:v', 'libx264',
+              '-profile:v', 'main',
+              '-level', '3.1',
+              '-crf', '23',
+              '-preset', 'fast',
+              '-pix_fmt', 'yuv420p',
+              '-r', '30'
+            ])
+            .output(tempVideoPath)
+            .on('end', () => {
+              console.log(`✅ Video temporal ${i + 1} creado`);
+              tempVideos.push(tempVideoPath);
+              resolveVid();
+            })
+            .on('error', (err) => {
+              console.error(`❌ Error creando video temporal ${i + 1}:`, err);
+              rejectVid(err);
+            })
+            .run();
+        });
+      }
+      
+      // Crear lista para concat demuxer
+      const listFile = path.join(tempDir, `concat_list_${Date.now()}.txt`);
+      const listContent = tempVideos.map(video => `file '${video.replace(/\\/g, '/')}'`).join('\n');
+      
+      fs.writeFileSync(listFile, listContent);
+      console.log(`📝 Lista de concatenación creada con ${tempVideos.length} videos`);
+      
+      // Concatenar videos y agregar audio
+      const command = ffmpeg();
+      
+      command.input(listFile)
+        .inputOptions([
+          '-f', 'concat',
+          '-safe', '0'
+        ]);
+      
+      if (audioPath) {
+        command.input(audioPath);
+        console.log(`🎵 Audio agregado: ${path.basename(audioPath)}`);
+      }
+      
+      const outputOptions = [
+        '-c:v', 'copy', // No recodificar video
+        '-movflags', '+faststart'
+      ];
+      
+      if (audioPath) {
+        outputOptions.push('-c:a', 'aac');
+        outputOptions.push('-b:a', '128k');
+        outputOptions.push('-ar', '44100');
+        outputOptions.push('-map', '0:v');
+        outputOptions.push('-map', '1:a');
+      }
+      
+      command
+        .outputOptions(outputOptions)
+        .output(outputPath)
+        .on('start', (commandLine) => {
+          console.log('📹 Comando FFmpeg (concatenación final):', commandLine);
+        })
+        .on('progress', (progress) => {
+          if (progress.percent) {
+            console.log(`⏳ Progreso concatenación: ${Math.round(progress.percent)}%`);
+          }
+        })
+        .on('end', () => {
+          console.log('✅ Video simple generado exitosamente');
+          
+          // Limpiar archivos temporales
+          tempVideos.forEach(tempVideo => {
+            try {
+              if (fs.existsSync(tempVideo)) {
+                fs.unlinkSync(tempVideo);
+                console.log(`🗑️ Video temporal limpiado: ${path.basename(tempVideo)}`);
+              }
+            } catch (e) {
+              console.log('⚠️ No se pudo limpiar video temporal:', e.message);
+            }
+          });
+          
+          try {
+            if (fs.existsSync(listFile)) {
+              fs.unlinkSync(listFile);
+              console.log('🗑️ Lista temporal limpiada');
+            }
+          } catch (e) {
+            console.log('⚠️ No se pudo limpiar lista temporal:', e.message);
+          }
+          
+          // Verificar duración final
+          if (fs.existsSync(outputPath)) {
+            const stats = fs.statSync(outputPath);
+            console.log(`📊 Archivo generado: ${(stats.size / 1024 / 1024).toFixed(2)} MB`);
+            
+            exec(`ffprobe -v quiet -show_entries format=duration -of csv=p=0 "${outputPath}"`, (error, stdout) => {
+              if (!error && stdout.trim()) {
+                const actualDuration = parseFloat(stdout.trim());
+                console.log(`⏱️ Duración real del video: ${actualDuration.toFixed(2)} segundos`);
+                console.log(`🎯 Duración esperada: ${(duracionPorImagen * imagenes.length).toFixed(2)} segundos`);
+              }
+            });
+          }
+          
+          resolve(outputPath);
+        })
+        .on('error', (err) => {
+          console.error('❌ Error en concatenación final:', err);
+          
+          // Limpiar archivos temporales en caso de error
+          tempVideos.forEach(tempVideo => {
+            try {
+              if (fs.existsSync(tempVideo)) {
+                fs.unlinkSync(tempVideo);
+              }
+            } catch (e) {
+              // Ignorar errores de limpieza
+            }
+          });
+          
+          try {
+            if (fs.existsSync(listFile)) {
+              fs.unlinkSync(listFile);
+            }
+          } catch (e) {
+            // Ignorar errores de limpieza
+          }
+          
+          reject(err);
+        })
+        .run();
+        
+    } catch (error) {
+      console.error('❌ Error en proceso de generación:', error);
+      
+      // Limpiar archivos temporales en caso de error
+      tempVideos.forEach(tempVideo => {
+        try {
+          if (fs.existsSync(tempVideo)) {
+            fs.unlinkSync(tempVideo);
+          }
+        } catch (e) {
+          // Ignorar errores de limpieza
+        }
+      });
+      
+      reject(error);
+    }
+  });
+}
+
+// Función mejorada para generar video simple con imágenes estáticas
+async function generarVideoSimpleConImagenesV2(imagenes, audioPath, outputPath, duracionPorImagen) {
+  return new Promise((resolve, reject) => {
+    console.log(`📹 Generando video simple con ${imagenes.length} imágenes estáticas`);
+    console.log(`⏱️ Duración por imagen: ${duracionPorImagen.toFixed(2)} segundos`);
+    
+    // ✅ NUEVO ENFOQUE: Crear videos individuales y luego concatenarlos
+    const tempVideos = [];
+    const tempDir = path.join(process.cwd(), 'temp');
+    
+    // Función para crear video de una sola imagen
+    const createSingleImageVideo = (imagePath, duration, index) => {
+      return new Promise((resolveImg, rejectImg) => {
+        const tempVideoPath = path.join(tempDir, `temp_img_${index}_${Date.now()}.mp4`);
+        
+        console.log(`🖼️ Creando video para imagen ${index + 1}: ${path.basename(imagePath)}`);
+        
+        const command = ffmpeg();
+        command.input(imagePath)
+          .inputOptions([
+            '-loop', '1',
+            '-t', duration.toString()
+          ])
+          .outputOptions([
+            '-vf', 'scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black',
+            '-c:v', 'libx264',
+            '-profile:v', 'high',
+            '-level', '4.0',
+            '-crf', '23',
+            '-preset', 'fast',
+            '-pix_fmt', 'yuv420p',
+            '-r', '30',
+            '-vsync', 'cfr'
+          ])
+          .output(tempVideoPath)
+          .on('end', () => {
+            console.log(`✅ Video temporal ${index + 1} creado: ${path.basename(tempVideoPath)}`);
+            resolveImg(tempVideoPath);
+          })
+          .on('error', (err) => {
+            console.error(`❌ Error creando video temporal ${index + 1}:`, err);
+            rejectImg(err);
+          })
+          .run();
+      });
+    };
+    
+    // Crear videos temporales para cada imagen
+    const createAllTempVideos = async () => {
+      console.log(`🎬 Creando ${imagenes.length} videos temporales...`);
+      
+      for (let i = 0; i < imagenes.length; i++) {
+        try {
+          const tempVideo = await createSingleImageVideo(imagenes[i], duracionPorImagen, i);
+          tempVideos.push(tempVideo);
+        } catch (error) {
+          throw new Error(`Error creando video temporal ${i + 1}: ${error.message}`);
+        }
+      }
+      
+      console.log(`✅ Todos los videos temporales creados: ${tempVideos.length}`);
+    };
+    
+    // Concatenar todos los videos temporales
+    const concatenateVideos = () => {
+      return new Promise((resolveCat, rejectCat) => {
+        console.log(`🔗 Concatenando ${tempVideos.length} videos temporales...`);
+        
+        // Crear lista de concatenación para videos
+        const listFile = path.join(tempDir, `videolist_${Date.now()}.txt`);
+        const videoList = tempVideos.map(video => `file '${video.replace(/\\/g, '/')}'`).join('\n');
+        
+        fs.writeFileSync(listFile, videoList);
+        console.log(`📝 Lista de videos creada: ${listFile}`);
+        console.log(`📝 Videos a concatenar:\n${videoList}`);
+        
+        const command = ffmpeg();
+        
+        // Concatenar videos
+        command.input(listFile)
+          .inputOptions([
+            '-f', 'concat',
+            '-safe', '0'
+          ]);
+        
+        // Agregar audio si existe
+        if (audioPath) {
+          command.input(audioPath);
+        }
+        
+        const outputOptions = [
+          '-c:v', 'copy', // No recodificar video
+          '-movflags', '+faststart',
+          '-avoid_negative_ts', 'make_zero'
+        ];
+        
+        // Si hay audio, configurarlo
+        if (audioPath) {
+          outputOptions.push('-c:a', 'aac');
+          outputOptions.push('-b:a', '128k');
+          outputOptions.push('-ar', '44100');
+          outputOptions.push('-map', '0:v'); // Video concatenado
+          outputOptions.push('-map', '1:a'); // Audio
+        }
+        
+        command
+          .outputOptions(outputOptions)
+          .output(outputPath)
+          .on('start', (commandLine) => {
+            console.log('📹 Comando FFmpeg para concatenación final:', commandLine);
+          })
+          .on('progress', (progress) => {
+            if (progress.percent) {
+              console.log(`⏳ Progreso concatenación: ${Math.round(progress.percent)}%`);
+            }
+          })
+          .on('end', () => {
+            console.log('✅ Video final concatenado exitosamente');
+            
+            // Limpiar archivos temporales
+            tempVideos.forEach(tempVideo => {
+              try {
+                if (fs.existsSync(tempVideo)) {
+                  fs.unlinkSync(tempVideo);
+                  console.log(`🗑️ Video temporal limpiado: ${path.basename(tempVideo)}`);
+                }
+              } catch (e) {
+                console.log('⚠️ No se pudo limpiar video temporal:', e.message);
+              }
+            });
+            
+            try {
+              if (fs.existsSync(listFile)) {
+                fs.unlinkSync(listFile);
+                console.log('🗑️ Lista temporal limpiada');
+              }
+            } catch (e) {
+              console.log('⚠️ No se pudo limpiar lista temporal:', e.message);
+            }
+            
+            resolveCat();
+          })
+          .on('error', (err) => {
+            console.error('❌ Error en concatenación final:', err);
+            rejectCat(err);
+          })
+          .run();
+      });
+    };
+    
+    // Ejecutar proceso completo
+    createAllTempVideos()
+      .then(() => concatenateVideos())
+      .then(() => {
+        console.log('✅ Video simple generado exitosamente con método de concatenación');
+        
+        // Verificar duración final
+        if (fs.existsSync(outputPath)) {
+          const stats = fs.statSync(outputPath);
+          console.log(`📊 Archivo generado: ${(stats.size / 1024 / 1024).toFixed(2)} MB`);
+          
+          exec(`ffprobe -v quiet -show_entries format=duration -of csv=p=0 "${outputPath}"`, (error, stdout) => {
+            if (!error && stdout.trim()) {
+              const actualDuration = parseFloat(stdout.trim());
+              console.log(`⏱️ Duración real del video: ${actualDuration.toFixed(2)} segundos`);
+              console.log(`🎯 Duración esperada: ${(duracionPorImagen * imagenes.length).toFixed(2)} segundos`);
+            }
+          });
+        }
+        
+        resolve(outputPath);
+      })
+      .catch((error) => {
+        console.error('❌ Error en proceso de generación:', error);
+        
+        // Limpiar archivos temporales en caso de error
+        tempVideos.forEach(tempVideo => {
+          try {
+            if (fs.existsSync(tempVideo)) {
+              fs.unlinkSync(tempVideo);
+            }
+          } catch (e) {
+            // Ignorar errores de limpieza
+          }
+        });
+        
+        reject(error);
+      });
+  });
+}
+
+// Función para combinar secciones de video simple
+async function combinarSeccionesVideoSimple(videosSeccionesTemp, finalOutputPath) {
+  return new Promise((resolve, reject) => {
+    console.log('🔗 Concatenando todas las secciones del video simple...');
+    
+    const listFile = path.join(process.cwd(), 'temp', `concat_list_simple_${Date.now()}.txt`);
+    const listContent = videosSeccionesTemp.map(video => `file '${video}'`).join('\n');
+    
+    fs.writeFileSync(listFile, listContent);
+    
+    const args = [
+      '-f', 'concat',
+      '-safe', '0',
+      '-i', listFile,
+      '-c', 'copy',
+      '-y',
+      finalOutputPath
+    ];
+    
+    const ffmpegProcess = spawn('ffmpeg', args);
+    
+    let stderrData = '';
+    
+    ffmpegProcess.stderr.on('data', (data) => {
+      stderrData += data.toString();
+    });
+    
+    ffmpegProcess.on('close', (code) => {
+      // Limpiar archivo de lista temporal
+      try {
+        if (fs.existsSync(listFile)) {
+          fs.unlinkSync(listFile);
+        }
+      } catch (e) {
+        console.log('⚠️ No se pudo limpiar archivo de lista:', e.message);
+      }
+      
+      if (code === 0) {
+        console.log('✅ Video simple final concatenado exitosamente');
+        resolve(finalOutputPath);
+      } else {
+        console.error('❌ Error en concatenación FFmpeg (video simple):', stderrData);
+        reject(new Error(`FFmpeg falló con código ${code}`));
+      }
+    });
+    
+    ffmpegProcess.on('error', (err) => {
+      console.error('❌ Error ejecutando FFmpeg (video simple):', err);
       reject(err);
     });
   });
@@ -4985,6 +9573,127 @@ async function concatenateVideosWithCrossfade(videoPaths, audioPath, outputPath)
   });
 }
 
-app.listen(PORT, () => {
+// Endpoint para probar el sistema automático de ComfyUI
+app.post('/test-comfyui-auto', async (req, res) => {
+  try {
+    console.log('🧪 Iniciando prueba del sistema automático de ComfyUI...');
+    
+    // Probar iniciar ComfyUI
+    const started = await startComfyUI();
+    if (!started) {
+      return res.status(500).json({ 
+        success: false, 
+        error: 'No se pudo iniciar ComfyUI automáticamente' 
+      });
+    }
+    
+    // Esperar un momento y luego cerrarlo
+    console.log('⏳ Esperando 5 segundos antes de cerrar...');
+    await new Promise(resolve => setTimeout(resolve, 5000));
+    
+    const stopped = await stopComfyUI();
+    
+    res.json({ 
+      success: true, 
+      message: 'Sistema automático de ComfyUI probado exitosamente',
+      started: started,
+      stopped: stopped
+    });
+    
+  } catch (error) {
+    console.error('❌ Error en prueba automática:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Endpoint para probar el sistema automático de Applio
+app.post('/test-applio-auto', async (req, res) => {
+  try {
+    console.log('🧪 Iniciando prueba del sistema automático de Applio...');
+    
+    // Probar iniciar Applio
+    const started = await startApplio();
+    if (!started) {
+      return res.status(500).json({ 
+        success: false, 
+        error: 'No se pudo iniciar Applio automáticamente' 
+      });
+    }
+    
+    // Verificar conexión después del inicio
+    console.log('✅ Verificando conexión con Applio...');
+    const isConnected = await applioClient.checkConnection();
+    
+    res.json({ 
+      success: true, 
+      message: 'Sistema automático de Applio probado exitosamente - Applio permanece abierto',
+      started: started,
+      connected: isConnected,
+      status: 'Applio permanece ejecutándose para futuras pruebas'
+    });
+    
+  } catch (error) {
+    console.error('❌ Error en prueba automática de Applio:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+app.listen(PORT, async () => {
   console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`);
+  
+  // Verificar conexión con ComfyUI
+  try {
+    const connectionCheck = await comfyUIClient.checkConnection();
+    if (connectionCheck.success) {
+      console.log(`✅ Conectado exitosamente a ComfyUI en http://127.0.0.1:8188`);
+      
+      // Obtener modelos disponibles
+      const modelsInfo = await comfyUIClient.getAvailableModels();
+      if (modelsInfo.success) {
+        console.log(`📦 Modelos disponibles en ComfyUI: ${modelsInfo.models.length}`);
+        if (modelsInfo.models.includes('flux1-dev-fp8.safetensors')) {
+          console.log(`🎯 Modelo Flux encontrado y listo para usar`);
+        } else {
+          console.warn(`⚠️ Modelo Flux no encontrado. Modelos disponibles:`, modelsInfo.models.slice(0, 3));
+        }
+      }
+    } else {
+      console.warn(`⚠️ No se pudo conectar a ComfyUI: ${connectionCheck.error}`);
+      console.warn(`🔧 Asegúrate de que ComfyUI esté ejecutándose en http://127.0.0.1:8188`);
+    }
+  } catch (error) {
+    console.warn(`⚠️ Error verificando ComfyUI: ${error.message}`);
+    console.warn(`🔧 Las funciones de IA local requerirán que ComfyUI esté ejecutándose`);
+  }
+});
+
+// Manejadores para cerrar ComfyUI y Applio cuando la aplicación se cierre
+process.on('SIGINT', async () => {
+  console.log('\n🛑 Cerrando aplicación...');
+  console.log('🔄 Cerrando ventana CMD de ComfyUI...');
+  await stopComfyUI();
+  console.log('🔄 Cerrando ventana CMD de Applio...');
+  await stopApplio();
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  console.log('\n🛑 Terminando aplicación...');
+  console.log('🔄 Cerrando ventana CMD de ComfyUI...');
+  await stopComfyUI();
+  console.log('🔄 Cerrando ventana CMD de Applio...');
+  await stopApplio();
+  process.exit(0);
+});
+
+process.on('beforeExit', async () => {
+  console.log('🔄 Cerrando ventanas CMD antes de salir...');
+  await stopComfyUI();
+  await stopApplio();
 });

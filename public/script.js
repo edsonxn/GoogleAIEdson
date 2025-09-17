@@ -125,6 +125,245 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 });
 
+// ========================================
+// SISTEMA DE BARRA DE PROGRESO
+// ========================================
+
+// Declarar todas las variables primero
+let progressStartTime = null;
+let progressInterval = null;
+let progressPollingInterval = null;
+let currentProjectKey = null;
+
+// Mostrar la barra de progreso
+function showProgressBar() {
+  const progressContainer = document.getElementById('progressContainer');
+  const generateBtn = document.getElementById('generateBtn');
+  
+  if (progressContainer) {
+    progressContainer.style.display = 'block';
+    progressStartTime = Date.now();
+    updateElapsedTime();
+  }
+  
+  // Ocultar el botón de generación mientras se muestra el progreso
+  if (generateBtn) {
+    generateBtn.style.display = 'none';
+  }
+}
+
+// Ocultar la barra de progreso
+function hideProgressBar() {
+  const progressContainer = document.getElementById('progressContainer');
+  const generateBtn = document.getElementById('generateBtn');
+  
+  if (progressContainer) {
+    progressContainer.style.display = 'none';
+  }
+  
+  // Restaurar el botón de generación
+  if (generateBtn) {
+    generateBtn.style.display = 'inline-flex';
+    generateBtn.innerHTML = `
+      <i class="fas fa-magic"></i>
+      <span>Generar Todo</span>
+    `;
+  }
+  
+  if (progressInterval) {
+    clearInterval(progressInterval);
+    progressInterval = null;
+  }
+  if (progressPollingInterval) {
+    clearInterval(progressPollingInterval);
+    progressPollingInterval = null;
+  }
+}
+
+// Iniciar polling del progreso desde el servidor
+function startProgressPolling(projectKey) {
+  currentProjectKey = projectKey;
+  
+  // Limpiar polling anterior si existe
+  if (progressPollingInterval) {
+    clearInterval(progressPollingInterval);
+  }
+  
+  // Hacer polling cada 2 segundos
+  progressPollingInterval = setInterval(async () => {
+    try {
+      console.log(`📊 Polling progreso para proyecto: ${projectKey}`);
+      const response = await fetch(`/progress/${projectKey}`);
+      const data = await response.json();
+      
+      console.log('📊 Respuesta del servidor:', data);
+      
+      if (data.success && data.progress) {
+        const progressData = data.progress;
+        
+        console.log(`📊 Datos de progreso recibidos:`, {
+          fase: progressData.currentPhase,
+          porcentaje: progressData.percentage,
+          paso: progressData.currentStep,
+          total: progressData.totalSteps
+        });
+        
+        // Calcular tarea actual basada en la fase y progreso
+        let currentTask = 'Procesando...';
+        const currentPhase = progressData.currentPhase || progressData.phase;
+        
+        if (currentPhase === 'script') {
+          currentTask = `Generando guión ${progressData.currentStep}/${progressData.totalSteps}`;
+        } else if (currentPhase === 'audio') {
+          currentTask = `Generando audio ${progressData.currentStep}/${progressData.totalSteps}`;
+        } else if (currentPhase === 'images') {
+          currentTask = `Generando imágenes ${progressData.currentStep}/${progressData.totalSteps}`;
+        }
+        
+        // Actualizar la barra de progreso
+        updateProgressBar({
+          percentage: progressData.percentage,
+          phase: currentPhase,
+          currentStep: progressData.currentStep,
+          totalSteps: progressData.totalSteps,
+          estimatedTimeRemaining: progressData.estimatedTimeRemaining,
+          currentTask: currentTask
+        });
+      } else {
+        console.warn('⚠️ No se recibieron datos de progreso válidos:', data);
+      }
+    } catch (error) {
+      console.error('❌ Error obteniendo progreso del servidor:', error);
+    }
+  }, 2000);
+}
+
+// Detener polling del progreso
+function stopProgressPolling() {
+  if (progressPollingInterval) {
+    clearInterval(progressPollingInterval);
+    progressPollingInterval = null;
+  }
+  currentProjectKey = null;
+}
+
+// Actualizar la barra de progreso
+function updateProgressBar(data) {
+  const { percentage, phase, currentStep, totalSteps, estimatedTimeRemaining, currentTask } = data;
+  
+  // Actualizar porcentaje
+  const progressFill = document.getElementById('progressFill');
+  const progressPercentage = document.getElementById('progressPercentage');
+  if (progressFill && progressPercentage) {
+    progressFill.style.width = `${percentage}%`;
+    progressPercentage.textContent = `${Math.round(percentage)}%`;
+  }
+  
+  // Actualizar fase actual
+  const currentPhaseElement = document.getElementById('currentPhase');
+  if (currentPhaseElement) {
+    const phaseNames = {
+      'script': 'Generando Textos',
+      'audio': 'Generando Audios', 
+      'images': 'Generando Imágenes'
+    };
+    currentPhaseElement.textContent = phaseNames[phase] || 'Procesando...';
+  }
+  
+  // Actualizar progreso actual
+  const currentProgress = document.getElementById('currentProgress');
+  if (currentProgress) {
+    currentProgress.textContent = `${currentStep} / ${totalSteps}`;
+  }
+  
+  // Actualizar tiempo estimado
+  const estimatedTime = document.getElementById('estimatedTime');
+  if (estimatedTime) {
+    estimatedTime.textContent = estimatedTimeRemaining || 'Calculando...';
+  }
+  
+  // Actualizar tarea actual
+  const currentTaskElement = document.getElementById('currentTask');
+  if (currentTaskElement) {
+    currentTaskElement.textContent = currentTask || 'Procesando...';
+  }
+}
+
+// Actualizar tiempo transcurrido
+function updateElapsedTime() {
+  if (!progressStartTime) return;
+  
+  const elapsedTimeElement = document.getElementById('elapsedTime');
+  if (elapsedTimeElement) {
+    const elapsed = Date.now() - progressStartTime;
+    const minutes = Math.floor(elapsed / 60000);
+    const seconds = Math.floor((elapsed % 60000) / 1000);
+    elapsedTimeElement.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  }
+}
+
+// Inicializar contador de tiempo
+function startElapsedTimeCounter() {
+  if (progressInterval) {
+    clearInterval(progressInterval);
+  }
+  progressInterval = setInterval(updateElapsedTime, 1000);
+}
+
+// Resetear la barra de progreso
+function resetProgressBar() {
+  updateProgressBar({
+    percentage: 0,
+    phase: 'script',
+    currentStep: 0,
+    totalSteps: 0,
+    estimatedTimeRemaining: 'Calculando...',
+    currentTask: 'Preparando generación...'
+  });
+  progressStartTime = null;
+  if (progressInterval) {
+    clearInterval(progressInterval);
+    progressInterval = null;
+  }
+}
+
+// Completar la barra de progreso
+function completeProgressBar(message = 'Generación completada') {
+  updateProgressBar({
+    percentage: 100,
+    phase: 'completed',
+    currentStep: 1,
+    totalSteps: 1,
+    estimatedTimeRemaining: '0:00',
+    currentTask: message
+  });
+  
+  // Detener polling
+  stopProgressPolling();
+  
+  // Ocultar después de 3 segundos
+  setTimeout(() => {
+    hideProgressBar();
+  }, 3000);
+}
+
+// Mostrar error en la barra de progreso
+function showProgressError(error) {
+  const currentTaskElement = document.getElementById('currentTask');
+  if (currentTaskElement) {
+    currentTaskElement.innerHTML = `<i class="fas fa-exclamation-triangle"></i> Error: ${error}`;
+    currentTaskElement.style.color = '#ff4757';
+  }
+  
+  // Detener polling
+  stopProgressPolling();
+  
+  // Ocultar después de 5 segundos
+  setTimeout(() => {
+    hideProgressBar();
+  }, 5000);
+}
+
 // ================================
 // FUNCIONES PARA MANEJO DE VOCES DE APPLIO
 // ================================
@@ -400,6 +639,7 @@ let allSections = []; // Almacenar todas las secciones generadas con datos compl
 let imagePrompts = []; // Almacenar los prompts de las imágenes
 let isAutoGenerating = false; // Bandera para la generación automática
 let isLoadingProject = false; // Bandera para evitar validaciones durante la carga de proyectos
+let isMetadataShown = false; // Bandera para evitar mostrar metadatos duplicados
 
 // Variables globales para estilos de miniatura
 let customThumbnailStyles = [];
@@ -446,6 +686,8 @@ async function runAutoGeneration() {
   const folderName = document.getElementById("folderName").value.trim();
   const selectedVoice = document.getElementById("voiceSelect").value;
   const selectedSections = document.getElementById("sectionsNumber").value;
+  const minWords = parseInt(document.getElementById("minWords").value) || 800;
+  const maxWords = parseInt(document.getElementById("maxWords").value) || 1100;
   const selectedStyle = document.getElementById("styleSelect").value;
   const imageCount = parseInt(document.getElementById("imagesSelect").value);
   const promptModifier = document.getElementById("promptModifier").value.trim();
@@ -453,27 +695,39 @@ async function runAutoGeneration() {
   const selectedLlmModel = document.getElementById("llmModelSelect").value;
   let skipImages = document.getElementById("skipImages").checked;
   let googleImages = document.getElementById("googleImages").checked;
+  let localAIImages = document.getElementById("localAIImages").checked;
   const generateAudio = document.getElementById("autoGenerateAudio").checked;
   const generateApplioAudio = document.getElementById("autoGenerateApplioAudio").checked;
   const selectedApplioVoice = document.getElementById("applioVoiceSelect").value;
   const selectedApplioModel = document.getElementById("applioModelSelect").value;
   const applioPitch = parseInt(document.getElementById("applioPitch").value) || 0;
   
-  // 🔧 VALIDACIÓN: No se puede omitir imágenes Y usar Google Images al mismo tiempo
-  // PERO solo aplicar esta validación si NO estamos cargando un proyecto
-  if (skipImages && googleImages && !isLoadingProject) {
-    console.warn('⚠️ Configuración contradictoria detectada: skipImages=true y googleImages=true');
-    console.warn('🔧 Corrigiendo: Desactivando skipImages porque googleImages tiene prioridad');
-    skipImages = false;
-    document.getElementById("skipImages").checked = false;
-    showNotification('⚠️ Corrección automática: No puedes omitir imágenes si usas Google Images', 'warning');
-  } else if (skipImages && googleImages && isLoadingProject) {
-    console.log('📂 Cargando proyecto: Permitiendo skipImages=true y googleImages=true (solo guión + keywords)');
+  // 🔧 VALIDACIÓN: Solo una opción de imagen puede estar activa
+  if (!isLoadingProject) {
+    let activeImageOptions = [skipImages, googleImages, localAIImages].filter(Boolean).length;
+    if (activeImageOptions > 1) {
+      console.warn('⚠️ Configuración contradictoria detectada: múltiples opciones de imagen activas');
+      // Prioridad: LocalAI > GoogleImages > SkipImages
+      if (localAIImages) {
+        skipImages = false;
+        googleImages = false;
+        document.getElementById("skipImages").checked = false;
+        document.getElementById("googleImages").checked = false;
+        console.warn('🔧 Corrigiendo: Desactivando otras opciones porque IA Local tiene prioridad');
+        showNotification('⚠️ Corrección automática: Solo IA Local activa', 'warning');
+      } else if (googleImages) {
+        skipImages = false;
+        document.getElementById("skipImages").checked = false;
+        console.warn('� Corrigiendo: Desactivando skipImages porque GoogleImages tiene prioridad');
+        showNotification('⚠️ Corrección automática: Solo Google Images activa', 'warning');
+      }
+    }
   }
   
   console.log(`🔊 Generación de audio Google: ${generateAudio ? 'ACTIVADA' : 'DESACTIVADA'}`);
   console.log(`🎤 Generación de audio Applio: ${generateApplioAudio ? 'ACTIVADA' : 'DESACTIVADA'}`);
   console.log(`🖼️ Imágenes de Google: ${googleImages ? 'ACTIVADA' : 'DESACTIVADA'}`);
+  console.log(`🧠 Imágenes IA Local: ${localAIImages ? 'ACTIVADA' : 'DESACTIVADA'}`);
   console.log(`🚫 Omitir imágenes: ${skipImages ? 'ACTIVADA' : 'DESACTIVADA'}`);
   
   if (!topic) {
@@ -503,67 +757,245 @@ async function runAutoGeneration() {
   disableControls(true);
   
   try {
-    // Generar todas las secciones una por una
-    for (let section = 1; section <= totalSections; section++) {
-      console.log(`🤖 Generando sección ${section} de ${totalSections}`);
+    console.log('\n' + '🚀'.repeat(50));
+    console.log('🚀 USANDO NUEVO SISTEMA DE GENERACIÓN POR LOTES');
+    console.log('🚀'.repeat(50));
+    
+    // 📊 INICIALIZAR BARRA DE PROGRESO
+    showProgressBar();
+    startElapsedTimeCounter();
+    resetProgressBar();
+    
+    updateProgressBar({
+      percentage: 0,
+      phase: 'script',
+      currentStep: 0,
+      totalSteps: totalSections,
+      estimatedTimeRemaining: 'Calculando...',
+      currentTask: 'Iniciando generación automática...'
+    });
+    
+    // Obtener configuración de ComfyUI si está habilitada
+    let comfyUISettings = null;
+    if (localAIImages) {
+      comfyUISettings = getComfyUISettings();
+      console.log('🎨 Configuración ComfyUI obtenida del frontend:', comfyUISettings);
+    }
+    
+    const customStyleInstructions = getCustomStyleInstructions(selectedStyle);
+    
+    // ===============================================================
+    // FASE 1: GENERAR TODOS LOS GUIONES Y PROMPTS DE IMÁGENES
+    // ===============================================================
+    console.log('\n📝 INICIANDO FASE 1: Generación de guiones y prompts...');
+    // updateGenerationProgress(1, 3, 'script', 'Generando todos los guiones...');
+    
+    updateProgressBar({
+      percentage: 5,
+      phase: 'script',
+      currentStep: 0,
+      totalSteps: totalSections,
+      estimatedTimeRemaining: 'Calculando...',
+      currentTask: 'Generando guiones y prompts de imágenes...'
+    });
+
+    // 📊 INICIAR POLLING DEL PROGRESO EN TIEMPO REAL ANTES DE LA GENERACIÓN
+    function createSafeFolderName(topic) {
+      return topic
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, '') // Remover caracteres especiales
+        .replace(/\s+/g, '_') // Reemplazar espacios con guiones bajos
+        .substring(0, 50); // Limitar longitud
+    }
+    
+    // Usar folderName si está disponible, si no usar topic (igual que en backend)
+    const projectKey = folderName ? createSafeFolderName(folderName) : createSafeFolderName(topic);
+    console.log('📊 Iniciando seguimiento de progreso ANTES de la generación para proyecto:', projectKey);
+    console.log('🔑 Generando projectKey desde:', folderName ? `folderName: "${folderName}"` : `topic: "${topic}"`);
+    startProgressPolling(projectKey);
+    
+    const phase1Response = await fetch("/generate-batch-automatic", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        topic: topic,
+        folderName: folderName,
+        voice: selectedVoice,
+        totalSections: totalSections,
+        minWords: minWords,
+        maxWords: maxWords,
+        imageCount: imageCount,
+        promptModifier: promptModifier,
+        imageModel: selectedImageModel,
+        llmModel: selectedLlmModel,
+        skipImages: skipImages,
+        googleImages: googleImages,
+        localAIImages: localAIImages,
+        comfyUISettings: comfyUISettings,
+        scriptStyle: selectedStyle,
+        customStyleInstructions: customStyleInstructions,
+        applioVoice: selectedApplioVoice,
+        applioModel: selectedApplioModel,
+        applioPitch: applioPitch,
+        useApplio: generateApplioAudio
+      })
+    });
+
+    const phase1Data = await phase1Response.json();
+    
+    if (!phase1Data.success) {
+      throw new Error(`Fase 1 falló: ${phase1Data.error}`);
+    }
+    
+    console.log('✅ FASE 1 COMPLETADA:', phase1Data.message);
+    const projectData = phase1Data.data;
+    
+    // El polling ya se inició antes de la generación
+    console.log('📊 Polling ya activo para proyecto:', projectData.projectKey);
+    
+    // Mostrar los guiones generados en la UI
+    allSections = projectData.sections.map(section => section.script);
+    for (let i = 0; i < projectData.sections.length; i++) {
+      const sectionData = {
+        script: projectData.sections[i].script,
+        imagePrompts: projectData.imagePrompts.find(ip => ip.section === i + 1)?.prompts || []
+      };
+      await displaySectionContent(sectionData, i + 1);
       
-      // Actualizar UI para mostrar la sección actual
-      updateGenerationProgress(section, totalSections, 'script');
-      
-      // Generar guión e imágenes
-      const scriptResult = await generateSectionContent(section, {
-        topic, folderName, selectedVoice, selectedStyle, 
-        imageCount, promptModifier, selectedImageModel, selectedLlmModel, skipImages, googleImages, selectedApplioVoice, selectedApplioModel, applioPitch
-      });
-      
-      if (!scriptResult.success) {
-        throw new Error(scriptResult.error || `Error generando sección ${section}`);
-      }
-      
-      // Mostrar contenido generado
-      await displaySectionContent(scriptResult.data, section);
-      
-      // Generar audio automáticamente si alguna opción está activada
-      if (generateAudio || generateApplioAudio) {
-        const audioMethod = generateApplioAudio ? 'Applio' : 'Google';
-        console.log(`🤖 Generando audio con ${audioMethod} para sección ${section}`);
-        console.log(`🔍 DEBUG: generateAudio=${generateAudio}, generateApplioAudio=${generateApplioAudio}`);
-        updateGenerationProgress(section, totalSections, 'audio');
-        
-        let audioResult;
-        if (generateApplioAudio) {
-          // Usar Applio para generar audio
-          console.log(`🎤 Llamando a generateSectionApplioAudio(${section})`);
-          audioResult = await generateSectionApplioAudio(section);
-        } else {
-          // Usar Google TTS
-          console.log(`🔊 Llamando a generateSectionAudio(${section}, ${selectedVoice})`);
-          audioResult = await generateSectionAudio(section, selectedVoice);
-        }
-        
-        console.log(`🔍 DEBUG: audioResult =`, audioResult);
-        
-        if (!audioResult || !audioResult.success) {
-          console.warn(`⚠️ Error generando audio con ${audioMethod} para sección ${section}:`, audioResult?.error || 'audioResult es undefined');
-          // Continúa con la siguiente sección aunque falle el audio
-        } else {
-          console.log(`✅ Audio generado exitosamente con ${audioMethod} para sección ${section}`);
-        }
-      } else {
-        console.log(`⏭️ Omitiendo generación de audio para sección ${section} (ninguna opción de audio activada)`);
-      }
-      
-      // Pequeña pausa entre secciones
-      if (section < totalSections) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
+      // Si hay prompts, agregarlos al panel lateral inmediatamente
+      if (sectionData.imagePrompts.length > 0) {
+        console.log(`🎨 Agregando ${sectionData.imagePrompts.length} prompts al panel lateral para sección ${i + 1}`);
+        addPromptsToSidebar(sectionData.imagePrompts, i + 1);
       }
     }
     
-    console.log("🎉 Generación automática completada exitosamente!");
+    // ===============================================================
+    // FASE 2: GENERAR TODOS LOS ARCHIVOS DE AUDIO
+    // ===============================================================
+    if (generateAudio || generateApplioAudio) {
+      console.log('\n🎵 INICIANDO FASE 2: Generación de audio...');
+      // updateGenerationProgress(2, 3, 'audio', 'Generando todos los audios...');
+      
+      const phase2Response = await fetch("/generate-batch-audio", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectData: projectData,
+          useApplio: generateApplioAudio,
+          voice: selectedVoice,
+          applioVoice: selectedApplioVoice,
+          applioModel: selectedApplioModel,
+          applioPitch: applioPitch,
+          folderName: projectData.projectKey  // Usar el projectKey del backend que ya está normalizado
+        })
+      });
+
+      const phase2Data = await phase2Response.json();
+      
+      if (!phase2Data.success) {
+        throw new Error(`Fase 2 falló: ${phase2Data.error}`);
+      }
+      
+      console.log('✅ FASE 2 COMPLETADA:', phase2Data.message);
+    } else {
+      console.log('⏭️ FASE 2 OMITIDA: No se solicitó generación de audio');
+    }
+    
+    // ===============================================================
+    // FASE 3: GENERAR TODAS LAS IMÁGENES
+    // ===============================================================
+    if (!skipImages) {
+      console.log('\n🎨 INICIANDO FASE 3: Generación de imágenes...');
+      // updateGenerationProgress(3, 3, 'images', 'Generando todas las imágenes...');
+      
+      const phase3Response = await fetch("/generate-batch-images", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectData: projectData,
+          skipImages: skipImages,
+          googleImages: googleImages,
+          localAIImages: localAIImages,
+          imageModel: selectedImageModel,
+          comfyUISettings: comfyUISettings,
+          folderName: projectData.projectKey  // Usar el projectKey del backend que ya está normalizado
+        })
+      });
+
+      const phase3Data = await phase3Response.json();
+      
+      if (!phase3Data.success) {
+        throw new Error(`Fase 3 falló: ${phase3Data.error}`);
+      }
+      
+      console.log('✅ FASE 3 COMPLETADA:', phase3Data.message);
+      
+      // 🎨 PROCESAR LAS IMÁGENES GENERADAS PARA MOSTRAR CARRUSEL
+      if (phase3Data.data && phase3Data.data.imageResults) {
+        console.log('🖼️ Procesando imágenes generadas para mostrar carrusel...');
+        console.log('🖼️ Datos de imágenes:', phase3Data.data.imageResults);
+        
+        // Procesar cada sección y mostrar sus imágenes
+        phase3Data.data.imageResults.forEach((sectionResult, index) => {
+          const sectionNum = sectionResult.section;
+          const images = sectionResult.images;
+          
+          if (images && images.length > 0) {
+            console.log(`🖼️ Mostrando carrusel para sección ${sectionNum} con ${images.length} imágenes`);
+            
+            // Preparar datos de imágenes para el carrusel
+            const imageData = images.map(img => ({
+              path: img.path,
+              filename: img.filename,
+              url: img.url,
+              source: img.source || 'Google Images',
+              keywords: img.keywords,
+              caption: img.caption || img.keywords
+            }));
+            
+            // Guardar en allSections para navegación entre secciones
+            if (allSections[sectionNum - 1]) {
+              allSections[sectionNum - 1].images = imageData;
+              allSections[sectionNum - 1].imageMode = 'bing';
+              allSections[sectionNum - 1].bingImagesMode = true;
+              
+              // Guardar keywords para botones de refrescar
+              const keywords = images.map(img => img.keywords).filter(k => k);
+              allSections[sectionNum - 1].imageKeywords = keywords;
+              
+              console.log(`💾 Datos de imágenes guardados en allSections[${sectionNum - 1}] con ${keywords.length} keywords`);
+            }
+            
+            // Mostrar el carrusel para esta sección
+            try {
+              createCarousel(imageData, sectionNum, []);
+              console.log(`✅ Carrusel creado para sección ${sectionNum}`);
+            } catch (carouselError) {
+              console.error(`❌ Error creando carrusel para sección ${sectionNum}:`, carouselError);
+            }
+          } else {
+            console.log(`⚠️ Sección ${sectionNum} no tiene imágenes para mostrar`);
+          }
+        });
+      } else {
+        console.log('⚠️ No se recibieron datos de imágenes en la respuesta de fase 3');
+      }
+    } else {
+      console.log('⏭️ FASE 3 OMITIDA: Se solicitó omitir imágenes');
+    }
+    
+    console.log('\n' + '🎉'.repeat(50));
+    console.log('🎉 GENERACIÓN AUTOMÁTICA POR LOTES COMPLETADA');
+    console.log('🎉'.repeat(50));
+    
+    // 📊 COMPLETAR BARRA DE PROGRESO
+    completeProgressBar('¡Generación automática completada exitosamente!');
+    
     showAutoGenerationComplete();
     
   } catch (error) {
     console.error("❌ Error durante generación automática:", error);
+    showProgressError(error.message);
     showError(`Error durante la generación automática: ${error.message}`);
   } finally {
     isAutoGenerating = false;
@@ -623,6 +1055,21 @@ async function generateSectionContent(section, params) {
   try {
     const customStyleInstructions = getCustomStyleInstructions(params.selectedStyle);
     
+    // Obtener configuración de ComfyUI si está habilitada
+    let comfyUISettings = null;
+    if (params.localAIImages && document.getElementById('localAIImages').checked) {
+      comfyUISettings = getComfyUISettings();
+      console.log('🎨 Configuración ComfyUI obtenida del frontend:', comfyUISettings);
+      
+      // Debug extra para verificar valores específicos
+      console.log('🔍 Valores específicos:', {
+        steps: document.getElementById('comfyUISteps')?.value,
+        guidance: document.getElementById('comfyUIGuidance')?.value,
+        width: document.getElementById('comfyUIWidth')?.value,
+        height: document.getElementById('comfyUIHeight')?.value
+      });
+    }
+    
     const response = await fetch("/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -640,6 +1087,8 @@ async function generateSectionContent(section, params) {
         llmModel: params.selectedLlmModel,
         skipImages: params.skipImages,
         googleImages: params.googleImages,
+        localAIImages: params.localAIImages,
+        comfyUISettings: comfyUISettings, // Agregar configuración ComfyUI
         applioVoice: params.selectedApplioVoice,
         applioModel: params.selectedApplioModel,
         applioPitch: params.applioPitch,
@@ -800,21 +1249,41 @@ async function displaySectionContent(data, section) {
       // Usar los datos del servidor en lugar de leer los checkboxes
       const skipImages = data.imagesSkipped || false;
       const bingImages = data.bingImagesMode || false;
+      const localAIImages = data.localAIMode || false;
       const downloadedImages = data.downloadedImages || [];
+      const localAIImagesData = data.localAIImages || [];
       
       console.log(`🔍 DEBUG displaySectionContent - skipImages: ${skipImages}`);
       console.log(`🔍 DEBUG displaySectionContent - bingImages: ${bingImages}`);
+      console.log(`🔍 DEBUG displaySectionContent - localAIImages: ${localAIImages}`);
       console.log(`🔍 DEBUG displaySectionContent - downloadedImages.length: ${downloadedImages.length}`);
+      console.log(`🔍 DEBUG displaySectionContent - localAIImagesData.length: ${localAIImagesData.length}`);
       console.log(`🔍 DEBUG displaySectionContent - data.imagesSkipped: ${data.imagesSkipped}`);
       console.log(`🔍 DEBUG displaySectionContent - data.bingImagesMode: ${data.bingImagesMode}`);
+      console.log(`🔍 DEBUG displaySectionContent - data.localAIMode: ${data.localAIMode}`);
       console.log(`🔍 DEBUG displaySectionContent - data.images: ${data.images ? data.images.length : 'null'}`);
       console.log(`🔍 DEBUG displaySectionContent - data.imagePrompts: ${data.imagePrompts ? data.imagePrompts.length : 'null'}`);
       
       console.log(`🔍 DEBUG displaySectionContent - EVALUANDO CONDICIONES:`);
-      console.log(`🔍 DEBUG - Condición 1 (Bing): bingImages=${bingImages} && downloadedImages.length=${downloadedImages.length} > 0 = ${bingImages && downloadedImages.length > 0}`);
-      console.log(`🔍 DEBUG - Condición 2 (Normal): !skipImages=${!skipImages} && !bingImages=${!bingImages} && data.images=${data.images ? 'exists' : 'null'} = ${!skipImages && !bingImages && data.images && data.images.length > 0}`);
+      console.log(`🔍 DEBUG - Condición 1 (IA Local): localAIImages=${localAIImages} && localAIImagesData.length=${localAIImagesData.length} > 0 = ${localAIImages && localAIImagesData.length > 0}`);
+      console.log(`🔍 DEBUG - Condición 2 (Bing): bingImages=${bingImages} && downloadedImages.length=${downloadedImages.length} > 0 = ${bingImages && downloadedImages.length > 0}`);
+      console.log(`🔍 DEBUG - Condición 3 (Normal): !skipImages=${!skipImages} && !bingImages=${!bingImages} && !localAIImages=${!localAIImages} && data.images=${data.images ? 'exists' : 'null'} = ${!skipImages && !bingImages && !localAIImages && data.images && data.images.length > 0}`);
       
-      if (bingImages && downloadedImages.length > 0) {
+      if (localAIImages && localAIImagesData.length > 0) {
+        // Mostrar carrusel con imágenes generadas por IA Local
+        console.log(`🤖 Mostrando carrusel con ${localAIImagesData.length} imágenes de IA Local`);
+        console.log(`🤖 DEBUG - Datos de la primera imagen IA Local:`, localAIImagesData[0]);
+        
+        createCarousel(localAIImagesData, section, []);
+        
+        // Almacenar imágenes de IA Local en allSections
+        if (allSections[section - 1]) {
+          allSections[section - 1].images = localAIImagesData;
+          allSections[section - 1].localAIMode = true;
+          console.log(`📂 Imágenes de IA Local almacenadas en allSections[${section - 1}]`);
+        }
+        
+      } else if (bingImages && downloadedImages.length > 0) {
         // Mostrar carrusel con imágenes descargadas de Bing
         console.log(`🖼️ Mostrando carrusel con ${downloadedImages.length} imágenes de Bing`);
         console.log(`🖼️ DEBUG - Datos de la primera imagen:`, downloadedImages[0]);
@@ -842,7 +1311,7 @@ async function displaySectionContent(data, section) {
           allSections[section - 1].imageMode = 'bing';
           console.log(`💾 Datos de imágenes Bing guardados para sección ${section}`);
         }
-      } else if (!skipImages && !bingImages && data.images && data.images.length > 0) {
+      } else if (!skipImages && !bingImages && !localAIImages && data.images && data.images.length > 0) {
         // Mostrar carrusel de imágenes normales
         console.log(`📷 Mostrando carrusel de imágenes normales`);
         createCarousel(data.images, section, data.imagePrompts);
@@ -883,19 +1352,21 @@ async function displaySectionContent(data, section) {
 }
 
 // Función para actualizar el progreso de generación automática
-function updateGenerationProgress(section, total, phase) {
-  const phaseText = phase === 'script' ? 'Generando guión e imágenes' : 'Generando audio';
+function updateGenerationProgress(section, total, phase, customMessage = null) {
+  const phaseText = customMessage || (phase === 'script' ? 'Generando guión e imágenes' : phase === 'audio' ? 'Generando audio' : phase === 'images' ? 'Generando imágenes' : 'Procesando...');
   
   generateBtn.innerHTML = `
     <i class="fas fa-magic"></i>
-    <span>Auto: Sección ${section}/${total} - ${phaseText}...</span>
+    <span>Auto: Fase ${section}/${total} - ${phaseText}...</span>
   `;
   
   // Actualizar etapas de carga
   if (phase === 'script') {
-    showLoadingStages(section, parseInt(document.getElementById("imagesSelect").value), document.getElementById("skipImages").checked, document.getElementById("googleImages").checked);
-  } else {
+    showLoadingStages(section, parseInt(document.getElementById("imagesSelect").value), document.getElementById("skipImages").checked, document.getElementById("googleImages").checked, document.getElementById("localAIImages").checked);
+  } else if (phase === 'audio') {
     showAudioGenerationStage(section);
+  } else if (phase === 'images') {
+    showImageGenerationStage(section);
   }
 }
 
@@ -914,6 +1385,26 @@ function showAudioGenerationStage(section) {
       <div class="stage active" id="stage-audio">
         <div class="stage-icon"><i class="fas fa-spinner loading"></i></div>
         <div class="stage-text">Generando audio narración...</div>
+      </div>
+    </div>
+  `;
+}
+
+// Función para mostrar etapa de generación de imágenes
+function showImageGenerationStage(section) {
+  output.innerHTML = `
+    <div class="loading-stages">
+      <div class="stage completed" id="stage-script">
+        <div class="stage-icon"><i class="fas fa-check-circle"></i></div>
+        <div class="stage-text">Todos los guiones generados</div>
+      </div>
+      <div class="stage completed" id="stage-audio">
+        <div class="stage-icon"><i class="fas fa-check-circle"></i></div>
+        <div class="stage-text">Todos los audios generados</div>
+      </div>
+      <div class="stage active" id="stage-images">
+        <div class="stage-icon"><i class="fas fa-spinner loading"></i></div>
+        <div class="stage-text">Generando todas las imágenes...</div>
       </div>
     </div>
   `;
@@ -990,7 +1481,7 @@ function disableControls(disable) {
   const controls = [
     'prompt', 'folderName', 'voiceSelect', 'sectionsNumber', 
     'styleSelect', 'imagesSelect', 'promptModifier', 'modelSelect', 'llmModelSelect',
-    'skipImages', 'autoGenerate', 'autoGenerateAudio', 'autoGenerateApplioAudio', 'googleImages'
+    'skipImages', 'autoGenerate', 'autoGenerateAudio', 'autoGenerateApplioAudio', 'googleImages', 'localAIImages'
   ];
   
   controls.forEach(id => {
@@ -1004,18 +1495,23 @@ function disableControls(disable) {
   continueBtn.disabled = disable;
   generateAudioBtn.disabled = disable;
   
-  // También deshabilitar el botón de video
+  // También deshabilitar los botones de video
   const generateVideoBtn = document.getElementById("generateVideoBtn");
   if (generateVideoBtn) {
     generateVideoBtn.disabled = disable;
   }
+  
+  const generateSimpleVideoBtn = document.getElementById("generateSimpleVideoBtn");
+  if (generateSimpleVideoBtn) {
+    generateSimpleVideoBtn.disabled = disable;
+  }
 }
 
 // Función para mostrar mensaje de carga con etapas
-function showLoadingStages(sectionNum, imageCount = 5, skipImages = false, googleImages = false) {
+function showLoadingStages(sectionNum, imageCount = 5, skipImages = false, googleImages = false, localAIImages = false) {
   let imageStagesHTML = '';
   
-  if (!skipImages && !googleImages) {
+  if (!skipImages && !googleImages && !localAIImages) {
     // Modo normal: generar imágenes
     imageStagesHTML = `
       <div class="stage" id="stage-prompt">
@@ -1033,6 +1529,18 @@ function showLoadingStages(sectionNum, imageCount = 5, skipImages = false, googl
       <div class="stage" id="stage-prompt">
         <div class="stage-icon"><i class="fab fa-google"></i></div>
         <div class="stage-text">Preparando enlaces de Google Images...</div>
+      </div>
+    `;
+  } else if (localAIImages) {
+    // Modo IA Local: generar con Fooocus
+    imageStagesHTML = `
+      <div class="stage" id="stage-prompt">
+        <div class="stage-icon"><i class="fas fa-brain"></i></div>
+        <div class="stage-text">Preparando prompts para IA local...</div>
+      </div>
+      <div class="stage" id="stage-image">
+        <div class="stage-icon"><i class="fas fa-robot"></i></div>
+        <div class="stage-text">Generando ${imageCount} imágenes con Fooocus...</div>
       </div>
     `;
   }
@@ -1143,15 +1651,42 @@ function createCarousel(images, sectionNum, receivedPrompts = []) {
     
     const img = document.createElement('img');
     
-    // Verificar si la imagen es una URL de Bing o datos base64
-    if (imageData.url) {
-      // Imagen de Bing (URL)
+    // Verificar si la imagen es local (descargada) o una URL externa
+    if (imageData.path && (imageData.source === 'Google Images' || imageData.source === 'bing')) {
+      // Imagen descargada de Google Images/Bing (usar ruta local del servidor)
+      // Convertir la ruta absoluta a una ruta relativa del servidor web
+      let relativePath = imageData.path.replace(/\\/g, '/');
+      
+      // Buscar la parte que viene después de 'public/'
+      const publicIndex = relativePath.indexOf('/public/');
+      if (publicIndex !== -1) {
+        relativePath = relativePath.substring(publicIndex + 7); // +7 para saltar '/public'
+      } else {
+        // Fallback: buscar 'outputs/'
+        const outputsIndex = relativePath.indexOf('outputs/');
+        if (outputsIndex !== -1) {
+          relativePath = '/' + relativePath.substring(outputsIndex);
+        }
+      }
+      
+      // Asegurar que empiece con '/'
+      if (!relativePath.startsWith('/')) {
+        relativePath = '/' + relativePath;
+      }
+      
+      img.src = relativePath;
+      img.alt = imageData.caption || `Imagen ${index + 1} de la Sección ${sectionNum}`;
+      console.log(`🖼️ Cargando imagen local: ${relativePath} (original: ${imageData.path})`);
+    } else if (imageData.url && !imageData.path) {
+      // Imagen externa (URL directa de Bing - para casos sin descarga)
       img.src = imageData.url;
       img.alt = imageData.caption || `Imagen ${index + 1} de la Sección ${sectionNum}`;
+      console.log(`🌐 Cargando imagen externa: ${imageData.url}`);
     } else if (imageData.image) {
       // Imagen generada con IA (base64)
       img.src = "data:image/png;base64," + imageData.image;
       img.alt = `Imagen ${index + 1} de la Sección ${sectionNum}`;
+      console.log(`🤖 Cargando imagen IA (base64)`);
     } else {
       // Fallback para formato no reconocido
       console.warn('Formato de imagen no reconocido:', imageData);
@@ -1174,6 +1709,7 @@ function createCarousel(images, sectionNum, receivedPrompts = []) {
     if (imageData.url) {
       // Obtener keyword para esta imagen
       const imageKeyword = (currentImageKeywords && currentImageKeywords[index]) ? currentImageKeywords[index] : '';
+      console.log(`🔑 [createCarousel] Imagen ${index}: keyword="${imageKeyword}"`);
       
       const actionButtons = document.createElement('div');
       actionButtons.className = 'bing-image-actions';
@@ -2021,22 +2557,27 @@ function showCompletionMessage(sectionNum, totalSections, isComplete) {
 
 // Event listener para el botón principal
 generateBtn.addEventListener("click", async () => {
-  console.log("Botón clickeado");
+  console.log("🔍 DEBUG: Botón clickeado");
   
   // Verificar si la generación automática está activada
   const autoGenerate = document.getElementById("autoGenerate").checked;
+  console.log(`🔍 DEBUG: autoGenerate checkbox = ${autoGenerate}`);
   
   if (autoGenerate) {
-    console.log("🤖 Iniciando generación automática");
+    console.log("🤖 DETECTADO: Generación automática ACTIVADA - usando sistema de lotes");
     await runAutoGeneration();
     return;
   }
+  
+  console.log("📝 DETECTADO: Generación automática DESACTIVADA - usando sistema tradicional");
   
   // Continuar con la generación normal
   const topic = promptInput.value.trim();
   const folderName = document.getElementById("folderName").value.trim();
   const selectedVoice = document.getElementById("voiceSelect").value;
   const selectedSections = document.getElementById("sectionsNumber").value;
+  const minWords = parseInt(document.getElementById("minWords").value) || 800;
+  const maxWords = parseInt(document.getElementById("maxWords").value) || 1100;
   const selectedStyle = document.getElementById("styleSelect").value;
   const imageCount = parseInt(document.getElementById("imagesSelect").value);
   const promptModifier = document.getElementById("promptModifier").value.trim();
@@ -2044,6 +2585,7 @@ generateBtn.addEventListener("click", async () => {
   const selectedLlmModel = document.getElementById("llmModelSelect").value;
   const skipImages = document.getElementById("skipImages").checked;
   const googleImages = document.getElementById("googleImages").checked;
+  const localAIImages = document.getElementById("localAIImages").checked;
   const selectedApplioVoice = document.getElementById("applioVoiceSelect").value;
   const selectedApplioModel = document.getElementById("applioModelSelect").value;
   const applioPitch = parseInt(document.getElementById("applioPitch").value) || 0;
@@ -2099,13 +2641,13 @@ generateBtn.addEventListener("click", async () => {
   generateAudioBtn.style.display = "none";
   continueBtn.style.display = "none";
   
-  // Ocultar botón de video
-  const generateVideoBtn = document.getElementById("generateVideoBtn");
-  if (generateVideoBtn) {
-    generateVideoBtn.style.display = "none";
+  // Ocultar contenedor de video completo
+  const videoContainer = document.getElementById("videoGenerationContainer");
+  if (videoContainer) {
+    videoContainer.style.display = "none";
   }
   
-  showLoadingStages(1, imageCount, skipImages, googleImages);
+  showLoadingStages(1, imageCount, skipImages, googleImages, localAIImages);
 
   try {
     console.log('Enviando primera llamada API sin historial previo');
@@ -2120,6 +2662,8 @@ generateBtn.addEventListener("click", async () => {
         voice: selectedVoice, 
         totalSections: totalSections,
         currentSection: 1,
+        minWords: minWords,
+        maxWords: maxWords,
         scriptStyle: selectedStyle,
         customStyleInstructions: customStyleInstructions,
         imageCount: imageCount,
@@ -2128,6 +2672,7 @@ generateBtn.addEventListener("click", async () => {
         llmModel: selectedLlmModel,
         skipImages: skipImages,
         googleImages: googleImages,
+        localAIImages: localAIImages,
         applioVoice: selectedApplioVoice,
         applioModel: selectedApplioModel,
         applioPitch: applioPitch
@@ -2148,7 +2693,7 @@ generateBtn.addEventListener("click", async () => {
         updateStage('stage-script', 'completed');
       }, 100);
       
-      if (!skipImages && ((data.images && data.images.length > 0) || (data.downloadedImages && data.downloadedImages.length > 0))) {
+      if (!skipImages && ((data.images && data.images.length > 0) || (data.downloadedImages && data.downloadedImages.length > 0) || (data.localAIImages && data.localAIImages.length > 0))) {
         // Con imágenes (IA generadas o descargadas de Bing)
         setTimeout(() => {
           updateStage('stage-prompt', 'completed');
@@ -2162,11 +2707,26 @@ generateBtn.addEventListener("click", async () => {
         
         // Mostrar carrusel de imágenes
         setTimeout(() => {
-          if (data.downloadedImages && data.downloadedImages.length > 0) {
+          if (data.localAIImages && data.localAIImages.length > 0) {
+            // Imágenes generadas con IA Local
+            console.log(`🤖 Mostrando carrusel con ${data.localAIImages.length} imágenes de IA Local`);
+            
+            createCarousel(data.localAIImages, data.currentSection, data.imagePrompts || []);
+            
+            // Guardar datos de imágenes en la sección para navegación
+            if (allSections[data.currentSection - 1]) {
+              allSections[data.currentSection - 1].images = data.localAIImages;
+              allSections[data.currentSection - 1].imagePrompts = data.imagePrompts || [];
+              allSections[data.currentSection - 1].imageMode = 'local_ai';
+              allSections[data.currentSection - 1].localAIMode = true;
+              console.log(`💾 Datos de imágenes IA Local guardados para sección ${data.currentSection}`);
+            }
+            
+          } else if (data.downloadedImages && data.downloadedImages.length > 0) {
             // Imágenes de Bing descargadas
             console.log(`🖼️ Mostrando carrusel con ${data.downloadedImages.length} imágenes de Bing`);
             
-            // Almacenar las keywords para el botón de refresh (función principal)
+            // ✅ IMPORTANTE: Almacenar las keywords ANTES de crear el carrusel
             if (data.imageKeywords && data.imageKeywords.length > 0) {
               currentImageKeywords = data.imageKeywords;
               console.log(`🎯 Keywords almacenadas para refresh (función principal):`, currentImageKeywords);
@@ -2177,6 +2737,7 @@ generateBtn.addEventListener("click", async () => {
               currentImageKeywords = [];
             }
             
+            // ✅ Crear carrusel después de asignar keywords
             createCarousel(data.downloadedImages, data.currentSection, []);
             
             // Guardar datos de imágenes en la sección para navegación (función principal)
@@ -2234,8 +2795,8 @@ generateBtn.addEventListener("click", async () => {
             
             createCarousel(data.downloadedImages, data.currentSection, []);
           }
-          // Solo mostrar en panel lateral si NO hay imágenes de Bing y SÍ hay prompts tradicionales
-          else if (data.imagePrompts && data.imagePrompts.length > 0 && !data.bingImagesMode) {
+          // Solo mostrar en panel lateral si NO se omiten imágenes, NO hay imágenes de Bing y SÍ hay prompts tradicionales
+          else if (!skipImages && data.imagePrompts && data.imagePrompts.length > 0 && !data.bingImagesMode) {
             if (data.googleImagesMode) {
               console.log(`🔗 DEBUG FRONTEND - Ejecutando createGoogleImageLinks con ${data.imagePrompts.length} keywords`);
               createGoogleImageLinks(data.imagePrompts, data.currentSection);
@@ -2244,7 +2805,11 @@ generateBtn.addEventListener("click", async () => {
               addPromptsToSidebar(data.imagePrompts, data.currentSection);
             }
           } else {
-            console.log(`❌ DEBUG FRONTEND - No se encontraron imágenes ni prompts válidos`);
+            if (skipImages) {
+              console.log(`⏭️ DEBUG FRONTEND - Omitiendo prompts de imagen porque skipImages está activado`);
+            } else {
+              console.log(`❌ DEBUG FRONTEND - No se encontraron imágenes ni prompts válidos`);
+            }
           }
         }, 500);
       }
@@ -2295,7 +2860,9 @@ continueBtn.addEventListener("click", async () => {
   console.log('🎯 Sección que se va a generar:', nextSection);
   
   const imageCount = parseInt(document.getElementById("imagesSelect").value);
-  const folderName = document.getElementById("folderName").value.trim();
+  // 🔧 FIX: Usar el folderName del proyecto cargado si existe, sino el del input
+  const folderName = window.currentProject ? window.currentProject.folderName : document.getElementById("folderName").value.trim();
+  console.log('📁 Usando folderName:', folderName, 'desde proyecto cargado:', !!window.currentProject);
   const selectedStyle = document.getElementById("styleSelect").value;
   const promptModifier = document.getElementById("promptModifier").value.trim();
   const selectedImageModel = document.getElementById("modelSelect").value;
@@ -2324,12 +2891,13 @@ continueBtn.addEventListener("click", async () => {
   
   generateAudioBtn.style.display = "none";
   
-  showLoadingStages(nextSection, imageCount, skipImages, googleImages);
+  showLoadingStages(nextSection, imageCount, skipImages, googleImages, localAIImages);
 
   try {
     console.log(`Enviando llamada API para sección ${nextSection}`);
     const skipImages = document.getElementById("skipImages").checked;
     const googleImages = document.getElementById("googleImages").checked;
+    const localAIImages = document.getElementById("localAIImages").checked;
     const currentApplioVoice = document.getElementById("applioVoiceSelect").value;
     console.log(`Omitir imágenes: ${skipImages}`);
     const customStyleInstructions = getCustomStyleInstructions(selectedStyle);
@@ -2351,6 +2919,7 @@ continueBtn.addEventListener("click", async () => {
         llmModel: selectedLlmModel,
         skipImages: skipImages,
         googleImages: googleImages,
+        localAIImages: localAIImages,
         applioVoice: currentApplioVoice
       })
     });
@@ -2431,8 +3000,8 @@ continueBtn.addEventListener("click", async () => {
             }
           }
         }, 1000);
-      } else if (serverGoogleImages && data.imagePrompts && data.imagePrompts.length > 0) {
-        // Modo Google Images
+      } else if (!skipImages && serverGoogleImages && data.imagePrompts && data.imagePrompts.length > 0) {
+        // Modo Google Images (solo si no se omiten imágenes)
         console.log(`🔗🔗🔗 continueGeneration - EJECUTANDO createGoogleImageLinks 🔗🔗🔗`);
         setTimeout(() => {
           updateStage('stage-prompt', 'completed');
@@ -2462,9 +3031,11 @@ continueBtn.addEventListener("click", async () => {
           // Ocultar el carrusel de imágenes
           document.getElementById("carousel-container").style.display = "none";
           
-          // Mostrar prompts de imágenes en el panel lateral
-          if (data.imagePrompts && data.imagePrompts.length > 0) {
+          // Mostrar prompts de imágenes en el panel lateral solo si no se omiten imágenes
+          if (!skipImages && data.imagePrompts && data.imagePrompts.length > 0) {
             addPromptsToSidebar(data.imagePrompts, data.currentSection);
+          } else if (skipImages) {
+            console.log(`⏭️ DEBUG FRONTEND (continuar) - Omitiendo prompts de imagen porque skipImages está activado`);
           }
         }, 500);
       }
@@ -2551,11 +3122,23 @@ generateAudioBtn.addEventListener("click", async () => {
 
 // Event listener para el botón de generar video
 document.getElementById("generateVideoBtn").addEventListener("click", async () => {
-  const folderName = document.getElementById("folderName").value.trim();
+  // ✅ CORREGIDO: Usar folderName del proyecto actual, no del input original
+  let folderName;
   
-  if (!folderName) {
-    showError("Por favor, especifica el nombre de la carpeta del proyecto");
-    return;
+  if (window.currentProject && window.currentProject.folderName) {
+    // Si hay proyecto cargado, usar su folderName normalizado
+    folderName = window.currentProject.folderName;
+    console.log(`🎯 Usando folderName del proyecto cargado: ${folderName}`);
+  } else {
+    // Fallback: usar el input y normalizarlo
+    const inputFolderName = document.getElementById("folderName").value.trim();
+    if (!inputFolderName) {
+      showError("Por favor, especifica el nombre de la carpeta del proyecto");
+      return;
+    }
+    // Normalizar el nombre como lo hace el backend
+    folderName = inputFolderName.toLowerCase().replace(/[^a-z0-9]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
+    console.log(`🔧 Normalizando folderName: "${inputFolderName}" → "${folderName}"`);
   }
   
   if (!allSections || allSections.length === 0) {
@@ -2570,6 +3153,66 @@ document.getElementById("generateVideoBtn").addEventListener("click", async () =
   } catch (error) {
     console.error("❌ Error generando video:", error);
     showError(`Error generando video: ${error.message}`);
+  }
+});
+
+// Event listener para el botón de generar video simple (sin animaciones)
+document.getElementById("generateSimpleVideoBtn").addEventListener("click", async () => {
+  // ✅ CORREGIDO: Usar folderName del proyecto actual, no del input original
+  let folderName;
+  
+  if (window.currentProject && window.currentProject.folderName) {
+    // Si hay proyecto cargado, usar su folderName normalizado
+    folderName = window.currentProject.folderName;
+    console.log(`🎯 Usando folderName del proyecto cargado: ${folderName}`);
+  } else {
+    // Fallback: usar el input y normalizarlo
+    const inputFolderName = document.getElementById("folderName").value.trim();
+    if (!inputFolderName) {
+      showError("Por favor, especifica el nombre de la carpeta del proyecto");
+      return;
+    }
+    // Normalizar el nombre como lo hace el backend
+    folderName = inputFolderName.toLowerCase().replace(/[^a-z0-9]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
+    console.log(`🔧 Normalizando folderName: "${inputFolderName}" → "${folderName}"`);
+  }
+  
+  if (!allSections || allSections.length === 0) {
+    showError("No hay secciones generadas para crear el video");
+    return;
+  }
+  
+  console.log(`🎬 Iniciando generación de video simple para proyecto: ${folderName}`);
+  
+  try {
+    await generateSimpleProjectVideo(folderName);
+  } catch (error) {
+    console.error("❌ Error generando video simple:", error);
+    showError(`Error generando video simple: ${error.message}`);
+  }
+});
+
+// Event listener para el botón de regenerar audios con Applio
+document.getElementById("regenerateApplioAudiosBtn").addEventListener("click", async () => {
+  console.log('🎤 Click en botón de regenerar audios con Applio');
+  
+  try {
+    await regenerateAllApplioAudios();
+  } catch (error) {
+    console.error("❌ Error regenerando audios:", error);
+    showError(`Error regenerando audios: ${error.message}`);
+  }
+});
+
+// Event listener para el botón de regenerar guiones faltantes
+document.getElementById("regenerateMissingScriptsBtn").addEventListener("click", async () => {
+  console.log('📝 Click en botón de regenerar guiones faltantes');
+  
+  try {
+    await regenerateMissingScripts();
+  } catch (error) {
+    console.error("❌ Error regenerando guiones:", error);
+    showError(`Error regenerando guiones: ${error.message}`);
   }
 });
 
@@ -2685,8 +3328,6 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 // Función para mostrar prompts de imágenes cuando se omiten las imágenes
-// COMENTADA: Ya no se usa porque ahora se usa el panel lateral
-/*
 function showImagePrompts(prompts, sectionNumber, promptsFileInfo) {
   console.log(`🎨 DEBUG showImagePrompts - Iniciando función...`);
   console.log(`🎨 DEBUG showImagePrompts - prompts recibidos:`, prompts);
@@ -2808,7 +3449,6 @@ function showImagePrompts(prompts, sectionNumber, promptsFileInfo) {
   
   console.log(`✅ DEBUG showImagePrompts - Función completada exitosamente`);
 }
-*/
 
 // Event listener para controlar la casilla de audio según la generación automática
 document.addEventListener('DOMContentLoaded', function() {
@@ -6502,7 +7142,14 @@ function renderProjectsList(container, mode = 'load') {
 // Función para cargar un proyecto
 async function loadProject(folderName) {
   try {
+    // Evitar cargar el mismo proyecto múltiples veces
+    if (window.currentProject && window.currentProject.folderName === folderName) {
+      console.log(`🔄 Proyecto "${folderName}" ya está cargado, omitiendo recarga`);
+      return;
+    }
+    
     isLoadingProject = true; // Activar bandera de carga
+    isMetadataShown = false; // Resetear bandera de metadatos solo si es un proyecto diferente
     showNotification('📂 Cargando proyecto...', 'info');
     
     const response = await fetch(`/api/projects/${folderName}`);
@@ -6630,6 +7277,19 @@ async function loadProject(folderName) {
         console.log('🖼️ Número de imágenes cargado:', window.currentProject.imageCount);
       }
       
+      // Cargar palabras por sección (minWords y maxWords)
+      const minWordsElement = document.getElementById('minWords');
+      if (minWordsElement && window.currentProject.minWords) {
+        minWordsElement.value = window.currentProject.minWords;
+        console.log('📝 MinWords cargado:', window.currentProject.minWords);
+      }
+      
+      const maxWordsElement = document.getElementById('maxWords');
+      if (maxWordsElement && window.currentProject.maxWords) {
+        maxWordsElement.value = window.currentProject.maxWords;
+        console.log('📝 MaxWords cargado:', window.currentProject.maxWords);
+      }
+      
       console.log('✅ Todas las configuraciones del proyecto han sido restauradas');
       
       // Actualizar estado de la interfaz
@@ -6662,12 +7322,13 @@ async function loadProject(folderName) {
       }
       
       // 🎬 VERIFICAR Y MOSTRAR METADATOS DE YOUTUBE SI EXISTEN
-      if (window.currentProject.youtubeMetadata) {
+      if (window.currentProject.youtubeMetadata && !isMetadataShown) {
         console.log('🎬 Proyecto tiene metadatos de YouTube, mostrando automáticamente...');
         const isProjectComplete = window.currentProject.completedSections.length >= window.currentProject.totalSections;
         
         if (isProjectComplete) {
           // Mostrar metadatos automáticamente para proyectos completos
+          isMetadataShown = true; // Marcar como mostrado INMEDIATAMENTE
           setTimeout(() => {
             showYouTubeMetadataResults(window.currentProject.youtubeMetadata.content, window.currentProject.topic);
             showNotification('🎬 Metadatos de YouTube cargados automáticamente', 'info');
@@ -6676,6 +7337,8 @@ async function loadProject(folderName) {
           console.log('📊 Proyecto incompleto, metadatos disponibles pero no se muestran automáticamente');
           showNotification('📊 Este proyecto tiene metadatos de YouTube generados anteriormente', 'info');
         }
+      } else if (window.currentProject.youtubeMetadata && isMetadataShown) {
+        console.log('🎬 Metadatos ya mostrados, omitiendo duplicado');
       } else {
         const isProjectComplete = window.currentProject.completedSections.length >= window.currentProject.totalSections;
         if (isProjectComplete) {
@@ -6749,13 +7412,19 @@ function showLoadedSection(section) {
       imageFiles: !!section.imageFiles,
       googleImagesMode: section.googleImagesMode
     });
+    console.log('🔍 Datos completos de la sección:', section);
     loadSectionImages(section.section);
   } else {
     console.log('🚫 No se detectaron imágenes para cargar:', {
       hasImages: section.hasImages,
       imageFiles: !!section.imageFiles,
-      googleImagesMode: section.googleImagesMode
+      googleImagesMode: section.googleImagesMode,
+      sectionKeys: Object.keys(section)
     });
+    
+    // FORZAR carga de imágenes independientemente de las banderas
+    console.log('🔧 Intentando cargar imágenes forzadamente...');
+    loadSectionImages(section.section);
   }
 }
 
@@ -6769,38 +7438,49 @@ async function loadSectionImages(sectionNumber) {
       return;
     }
     
-    const folderName = window.currentProject.originalFolderName || window.currentProject.topic;
-    const normalizedFolderName = folderName.toLowerCase().replace(/\s+/g, '_');
+    // 🔍 Usar la carpeta correcta del proyecto
+    const projectFolderName = window.currentProject.folderName || 
+                             window.currentProject.originalFolderName || 
+                             window.currentProject.topic.toLowerCase().replace(/\s+/g, '_');
     
-    console.log(`🖼️ Buscando imágenes para sección ${sectionNumber} en proyecto: ${normalizedFolderName}`);
-    console.log(`🔗 URL que se va a llamar: /api/project-images/${normalizedFolderName}/${sectionNumber}`);
+    console.log(`🖼️ Buscando imágenes para sección ${sectionNumber} en proyecto: ${projectFolderName}`);
+    console.log(`🔗 URL que se va a llamar: /api/project-images/${projectFolderName}/${sectionNumber}`);
     
-    const response = await fetch(`/api/project-images/${normalizedFolderName}/${sectionNumber}`);
+    const response = await fetch(`/api/project-images/${projectFolderName}/${sectionNumber}`);
     console.log(`📡 Respuesta del servidor:`, response.status, response.statusText);
     
     const data = await response.json();
-    console.log(`📊 Datos recibidos:`, data);
+    console.log(`📊 Datos recibidos completos:`, JSON.stringify(data, null, 2));
     
     if (data.success && data.images && data.images.length > 0) {
       console.log(`✅ Encontradas ${data.images.length} imágenes para sección ${sectionNumber}`);
       
       // Preparar imágenes para el carrusel
-      const carouselImages = data.images.map((image, index) => ({
-        url: image.url,
-        caption: image.caption || `Imagen ${index + 1} de la Sección ${sectionNumber}`,
-        filename: image.filename,
-        path: image.path
-      }));
+      const carouselImages = data.images.map((image, index) => {
+        console.log(`🖼️ Procesando imagen ${index + 1}:`, image);
+        return {
+          url: image.url,
+          caption: image.caption || `Imagen ${index + 1} de la Sección ${sectionNumber}`,
+          filename: image.filename,
+          path: image.path,
+          source: image.source || 'Google Images' // Añadir source para la lógica del carrusel
+        };
+      });
       
       console.log(`🎠 Imágenes preparadas para carrusel:`, carouselImages);
       
       // Cargar keywords si están disponibles
+      console.log(`🔍 [loadSectionImages] Data.keywords recibidas:`, data.keywords);
+      console.log(`🔍 [loadSectionImages] Longitud de keywords:`, data.keywords ? data.keywords.length : 0);
       if (data.keywords && data.keywords.length > 0) {
         currentImageKeywords = data.keywords;
         console.log(`📋 Keywords cargadas para las imágenes:`, data.keywords);
       } else {
         currentImageKeywords = [];
+        console.log(`⚠️ No se recibieron keywords del backend`);
       }
+      
+      console.log(`🔍 [loadSectionImages] currentImageKeywords final:`, currentImageKeywords);
       
       // Mostrar carrusel
       createCarousel(carouselImages, sectionNumber, []);
@@ -7589,6 +8269,29 @@ function updateProjectButtons(project) {
     }
   }
   
+  // Siempre mostrar el botón de regenerar audios cuando hay un proyecto cargado
+  // (independientemente del estado de completado)
+  if (window.currentProject) {
+    const videoContainer = document.getElementById('videoGenerationContainer');
+    if (videoContainer) {
+      videoContainer.style.display = 'block';
+    }
+    
+    // Actualizar visibility del botón de regenerar audios
+    const regenerateAudioBtn = document.getElementById('regenerateApplioAudiosBtn');
+    if (regenerateAudioBtn) {
+      regenerateAudioBtn.style.display = 'inline-flex';
+      console.log('🎤 Botón de regenerar audios mostrado para proyecto cargado');
+    }
+    
+    // Actualizar visibility del botón de regenerar guiones
+    const regenerateScriptsBtn = document.getElementById('regenerateMissingScriptsBtn');
+    if (regenerateScriptsBtn) {
+      regenerateScriptsBtn.style.display = 'inline-flex';
+      console.log('📝 Botón de regenerar guiones mostrado para proyecto cargado');
+    }
+  }
+  
   console.log('✅ Botones actualizados correctamente');
 }
 
@@ -8217,15 +8920,21 @@ async function refreshBingImage(imageIndex, sectionNum) {
     return;
   }
   
-  // Obtener el nombre de la carpeta actual
-  const folderNameElement = document.getElementById('folderName');
-  if (!folderNameElement) {
-    console.error('❌ No se pudo obtener el nombre del proyecto');
-    alert('Error: No se pudo obtener el nombre del proyecto');
-    return;
+  // Obtener el nombre de la carpeta actual del proyecto cargado
+  let folderName;
+  if (window.currentProject && window.currentProject.folderName) {
+    folderName = window.currentProject.folderName;
+    console.log(`📁 Usando folderName del proyecto cargado: ${folderName}`);
+  } else {
+    const folderNameElement = document.getElementById('folderName');
+    if (!folderNameElement) {
+      console.error('❌ No se pudo obtener el nombre del proyecto');
+      alert('Error: No se pudo obtener el nombre del proyecto');
+      return;
+    }
+    folderName = folderNameElement.value.trim();
+    console.log(`📁 Usando folderName del elemento HTML: ${folderName}`);
   }
-  
-  const folderName = folderNameElement.value.trim();
   
   // Obtener las imágenes actuales del carrusel para mantener mapeo correcto
   const currentImages = [];
@@ -8340,15 +9049,21 @@ async function refreshBingImageWithCustomKeyword(imageIndex, sectionNum) {
     return;
   }
   
-  // Obtener el nombre de la carpeta actual
-  const folderNameElement = document.getElementById('folderName');
-  if (!folderNameElement) {
-    console.error('❌ No se pudo obtener el nombre del proyecto');
-    alert('Error: No se pudo obtener el nombre del proyecto');
-    return;
+  // Obtener el nombre de la carpeta actual del proyecto cargado
+  let folderName;
+  if (window.currentProject && window.currentProject.folderName) {
+    folderName = window.currentProject.folderName;
+    console.log(`📁 Usando folderName del proyecto cargado: ${folderName}`);
+  } else {
+    const folderNameElement = document.getElementById('folderName');
+    if (!folderNameElement) {
+      console.error('❌ No se pudo obtener el nombre del proyecto');
+      alert('Error: No se pudo obtener el nombre del proyecto');
+      return;
+    }
+    folderName = folderNameElement.value.trim();
+    console.log(`📁 Usando folderName del elemento HTML: ${folderName}`);
   }
-  
-  const folderName = folderNameElement.value.trim();
   
   // Obtener las imágenes actuales del carrusel para mantener mapeo correcto
   const carouselTrack = document.querySelector('.carousel-track');
@@ -8487,11 +9202,69 @@ function shouldGenerateVideoAutomatically() {
 
 // Función para mostrar el botón de generación manual de video
 function showVideoGenerationButton() {
+  // Mostrar el contenedor principal de generación de video
+  const videoContainer = document.getElementById('videoGenerationContainer');
+  if (videoContainer) {
+    videoContainer.style.display = 'block';
+  }
+  
   const videoBtn = document.getElementById('generateVideoBtn');
   if (videoBtn) {
     videoBtn.style.display = 'inline-flex';
-    console.log('📹 Botón simple de generación de video mostrado');
   }
+  
+  const simpleVideoBtn = document.getElementById('generateSimpleVideoBtn');
+  if (simpleVideoBtn) {
+    simpleVideoBtn.style.display = 'inline-flex';
+  }
+  
+  // Mostrar botón de regenerar audios solo si Applio está activado
+  const regenerateAudioBtn = document.getElementById('regenerateApplioAudiosBtn');
+  const applioCheckbox = document.getElementById('autoGenerateApplioAudio');
+  
+  // Mostrar el botón si Applio está activado O si hay un proyecto cargado (para permitir generar audios faltantes)
+  if (regenerateAudioBtn && ((applioCheckbox && applioCheckbox.checked) || window.currentProject)) {
+    regenerateAudioBtn.style.display = 'inline-flex';
+    console.log('🎤 Botón de generar audios faltantes mostrado');
+  } else {
+    if (regenerateAudioBtn) {
+      regenerateAudioBtn.style.display = 'none';
+    }
+  }
+  
+  // Mostrar botón de regenerar guiones si hay un proyecto cargado
+  const regenerateScriptsBtn = document.getElementById('regenerateMissingScriptsBtn');
+  if (regenerateScriptsBtn && window.currentProject) {
+    regenerateScriptsBtn.style.display = 'inline-flex';
+    console.log('📝 Botón de regenerar guiones vacíos mostrado');
+  } else {
+    if (regenerateScriptsBtn) {
+      regenerateScriptsBtn.style.display = 'none';
+    }
+  }
+  
+  // Mostrar todas las configuraciones por defecto (para video completo)
+  showVideoSettings();
+  
+  console.log('📹 Botones de generación de video mostrados');
+}
+
+// Función para mostrar/ocultar configuraciones de video
+function showVideoSettings() {
+  const animationSetting = document.getElementById('videoAnimationSetting');
+  const qualitySetting = document.getElementById('videoQualitySetting');
+  
+  if (animationSetting) animationSetting.style.display = 'block';
+  if (qualitySetting) qualitySetting.style.display = 'block';
+}
+
+// Función para ocultar configuraciones que no aplican para video simple
+function hideVideoSettingsForSimple() {
+  const animationSetting = document.getElementById('videoAnimationSetting');
+  const qualitySetting = document.getElementById('videoQualitySetting');
+  
+  if (animationSetting) animationSetting.style.display = 'none';
+  if (qualitySetting) qualitySetting.style.display = 'none';
 }
 
 // Función principal para generar video automáticamente
@@ -8529,12 +9302,11 @@ async function generateProjectVideo(folderName, isAutomatic = false) {
   
   try {
     // Obtener configuración de video
-    const duration = parseFloat(document.getElementById('videoDuration')?.value || 3);
     const animationType = document.getElementById('videoAnimation')?.value || 'zoom-out';
     const quality = document.getElementById('videoQuality')?.value || 'standard';
     
     console.log(`🎬 Generando video para proyecto: ${folderName}`);
-    console.log(`🎬 Configuración: duración=${duration}s, animación=${animationType}, calidad=${quality}`);
+    console.log(`🎬 Configuración: animación=${animationType}, calidad=${quality}`);
     
     // Mostrar progreso
     if (!isAutomatic) {
@@ -8551,7 +9323,6 @@ async function generateProjectVideo(folderName, isAutomatic = false) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         folderName: folderName,
-        duration: duration,
         animationType: animationType,
         quality: quality
       })
@@ -8672,6 +9443,64 @@ async function generateProjectVideo(folderName, isAutomatic = false) {
         }
       }, 1000);
     }
+  }
+}
+
+// Función para generar video simple (sin animaciones)
+async function generateSimpleProjectVideo(folderName) {
+  if (isGeneratingVideo) {
+    console.log('⚠️ Ya se está generando un video');
+    return;
+  }
+
+  isGeneratingVideo = true;
+  const button = document.getElementById('generateSimpleVideoBtn');
+  
+  try {
+    // Deshabilitar botón y mostrar estado de carga
+    button.disabled = true;
+    button.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Generando Video Simple...</span>';
+    
+    console.log('🎬 Iniciando generación de video simple para proyecto:', folderName);
+    
+    const response = await fetch('/generate-simple-video', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        folderName: folderName
+        // No enviamos duration porque se calcula automáticamente basado en audio
+      }),
+    });
+
+    if (response.ok) {
+      // El servidor debería enviar el archivo para descarga automática
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.style.display = 'none';
+      a.href = url;
+      a.download = `${folderName}_video_simple.mp4`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      showSuccess('¡Video simple generado y descargado exitosamente!');
+    } else {
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'Error interno del servidor');
+    }
+
+  } catch (error) {
+    console.error('❌ Error generando video simple:', error);
+    showError(`Error generando video simple: ${error.message}`);
+  } finally {
+    // Restaurar botón
+    isGeneratingVideo = false;
+    button.disabled = false;
+    button.innerHTML = '<i class="fas fa-images"></i><span>Video Simple (Sin Animación)</span>';
   }
 }
 
@@ -8817,7 +9646,539 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 });
 
+// =====================================
+// FUNCIONALIDAD REGENERAR AUDIOS APPLIO
+// =====================================
+
+// Función principal para generar audios faltantes con Applio
+async function regenerateAllApplioAudios() {
+  try {
+    // Verificar que haya un proyecto cargado
+    if (!window.currentProject || !window.currentProject.completedSections) {
+      showError('No hay un proyecto cargado con secciones completadas');
+      return;
+    }
+    
+    // Verificar que Applio esté activado
+    const applioCheckbox = document.getElementById('autoGenerateApplioAudio');
+    if (!applioCheckbox || !applioCheckbox.checked) {
+      showError('Applio debe estar activado para generar audios');
+      return;
+    }
+    
+    // Obtener configuración actual de Applio
+    const selectedApplioVoice = document.getElementById("applioVoiceSelect").value;
+    const selectedApplioModel = document.getElementById("applioModelSelect").value;
+    const applioPitch = parseInt(document.getElementById("applioPitch").value) || 0;
+    const folderName = document.getElementById("folderName").value.trim();
+    
+    if (!folderName) {
+      showError('No se ha especificado el nombre del proyecto');
+      return;
+    }
+    
+    // Obtener configuración de estilo actual
+    const styleSelect = document.getElementById('styleSelect');
+    const selectedStyleValue = styleSelect ? styleSelect.value : 'professional';
+    
+    let scriptStyle = 'professional';
+    let customStyleInstructions = '';
+    
+    // Determinar el tipo de estilo y obtener las instrucciones
+    if (selectedStyleValue.startsWith('custom_')) {
+      scriptStyle = 'custom';
+      customStyleInstructions = getCustomStyleInstructions(selectedStyleValue) || '';
+      console.log(`🎨 Estilo personalizado detectado: ${selectedStyleValue}`);
+      console.log(`🎨 Instrucciones: ${customStyleInstructions.substring(0, 100)}...`);
+    } else {
+      scriptStyle = selectedStyleValue;
+    }
+    
+    const wordsMin = parseInt(document.getElementById('wordsMin')?.value) || 800;
+    const wordsMax = parseInt(document.getElementById('wordsMax')?.value) || 1100;
+
+    console.log('🎤 Verificando audios faltantes y generando con Applio...');
+    console.log('🎤 Configuración:', {
+      voz: selectedApplioVoice,
+      modelo: selectedApplioModel,
+      pitch: applioPitch,
+      proyecto: folderName,
+      secciones: window.currentProject.completedSections.length,
+      estilo: scriptStyle
+    });
+    
+    // Deshabilitar botón durante el proceso
+    const regenerateBtn = document.getElementById('regenerateApplioAudiosBtn');
+    if (regenerateBtn) {
+      regenerateBtn.disabled = true;
+      regenerateBtn.innerHTML = `
+        <i class="fas fa-spinner fa-spin"></i>
+        <span>Verificando audios...</span>
+      `;
+    }
+    
+    // Mostrar progreso
+    showNotification('🔍 Verificando qué audios faltan...', 'info');
+    
+    // Llamar al backend para verificar y generar solo los audios faltantes
+    const response = await fetch('/generate-missing-applio-audios', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        folderName: folderName,
+        applioVoice: selectedApplioVoice,
+        applioModel: selectedApplioModel,
+        applioPitch: applioPitch,
+        totalSections: window.currentProject.completedSections.length,
+        scriptStyle: scriptStyle,
+        customStyleInstructions: customStyleInstructions,
+        wordsMin: wordsMin,
+        wordsMax: wordsMax
+      })
+    });
+    
+    const data = await response.json();
+    
+    if (data.success) {
+      console.log('✅ Verificación y generación completada:', data.message);
+      
+      if (data.data.generatedCount > 0) {
+        showNotification(`✅ ${data.data.generatedCount} audios faltantes generados exitosamente`, 'success');
+      } else {
+        showNotification('✅ Todos los audios ya existen, no se generó ninguno nuevo', 'info');
+      }
+    } else {
+      throw new Error(data.error || 'Error desconocido verificando/generando audios');
+    }
+    
+  } catch (error) {
+    console.error('❌ Error verificando/generando audios:', error);
+    showError(`Error verificando/generando audios: ${error.message}`);
+  } finally {
+    // Restaurar botón
+    const regenerateBtn = document.getElementById('regenerateApplioAudiosBtn');
+    if (regenerateBtn) {
+      regenerateBtn.disabled = false;
+      regenerateBtn.innerHTML = `
+        <i class="fas fa-microphone-alt"></i>
+        <span>Generar Audios Faltantes</span>
+      `;
+    }
+  }
+}
+
+// Función para regenerar guiones faltantes
+async function regenerateMissingScripts() {
+  try {
+    // Verificar que haya un proyecto cargado
+    if (!window.currentProject || !window.currentProject.completedSections) {
+      showError('No hay un proyecto cargado con secciones completadas');
+      return;
+    }
+    
+    const folderName = document.getElementById("folderName").value.trim();
+    
+    if (!folderName) {
+      showError('No se ha especificado el nombre del proyecto');
+      return;
+    }
+    
+    // Obtener configuración de estilo actual
+    const styleSelect = document.getElementById('styleSelect');
+    const selectedStyleValue = styleSelect ? styleSelect.value : 'professional';
+    
+    let scriptStyle = 'professional';
+    let customStyleInstructions = '';
+    
+    // Determinar el tipo de estilo y obtener las instrucciones
+    if (selectedStyleValue.startsWith('custom_')) {
+      scriptStyle = 'custom';
+      customStyleInstructions = getCustomStyleInstructions(selectedStyleValue) || '';
+      console.log(`🎨 Estilo personalizado detectado: ${selectedStyleValue}`);
+      console.log(`🎨 Instrucciones: ${customStyleInstructions.substring(0, 100)}...`);
+    } else {
+      scriptStyle = selectedStyleValue;
+    }
+    
+    const wordsMin = parseInt(document.getElementById('wordsMin')?.value) || 800;
+    const wordsMax = parseInt(document.getElementById('wordsMax')?.value) || 1100;
+
+    console.log('📝 Verificando guiones faltantes...');
+    console.log('📝 Configuración:', {
+      proyecto: folderName,
+      secciones: window.currentProject.completedSections.length,
+      estilo: scriptStyle
+    });
+    
+    // Deshabilitar botón durante el proceso
+    const regenerateBtn = document.getElementById('regenerateMissingScriptsBtn');
+    if (regenerateBtn) {
+      regenerateBtn.disabled = true;
+      regenerateBtn.innerHTML = `
+        <i class="fas fa-spinner fa-spin"></i>
+        <span>Verificando guiones...</span>
+      `;
+    }
+    
+    // Mostrar progreso
+    showNotification('🔍 Verificando qué guiones están vacíos...', 'info');
+    
+    // Llamar al backend para verificar y generar solo los guiones faltantes
+    const response = await fetch('/generate-missing-scripts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        folderName: folderName,
+        scriptStyle: scriptStyle,
+        customStyleInstructions: customStyleInstructions,
+        wordsMin: wordsMin,
+        wordsMax: wordsMax
+      })
+    });
+    
+    const data = await response.json();
+    
+    if (data.success) {
+      console.log('✅ Verificación y generación de guiones completada:', data.message);
+      
+      if (data.data.generatedCount > 0) {
+        showNotification(`✅ ${data.data.generatedCount} guiones faltantes generados exitosamente`, 'success');
+        
+        // Actualizar el proyecto cargado para reflejar los cambios
+        if (window.currentProject) {
+          // Recargar el proyecto para obtener los guiones actualizados
+          setTimeout(() => {
+            showNotification('🔄 Recargando proyecto para mostrar los cambios...', 'info');
+            // Aquí podrías recargar el proyecto actual si tienes esa funcionalidad
+          }, 2000);
+        }
+      } else {
+        showNotification('✅ Todos los guiones ya tienen contenido, no se generó ninguno nuevo', 'info');
+      }
+      
+      // Mostrar detalles si hay información adicional
+      if (data.data.missingScripts && data.data.missingScripts.length > 0) {
+        console.log('📝 Secciones que tenían guiones vacíos:', data.data.missingScripts);
+      }
+      
+    } else {
+      throw new Error(data.error || 'Error desconocido regenerando guiones');
+    }
+    
+  } catch (error) {
+    console.error('❌ Error regenerando guiones:', error);
+    showError(`Error regenerando guiones: ${error.message}`);
+  } finally {
+    // Restaurar botón
+    const regenerateBtn = document.getElementById('regenerateMissingScriptsBtn');
+    if (regenerateBtn) {
+      regenerateBtn.disabled = false;
+      regenerateBtn.innerHTML = `
+        <i class="fas fa-file-alt"></i>
+        <span>Regenerar Guiones Vacíos</span>
+      `;
+    }
+  }
+}
+
+// =====================================
+// FUNCIONALIDAD COMFYUI CONTROLS
+// =====================================
+
+document.addEventListener('DOMContentLoaded', function() {
+  console.log('🎯 DOM cargado - Inicializando controles ComfyUI...');
+  
+  // Esperar un poco para asegurar que todo esté cargado
+  setTimeout(() => {
+    initializeComfyUIControls();
+    checkComfyUIStatus();
+  }, 500);
+});
+
+// También agregar al final por si acaso
+window.addEventListener('load', function() {
+  console.log('🎯 Window cargado - Verificando controles ComfyUI...');
+  if (!document.getElementById('comfyUIConfig')?.hasAttribute('data-initialized')) {
+    initializeComfyUIControls();
+  }
+});
+
+function initializeComfyUIControls() {
+  console.log('🎨 Inicializando controles de ComfyUI...');
+  
+  // Toggle de configuración ComfyUI cuando se marque la casilla
+  const localAICheckbox = document.getElementById('localAIImages');
+  const comfyUIConfig = document.getElementById('comfyUIConfig');
+  
+  console.log('🔍 Elementos encontrados:', {
+    localAICheckbox: !!localAICheckbox,
+    comfyUIConfig: !!comfyUIConfig
+  });
+  
+  if (localAICheckbox && comfyUIConfig) {
+    // Marcar como inicializado
+    comfyUIConfig.setAttribute('data-initialized', 'true');
+    
+    // Limpiar listeners previos
+    localAICheckbox.removeEventListener('change', toggleComfyUIConfig);
+    localAICheckbox.addEventListener('change', toggleComfyUIConfig);
+    
+    console.log('✅ Event listener agregado a checkbox localAIImages');
+    
+    // Verificar estado inicial
+    if (localAICheckbox.checked) {
+      comfyUIConfig.style.display = 'block';
+      console.log('✅ Checkbox ya estaba marcado - mostrando controles');
+    }
+  } else {
+    console.error('❌ No se encontraron elementos necesarios:', {
+      localAICheckbox: localAICheckbox ? 'encontrado' : 'NO ENCONTRADO',
+      comfyUIConfig: comfyUIConfig ? 'encontrado' : 'NO ENCONTRADO'
+    });
+  }
+
+  // Controles de sliders con valores en tiempo real
+  const stepsSlider = document.getElementById('comfyUISteps');
+  const stepsValue = document.getElementById('stepsValue');
+  const guidanceSlider = document.getElementById('comfyUIGuidance');
+  const guidanceValue = document.getElementById('guidanceValue');
+  const widthSlider = document.getElementById('comfyUIWidth');
+  const widthValue = document.getElementById('widthValue');
+  const heightSlider = document.getElementById('comfyUIHeight');
+  const heightValue = document.getElementById('heightValue');
+
+  if (stepsSlider && stepsValue) {
+    stepsSlider.addEventListener('input', function() {
+      stepsValue.textContent = this.value;
+      console.log(`🔧 Pasos actualizados: ${this.value}`);
+    });
+  }
+
+  if (guidanceSlider && guidanceValue) {
+    guidanceSlider.addEventListener('input', function() {
+      guidanceValue.textContent = this.value;
+      console.log(`🧭 Guidance actualizados: ${this.value}`);
+    });
+  }
+
+  if (widthSlider && widthValue) {
+    widthSlider.addEventListener('input', function() {
+      widthValue.textContent = this.value + 'px';
+      console.log(`📐 Ancho actualizado: ${this.value}px`);
+    });
+  }
+
+  if (heightSlider && heightValue) {
+    heightSlider.addEventListener('input', function() {
+      heightValue.textContent = this.value + 'px';
+      console.log(`📏 Alto actualizado: ${this.value}px`);
+    });
+  }
+
+  // Presets rápidos para diferentes calidades
+  addQualityPresets();
+}
+
+// Función separada para el toggle
+function toggleComfyUIConfig() {
+  const comfyUIConfig = document.getElementById('comfyUIConfig');
+  console.log('🎛️ Toggle ComfyUI ejecutado - checkbox checked:', this.checked);
+  
+  if (this.checked) {
+    comfyUIConfig.style.display = 'block';
+    console.log('✅ Controles ComfyUI mostrados');
+    
+    // Establecer valores por defecto: 15 pasos y 800px ancho (16:9)
+    const stepsSlider = document.getElementById('comfyUISteps');
+    const stepsValue = document.getElementById('stepsValue');
+    const widthSlider = document.getElementById('comfyUIWidth');
+    const widthValue = document.getElementById('widthValue');
+    const heightSlider = document.getElementById('comfyUIHeight');
+    const heightValue = document.getElementById('heightValue');
+    
+    if (stepsSlider && stepsValue) {
+      stepsSlider.value = 15;
+      stepsValue.textContent = '15';
+    }
+    
+    if (widthSlider && widthValue) {
+      const defaultWidth = 800;
+      const defaultHeight = Math.round(defaultWidth / 16 * 9); // 450px
+      
+      widthSlider.value = defaultWidth;
+      widthValue.textContent = defaultWidth + 'px';
+      
+      if (heightSlider && heightValue) {
+        heightSlider.value = defaultHeight;
+        heightValue.textContent = defaultHeight + 'px';
+      }
+      
+      console.log('🎯 Valores por defecto establecidos: 15 pasos, ' + defaultWidth + 'x' + defaultHeight + ' (16:9)');
+    }
+  } else {
+    comfyUIConfig.style.display = 'none';
+    console.log('❌ Controles ComfyUI ocultados');
+  }
+}
+
+function addQualityPresets() {
+  // Agregar botones de presets si no existen
+  const comfyUIConfig = document.getElementById('comfyUIConfig');
+  if (!comfyUIConfig) return;
+
+  // Crear sección de presets si no existe
+  let presetsSection = document.getElementById('comfyUIPresets');
+  if (!presetsSection) {
+    presetsSection = document.createElement('div');
+    presetsSection.id = 'comfyUIPresets';
+    presetsSection.innerHTML = `
+      <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(0, 255, 127, 0.2);">
+        <h5 style="color: #00bfff; margin-bottom: 10px; display: flex; align-items: center; gap: 6px;">
+          <i class="fas fa-rocket"></i> Presets Rápidos
+        </h5>
+        <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+          <button class="preset-btn" onclick="applyComfyUIPreset('fast')" style="background: linear-gradient(145deg, #ff6b6b, #ee5a52); color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 0.8rem;">
+            ⚡ Rápido
+          </button>
+          <button class="preset-btn" onclick="applyComfyUIPreset('balanced')" style="background: linear-gradient(145deg, #4ecdc4, #44a08d); color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 0.8rem;">
+            ⚖️ Equilibrado
+          </button>
+          <button class="preset-btn" onclick="applyComfyUIPreset('quality')" style="background: linear-gradient(145deg, #45b7d1, #96c93d); color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 0.8rem;">
+            🎨 Calidad
+          </button>
+        </div>
+      </div>
+    `;
+    comfyUIConfig.appendChild(presetsSection);
+  }
+}
+
+function applyComfyUIPreset(preset) {
+  console.log(`🎯 Aplicando preset: ${preset}`);
+  
+  const stepsSlider = document.getElementById('comfyUISteps');
+  const stepsValue = document.getElementById('stepsValue');
+  const guidanceSlider = document.getElementById('comfyUIGuidance');
+  const guidanceValue = document.getElementById('guidanceValue');
+  const widthSlider = document.getElementById('comfyUIWidth');
+  const widthValue = document.getElementById('widthValue');
+  const heightSlider = document.getElementById('comfyUIHeight');
+  const heightValue = document.getElementById('heightValue');
+
+  switch(preset) {
+    case 'fast':
+      if (stepsSlider) { stepsSlider.value = 10; stepsValue.textContent = '10'; }
+      if (guidanceSlider) { guidanceSlider.value = 2.5; guidanceValue.textContent = '2.5'; }
+      if (widthSlider) { widthSlider.value = 1024; widthValue.textContent = '1024px'; }
+      if (heightSlider) { heightSlider.value = 720; heightValue.textContent = '720px'; }
+      break;
+    case 'balanced':
+      if (stepsSlider) { stepsSlider.value = 25; stepsValue.textContent = '25'; }
+      if (guidanceSlider) { guidanceSlider.value = 3.5; guidanceValue.textContent = '3.5'; }
+      if (widthSlider) { widthSlider.value = 1280; widthValue.textContent = '1280px'; }
+      if (heightSlider) { heightSlider.value = 720; heightValue.textContent = '720px'; }
+      break;
+    case 'quality':
+      if (stepsSlider) { stepsSlider.value = 40; stepsValue.textContent = '40'; }
+      if (guidanceSlider) { guidanceSlider.value = 4.5; guidanceValue.textContent = '4.5'; }
+      if (widthSlider) { widthSlider.value = 1536; widthValue.textContent = '1536px'; }
+      if (heightSlider) { heightSlider.value = 1024; heightValue.textContent = '1024px'; }
+      break;
+  }
+  
+  console.log(`✅ Preset ${preset} aplicado`);
+}
+
+async function checkComfyUIStatus() {
+  const statusElement = document.getElementById('comfyUIStatus');
+  const statusIcon = statusElement?.querySelector('.status-icon');
+  const statusText = statusElement?.querySelector('.status-text');
+  
+  if (!statusElement) return;
+  
+  try {
+    // Actualizar a estado "verificando"
+    statusIcon.className = 'fas fa-circle status-icon checking';
+    statusText.textContent = 'Verificando conexión con ComfyUI...';
+    
+    const response = await fetch('/comfyui-status');
+    const data = await response.json();
+    
+    if (data.success && data.connected) {
+      statusIcon.className = 'fas fa-circle status-icon connected';
+      statusText.textContent = `✅ ComfyUI conectado - ${data.models.length} modelos${data.fluxAvailable ? ' (Flux disponible)' : ''}`;
+      console.log('🟢 ComfyUI conectado exitosamente');
+    } else {
+      statusIcon.className = 'fas fa-circle status-icon disconnected';
+      statusText.textContent = `❌ ComfyUI desconectado: ${data.error || 'Error desconocido'}`;
+      console.warn('🔴 ComfyUI no disponible:', data.error);
+    }
+  } catch (error) {
+    statusIcon.className = 'fas fa-circle status-icon disconnected';
+    statusText.textContent = '❌ Error verificando ComfyUI - ¿Está ejecutándose?';
+    console.error('🔴 Error verificando ComfyUI:', error);
+  }
+}
+
+function getComfyUISettings() {
+  return {
+    steps: document.getElementById('comfyUISteps')?.value || 25,
+    guidance: document.getElementById('comfyUIGuidance')?.value || 3.5,
+    width: document.getElementById('comfyUIWidth')?.value || 1280,
+    height: document.getElementById('comfyUIHeight')?.value || 720,
+    sampler: document.getElementById('comfyUISampler')?.value || 'euler',
+    scheduler: document.getElementById('comfyUIScheduler')?.value || 'simple',
+    negativePrompt: document.getElementById('comfyUINegativePrompt')?.value || 'low quality, blurry, distorted'
+  };
+}
+
 // Exponer funciones globalmente
 window.generateProjectVideo = generateProjectVideo;
 window.generateVideoAutomatically = generateVideoAutomatically;
 window.showVideoGenerationButton = showVideoGenerationButton;
+window.regenerateAllApplioAudios = regenerateAllApplioAudios;
+window.applyComfyUIPreset = applyComfyUIPreset;
+window.checkComfyUIStatus = checkComfyUIStatus;
+window.getComfyUISettings = getComfyUISettings;
+window.initializeComfyUIControls = initializeComfyUIControls;
+window.toggleComfyUIConfig = toggleComfyUIConfig;
+
+// Exponer funciones de la barra de progreso globalmente
+window.showProgressBar = showProgressBar;
+window.hideProgressBar = hideProgressBar;
+window.updateProgressBar = updateProgressBar;
+window.resetProgressBar = resetProgressBar;
+window.completeProgressBar = completeProgressBar;
+window.showProgressError = showProgressError;
+window.startElapsedTimeCounter = startElapsedTimeCounter;
+window.startProgressPolling = startProgressPolling;
+window.stopProgressPolling = stopProgressPolling;
+
+// Validación para campos de palabras por sección
+document.addEventListener('DOMContentLoaded', function() {
+  const minWordsInput = document.getElementById('minWords');
+  const maxWordsInput = document.getElementById('maxWords');
+  
+  if (minWordsInput && maxWordsInput) {
+    // Validar campo mínimo
+    minWordsInput.addEventListener('input', function() {
+      let minValue = parseInt(this.value);
+      let maxValue = parseInt(maxWordsInput.value);
+      
+      
+      // Si mínimo es mayor que máximo, ajustar máximo
+      if (maxValue && minValue > maxValue) {
+        maxWordsInput.value = minValue + 100;
+      }
+    });
+    
+    // Validar campo máximo
+    maxWordsInput.addEventListener('input', function() {
+      let maxValue = parseInt(this.value);
+      let minValue = parseInt(minWordsInput.value);
+      
+    });
+    
+    console.log('✅ Validación de palabras por sección configurada');
+  }
+});
