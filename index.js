@@ -1386,7 +1386,7 @@ function reconstructProjectState(folderName) {
       reconstructedAt: new Date().toISOString(),
       voice: 'shimmer', // Valor por defecto
       imageModel: 'gemini2', // Valor por defecto
-      llmModel: 'gemini-2.5-pro', // Valor por defecto
+      llmModel: 'gemini-2.5-flash', // Valor por defecto (Flash más rápido)
       scriptStyle: 'professional', // Valor por defecto
       imageCount: 5, // Valor por defecto
       minWords: 800,
@@ -3405,7 +3405,7 @@ RECUERDA: ESTE ES UN CAPÍTULO INTERMEDIO DE UN VIDEO YA INICIADO - CONTINÚA LA
 // NUEVO ENDPOINT PARA GENERACIÓN AUTOMÁTICA POR LOTES
 app.post('/generate-batch-automatic', async (req, res) => {
   try {
-    const { topic, folderName, voice, totalSections, minWords, maxWords, imageCount, promptModifier, imageModel, llmModel, skipImages, googleImages, localAIImages, comfyUISettings, scriptStyle, customStyleInstructions, applioVoice, applioModel, applioPitch, useApplio } = req.body;
+    const { topic, folderName, voice, totalSections, minWords, maxWords, imageCount, promptModifier, imageModel, llmModel, skipImages, googleImages, localAIImages, geminiGeneratedImages, comfyUISettings, scriptStyle, customStyleInstructions, applioVoice, applioModel, applioPitch, useApplio } = req.body;
     
     console.log('\n' + '='.repeat(80));
     console.log('🚀 INICIANDO GENERACIÓN AUTOMÁTICA POR LOTES');
@@ -3413,7 +3413,7 @@ app.post('/generate-batch-automatic', async (req, res) => {
     console.log(`🎯 Tema: "${topic}"`);
     console.log(`📊 Total de secciones: ${totalSections}`);
     console.log(`🎤 Sistema de audio: ${useApplio ? 'Applio' : 'Google TTS'}`);
-    console.log(`🖼️ Sistema de imágenes: ${localAIImages ? 'IA Local (ComfyUI)' : googleImages ? 'Google Images' : skipImages ? 'Sin imágenes' : 'IA en la nube'}`);
+    console.log(`🖼️ Sistema de imágenes: ${localAIImages ? 'IA Local (ComfyUI)' : googleImages ? 'Google Images' : geminiGeneratedImages ? 'Gemini/Imagen 4' : skipImages ? 'Sin imágenes' : 'IA en la nube'}`);
     console.log('='.repeat(80) + '\n');
     
     const selectedVoice = voice || 'Orus';
@@ -3424,7 +3424,7 @@ app.post('/generate-batch-automatic', async (req, res) => {
     const wordsMax = maxWords || 1100;
     const additionalInstructions = promptModifier || '';
     const selectedImageModel = imageModel || 'gemini2';
-    const selectedLlmModel = llmModel || 'gemini-2.5-pro';
+    const selectedLlmModel = llmModel || 'gemini-2.5-flash';
     let shouldSkipImages = skipImages === true;
     let shouldUseGoogleImages = googleImages === true;
     let shouldUseLocalAI = localAIImages === true;
@@ -4594,7 +4594,7 @@ app.post('/generate-missing-scripts', async (req, res) => {
 // ENDPOINT PARA CONTINUAR CON FASE 3: GENERACIÓN DE IMÁGENES POR LOTES
 app.post('/generate-batch-images', async (req, res) => {
   try {
-    const { projectData, skipImages, googleImages, localAIImages, imageModel, comfyUISettings, folderName } = req.body;
+    const { projectData, skipImages, googleImages, localAIImages, geminiGeneratedImages, imageModel, comfyUISettings, folderName } = req.body;
     
     console.log('\n' + '🎨'.repeat(20));
     console.log('🎨 FASE 3: GENERANDO TODAS LAS IMÁGENES');
@@ -4604,6 +4604,7 @@ app.post('/generate-batch-images', async (req, res) => {
     let shouldSkipImages = skipImages === true;
     let shouldUseGoogleImages = googleImages === true;
     let shouldUseLocalAI = localAIImages === true;
+    let shouldUseGeminiImages = geminiGeneratedImages === true;
     
     console.log(`📝 Instrucciones adicionales recibidas: "${additionalInstructions || 'Ninguna'}"`);
     
@@ -4977,7 +4978,7 @@ app.post('/generate', async (req, res) => {
     const numImages = imageCount || 5; // Default a 5 imágenes si no se especifica
     const additionalInstructions = promptModifier || ''; // Instrucciones adicionales para imágenes
     const selectedImageModel = imageModel || 'gemini2';
-    const selectedLlmModel = llmModel || 'gemini-2.5-pro';
+    const selectedLlmModel = llmModel || 'gemini-2.5-flash';
     let shouldSkipImages = skipImages === true;
     let shouldUseGoogleImages = googleImages === true;
     let shouldUseLocalAI = localAIImages === true;
@@ -8115,8 +8116,13 @@ async function organizarArchivosPorSecciones(projectPath) {
         }
         
         if (imagenes.length > 0) {
+          console.log(`🔍 DEBUG: Ordenando ${imagenes.length} imágenes en sección ${numeroSeccion}`);
+          console.log(`🔍 DEBUG: Antes de ordenar:`, imagenes.map(img => img.name));
+          
           // Ordenar imágenes por nombre para mantener orden consistente
           imagenes.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+          
+          console.log(`🔍 DEBUG: Después de ordenar:`, imagenes.map(img => img.name));
           
           console.log(`📁 Sección ${numeroSeccion} encontrada: ${imagenes.length} imágenes, ${audios.length} audios`);
           console.log(`🖼️ Imágenes en sección ${numeroSeccion}:`, imagenes.map(img => img.name));
@@ -8549,8 +8555,13 @@ async function procesarSeccionVideoSimple(seccion) {
     
     // Validar que todas las imágenes existen
     const imagenesValidadas = [];
+    console.log(`🔍 DEBUG: Procesando imágenes de ${seccion.nombre}:`);
+    console.log(`🔍 DEBUG: seccion.imagenes array:`, seccion.imagenes.map(img => img.name));
+    
     for (const imagen of seccion.imagenes) {
       let imagePath = imagen.path;
+      
+      console.log(`🔍 DEBUG: Procesando imagen: ${imagen.name} - Path: ${imagePath}`);
       
       // Si la ruta no es absoluta, convertirla
       if (!path.isAbsolute(imagePath)) {
@@ -8570,13 +8581,18 @@ async function procesarSeccionVideoSimple(seccion) {
       }
       
       imagenesValidadas.push(imagePath);
-      console.log(`✅ Imagen validada: ${imagePath}`);
+      console.log(`✅ Imagen validada: ${path.basename(imagePath)} (${imagenesValidadas.length}/${seccion.imagenes.length})`);
     }
+    
+    console.log(`🔍 DEBUG: Orden final de imágenes para ${seccion.nombre}:`);
+    imagenesValidadas.forEach((img, index) => {
+      console.log(`  ${index + 1}. ${path.basename(img)}`);
+    });
     
     console.log(`📹 Procesando ${seccion.nombre} con ${imagenesValidadas.length} imágenes validadas${audioPath ? ' y audio' : ''} (SIN ANIMACIONES)`);
     
     // Crear video simple usando solo imágenes estáticas
-    await generarVideoSimpleConImagenes(imagenesValidadas, audioPath, outputPath, finalDuration);
+    await generarVideoSimpleConImagenesOptimizado(imagenesValidadas, audioPath, outputPath, finalDuration);
     
     console.log(`✅ Video simple de sección ${seccion.nombre} generado: ${outputPath}`);
     return outputPath;

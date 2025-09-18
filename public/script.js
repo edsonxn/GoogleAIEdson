@@ -594,8 +594,8 @@ window.addEventListener('load', function() {
   
   // Verificar elementos importantes
   const elements = {
-    'createStyleBtn': document.getElementById('createStyleBtn'),
-    'manageStylesBtn': document.getElementById('manageStylesBtn'),
+    'createStyleBtn': document.getElementById('createStyleFromSidebar'),
+    'manageStylesBtn': document.getElementById('manageStylesFromSidebar'),
     'styleSelect': document.getElementById('styleSelect'),
     'styleModal': document.getElementById('styleModal'),
     'manageStylesModal': document.getElementById('manageStylesModal'),
@@ -693,9 +693,13 @@ async function runAutoGeneration() {
   const promptModifier = document.getElementById("promptModifier").value.trim();
   const selectedImageModel = document.getElementById("modelSelect").value;
   const selectedLlmModel = document.getElementById("llmModelSelect").value;
-  let skipImages = document.getElementById("skipImages").checked;
   let googleImages = document.getElementById("googleImages").checked;
   let localAIImages = document.getElementById("localAIImages").checked;
+  let geminiGeneratedImages = document.getElementById("geminiGeneratedImages").checked;
+  
+  // Calcular automáticamente skipImages: true si NO hay opciones de imágenes activas
+  let skipImages = !googleImages && !localAIImages && !geminiGeneratedImages;
+  
   const generateAudio = document.getElementById("autoGenerateAudio").checked;
   const generateApplioAudio = document.getElementById("autoGenerateApplioAudio").checked;
   const selectedApplioVoice = document.getElementById("applioVoiceSelect").value;
@@ -704,31 +708,34 @@ async function runAutoGeneration() {
   
   // 🔧 VALIDACIÓN: Solo una opción de imagen puede estar activa
   if (!isLoadingProject) {
-    let activeImageOptions = [skipImages, googleImages, localAIImages].filter(Boolean).length;
+    let activeImageOptions = [googleImages, localAIImages, geminiGeneratedImages].filter(Boolean).length;
     if (activeImageOptions > 1) {
       console.warn('⚠️ Configuración contradictoria detectada: múltiples opciones de imagen activas');
-      // Prioridad: LocalAI > GoogleImages > SkipImages
+      // Prioridad: LocalAI > Gemini > GoogleImages
       if (localAIImages) {
-        skipImages = false;
         googleImages = false;
-        document.getElementById("skipImages").checked = false;
+        geminiGeneratedImages = false;
         document.getElementById("googleImages").checked = false;
+        document.getElementById("geminiGeneratedImages").checked = false;
         console.warn('🔧 Corrigiendo: Desactivando otras opciones porque IA Local tiene prioridad');
         showNotification('⚠️ Corrección automática: Solo IA Local activa', 'warning');
-      } else if (googleImages) {
-        skipImages = false;
-        document.getElementById("skipImages").checked = false;
-        console.warn('� Corrigiendo: Desactivando skipImages porque GoogleImages tiene prioridad');
-        showNotification('⚠️ Corrección automática: Solo Google Images activa', 'warning');
+      } else if (geminiGeneratedImages) {
+        googleImages = false;
+        document.getElementById("googleImages").checked = false;
+        console.warn('🔧 Corrigiendo: Desactivando Google Images porque Gemini tiene prioridad');
+        showNotification('⚠️ Corrección automática: Solo Gemini Images activa', 'warning');
       }
     }
+    // Recalcular skipImages después de la validación
+    skipImages = !googleImages && !localAIImages && !geminiGeneratedImages;
   }
   
   console.log(`🔊 Generación de audio Google: ${generateAudio ? 'ACTIVADA' : 'DESACTIVADA'}`);
   console.log(`🎤 Generación de audio Applio: ${generateApplioAudio ? 'ACTIVADA' : 'DESACTIVADA'}`);
   console.log(`🖼️ Imágenes de Google: ${googleImages ? 'ACTIVADA' : 'DESACTIVADA'}`);
   console.log(`🧠 Imágenes IA Local: ${localAIImages ? 'ACTIVADA' : 'DESACTIVADA'}`);
-  console.log(`🚫 Omitir imágenes: ${skipImages ? 'ACTIVADA' : 'DESACTIVADA'}`);
+  console.log(`✨ Imágenes Gemini/Imagen 4: ${geminiGeneratedImages ? 'ACTIVADA' : 'DESACTIVADA'}`);
+  console.log(`🚫 Omitir imágenes (auto): ${skipImages ? 'ACTIVADA' : 'DESACTIVADA'}`);
   
   if (!topic) {
     promptInput.focus();
@@ -831,6 +838,7 @@ async function runAutoGeneration() {
         skipImages: skipImages,
         googleImages: googleImages,
         localAIImages: localAIImages,
+        geminiGeneratedImages: geminiGeneratedImages,
         comfyUISettings: comfyUISettings,
         scriptStyle: selectedStyle,
         customStyleInstructions: customStyleInstructions,
@@ -916,6 +924,7 @@ async function runAutoGeneration() {
           skipImages: skipImages,
           googleImages: googleImages,
           localAIImages: localAIImages,
+          geminiGeneratedImages: geminiGeneratedImages,
           imageModel: selectedImageModel,
           comfyUISettings: comfyUISettings,
           folderName: projectData.projectKey  // Usar el projectKey del backend que ya está normalizado
@@ -1088,6 +1097,7 @@ async function generateSectionContent(section, params) {
         skipImages: params.skipImages,
         googleImages: params.googleImages,
         localAIImages: params.localAIImages,
+        geminiGeneratedImages: params.geminiGeneratedImages,
         comfyUISettings: comfyUISettings, // Agregar configuración ComfyUI
         applioVoice: params.selectedApplioVoice,
         applioModel: params.selectedApplioModel,
@@ -1481,7 +1491,7 @@ function disableControls(disable) {
   const controls = [
     'prompt', 'folderName', 'voiceSelect', 'sectionsNumber', 
     'styleSelect', 'imagesSelect', 'promptModifier', 'modelSelect', 'llmModelSelect',
-    'skipImages', 'autoGenerate', 'autoGenerateAudio', 'autoGenerateApplioAudio', 'googleImages', 'localAIImages'
+    'autoGenerateAudio', 'autoGenerateApplioAudio', 'googleImages', 'localAIImages', 'geminiGeneratedImages'
   ];
   
   controls.forEach(id => {
@@ -2559,9 +2569,9 @@ function showCompletionMessage(sectionNum, totalSections, isComplete) {
 generateBtn.addEventListener("click", async () => {
   console.log("🔍 DEBUG: Botón clickeado");
   
-  // Verificar si la generación automática está activada
-  const autoGenerate = document.getElementById("autoGenerate").checked;
-  console.log(`🔍 DEBUG: autoGenerate checkbox = ${autoGenerate}`);
+  // Generación automática está siempre activada
+  const autoGenerate = true;
+  console.log(`🔍 DEBUG: autoGenerate = ${autoGenerate}`);
   
   if (autoGenerate) {
     console.log("🤖 DETECTADO: Generación automática ACTIVADA - usando sistema de lotes");
@@ -2673,6 +2683,7 @@ generateBtn.addEventListener("click", async () => {
         skipImages: skipImages,
         googleImages: googleImages,
         localAIImages: localAIImages,
+        geminiGeneratedImages: geminiGeneratedImages,
         applioVoice: selectedApplioVoice,
         applioModel: selectedApplioModel,
         applioPitch: applioPitch
@@ -2920,6 +2931,7 @@ continueBtn.addEventListener("click", async () => {
         skipImages: skipImages,
         googleImages: googleImages,
         localAIImages: localAIImages,
+        geminiGeneratedImages: geminiGeneratedImages,
         applioVoice: currentApplioVoice
       })
     });
@@ -3229,102 +3241,44 @@ promptInput.addEventListener("input", function() {
   this.style.height = Math.min(this.scrollHeight, 300) + "px";
 });
 
-// Manejar checkbox de omitir imágenes
-document.getElementById("skipImages").addEventListener("change", function() {
-  const imageRelatedFields = [
-    // Solo deshabilitar el selector de modelo, no el de cantidad de imágenes
-    document.getElementById("modelSelect").closest('.model-selector-container')
-    // El selector de cantidad de imágenes sigue siendo útil para determinar cuántos prompts mostrar
-  ];
+// ⚡ Configurar eventos para los checkboxes de imágenes (manejo automático)
+function setupImageCheckboxEvents() {
+  const googleImagesCheckbox = document.getElementById("googleImages");
+  const localAIImagesCheckbox = document.getElementById("localAIImages");
+  const geminiImagesCheckbox = document.getElementById("geminiGeneratedImages");
   
-  const isChecked = this.checked;
-  
-  // Actualizar campos relacionados solo con la generación de imágenes
-  imageRelatedFields.forEach(field => {
-    if (field) {
-      if (isChecked) {
-        field.style.opacity = "0.5";
-        field.style.pointerEvents = "none";
-        field.style.transition = "opacity 0.3s ease";
-      } else {
-        field.style.opacity = "1";
-        field.style.pointerEvents = "auto";
+  // Event listeners para mantener solo una opción activa
+  if (googleImagesCheckbox) {
+    googleImagesCheckbox.addEventListener("change", function() {
+      if (this.checked) {
+        if (localAIImagesCheckbox) localAIImagesCheckbox.checked = false;
+        if (geminiImagesCheckbox) geminiImagesCheckbox.checked = false;
       }
-    }
-  });
-  
-  // Manejar el selector de cantidad de imágenes de manera especial (siempre habilitado)
-  const imagesSelectContainer = document.getElementById("imagesSelect").closest('.images-selector-container');
-  if (imagesSelectContainer) {
-    if (isChecked) {
-      // Solo atenuar ligeramente pero mantener habilitado
-      imagesSelectContainer.style.opacity = "0.8";
-      imagesSelectContainer.style.pointerEvents = "auto";
-      imagesSelectContainer.style.transition = "opacity 0.3s ease";
-      
-      // Actualizar etiqueta para clarificar su propósito
-      const label = imagesSelectContainer.querySelector('.images-label');
-      if (label) {
-        label.innerHTML = '<i class="fas fa-images"></i> Cantidad de Prompts:';
-      }
-    } else {
-      imagesSelectContainer.style.opacity = "1";
-      imagesSelectContainer.style.pointerEvents = "auto";
-      
-      // Restaurar etiqueta original
-      const label = imagesSelectContainer.querySelector('.images-label');
-      if (label) {
-        label.innerHTML = '<i class="fas fa-images"></i> Cantidad de Imágenes:';
-      }
-    }
+    });
   }
   
-  // Manejar el campo de instrucciones adicionales de manera especial
-  const promptModifierContainer = document.getElementById("promptModifier").closest('.prompt-modifier-container');
-  if (promptModifierContainer) {
-    if (isChecked) {
-      // Solo atenuar ligeramente y actualizar el texto de ayuda
-      promptModifierContainer.style.opacity = "0.8";
-      promptModifierContainer.style.pointerEvents = "auto"; // Mantener habilitado
-      promptModifierContainer.style.transition = "opacity 0.3s ease";
-      
-      // Actualizar el texto de ayuda
-      const helpText = promptModifierContainer.querySelector('.prompt-modifier-help span');
-      if (helpText) {
-        helpText.textContent = "Estas instrucciones se aplicarán a los prompts de imágenes mostrados";
+  if (localAIImagesCheckbox) {
+    localAIImagesCheckbox.addEventListener("change", function() {
+      if (this.checked) {
+        if (googleImagesCheckbox) googleImagesCheckbox.checked = false;
+        if (geminiImagesCheckbox) geminiImagesCheckbox.checked = false;
       }
-    } else {
-      promptModifierContainer.style.opacity = "1";
-      promptModifierContainer.style.pointerEvents = "auto";
-      
-      // Restaurar el texto de ayuda original
-      const helpText = promptModifierContainer.querySelector('.prompt-modifier-help span');
-      if (helpText) {
-        helpText.textContent = "Estas instrucciones se aplicarán a todas las imágenes generadas";
-      }
-    }
+    });
   }
   
-  // Actualizar texto del botón
-  const generateBtnText = generateBtn.querySelector('span');
-  const continueBtnText = continueBtn.querySelector('span');
-  
-  if (isChecked) {
-    if (generateBtnText) generateBtnText.textContent = "Generar Guión Sección 1";
-    if (continueBtnText) continueBtnText.textContent = `Continuar con Guión Sección ${currentSectionNumber + 1}`;
-  } else {
-    if (generateBtnText) generateBtnText.textContent = "Generar Sección 1";
-    if (continueBtnText) continueBtnText.textContent = `Continuar con Sección ${currentSectionNumber + 1}`;
+  if (geminiImagesCheckbox) {
+    geminiImagesCheckbox.addEventListener("change", function() {
+      if (this.checked) {
+        if (googleImagesCheckbox) googleImagesCheckbox.checked = false;
+        if (localAIImagesCheckbox) localAIImagesCheckbox.checked = false;
+      }
+    });
   }
-});
+}
 
-// Inicializar el estado de la casilla de omitir imágenes al cargar la página
+// Inicializar eventos de checkboxes
 document.addEventListener('DOMContentLoaded', function() {
-  // Simular el evento change para aplicar el estado inicial
-  const skipImagesCheckbox = document.getElementById("skipImages");
-  if (skipImagesCheckbox && skipImagesCheckbox.checked) {
-    skipImagesCheckbox.dispatchEvent(new Event('change'));
-  }
+  setupImageCheckboxEvents();
 });
 
 // Función para mostrar prompts de imágenes cuando se omiten las imágenes
@@ -3465,30 +3419,15 @@ document.addEventListener('DOMContentLoaded', function() {
   const savedStyles = localStorage.getItem('customScriptStyles');
   console.log('🔍 VERIFICACIÓN DIRECTA localStorage:', savedStyles);
   
-  const autoGenerateCheckbox = document.getElementById('autoGenerate');
   const autoGenerateAudioCheckbox = document.getElementById('autoGenerateAudio');
   const autoAudioContainer = document.querySelector('.auto-audio-container');
   
-  // Verificar si los elementos de audio existen
-  if (autoGenerateCheckbox && autoGenerateAudioCheckbox && autoAudioContainer) {
-    // Inicialmente deshabilitar la casilla de audio
-    autoGenerateAudioCheckbox.disabled = true;
-    autoAudioContainer.style.opacity = '0.5';
-    
-    autoGenerateCheckbox.addEventListener('change', function() {
-      if (this.checked) {
-        // Habilitar la casilla de audio cuando se active la generación automática
-        autoGenerateAudioCheckbox.disabled = false;
-        autoAudioContainer.style.opacity = '1';
-        console.log('🔊 Casilla de audio habilitada');
-      } else {
-        // Deshabilitar y desmarcar la casilla de audio cuando se desactive la generación automática
-        autoGenerateAudioCheckbox.disabled = true;
-        autoGenerateAudioCheckbox.checked = false;
-        autoAudioContainer.style.opacity = '0.5';
-        console.log('🔇 Casilla de audio deshabilitada');
-      }
-    });
+  // Verificar si los elementos de audio existen y habilitarlos ya que la generación automática está siempre activa
+  if (autoGenerateAudioCheckbox && autoAudioContainer) {
+    // Habilitar la casilla de audio ya que la generación automática está siempre activa
+    autoGenerateAudioCheckbox.disabled = false;
+    autoAudioContainer.style.opacity = '1';
+    console.log('🔊 Casilla de audio habilitada (generación automática siempre activa)');
   } else {
     console.log('⚠️ Algunos elementos de audio no encontrados (diseño compacto)');
   }
@@ -3628,8 +3567,49 @@ function initCustomStyles() {
     setupStyleModalEvents();
     setupManageStylesEvents();
     setupEditStyleEvents();
+    
+    // Configurar específicamente los botones del sidebar
+    setupSidebarStyleButtons();
+    
     console.log('✅ Sistema de estilos inicializado correctamente');
   }, 100);
+}
+
+// Configurar botones del sidebar para estilos
+function setupSidebarStyleButtons() {
+  console.log('🔧 Configurando botones del sidebar para estilos...');
+  
+  const createFromSidebarBtn = document.getElementById('createStyleFromSidebar');
+  if (createFromSidebarBtn) {
+    // Remover event listeners previos
+    const newBtn = createFromSidebarBtn.cloneNode(true);
+    createFromSidebarBtn.parentNode.replaceChild(newBtn, createFromSidebarBtn);
+    
+    newBtn.addEventListener('click', function(e) {
+      e.preventDefault();
+      console.log('🎨 Botón crear estilo clickeado desde sidebar');
+      openCreateStyleFromSidebar();
+    });
+    console.log('✅ Event listener del botón crear desde barra lateral configurado');
+  } else {
+    console.error('❌ No se encontró createStyleFromSidebar');
+  }
+  
+  const manageFromSidebarBtn = document.getElementById('manageStylesFromSidebar');
+  if (manageFromSidebarBtn) {
+    // Remover event listeners previos
+    const newBtn = manageFromSidebarBtn.cloneNode(true);
+    manageFromSidebarBtn.parentNode.replaceChild(newBtn, manageFromSidebarBtn);
+    
+    newBtn.addEventListener('click', function(e) {
+      e.preventDefault();
+      console.log('🔧 Botón gestionar estilos clickeado desde sidebar');
+      openManageStylesFromSidebar();
+    });
+    console.log('✅ Event listener del botón gestionar desde barra lateral configurado');
+  } else {
+    console.error('❌ No se encontró manageStylesFromSidebar');
+  }
 }
 
 // Función para abrir modal de crear estilo
