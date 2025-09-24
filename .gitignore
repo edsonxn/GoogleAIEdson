@@ -87,3 +87,24 @@ Icon
 
 # Linux
 *~
+
+# Archivos de test y desarrollo
+test_*.js
+test_*.wav
+debug_*.js
+*_backup.js
+*_old.js
+*_new.js
+example_*.md
+
+# Archivos compilados de Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+*.pyo
+
+# Frames temporales de video
+temp_frames/
+frame_*.jpg
+frame_*.png
