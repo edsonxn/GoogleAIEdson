@@ -449,9 +449,9 @@
             </label>
             <div class="words-input-group">
               <div class="words-range">
-                <input type="number" id="minWords" class="words-input" value="800" min="0" max="5000" placeholder="800">
+                <input type="number" id="minWords" class="words-input" value="120" min="0" max="5000" placeholder="120">
                 <span class="words-separator">-</span>
-                <input type="number" id="maxWords" class="words-input" value="1100" min="0" max="5000" placeholder="1100">
+                <input type="number" id="maxWords" class="words-input" value="130" min="0" max="5000" placeholder="130">
               </div>
               <span class="words-label">palabras</span>
             </div>
@@ -476,32 +476,27 @@
               <option value="2">2 Imágenes</option>
               <option value="3">3 Imágenes</option>
               <option value="4">4 Imágenes</option>
-              <option value="5" selected>5 Imágenes</option>
-              <option value="6">6 Imágenes</option>
-              <option value="7">7 Imágenes</option>
-              <option value="8">8 Imágenes</option>
-              <option value="9">9 Imágenes</option>
-              <option value="10">10 Imágenes</option>
-              <option value="11">11 Imágenes</option>
-              <option value="12">12 Imágenes</option>
-              <option value="13">13 Imágenes</option>
-              <option value="14">14 Imágenes</option>
+              <option value="5">5 Imágenes</option>
+              <option value="10"selected>10 Imágenes</option>
               <option value="15">15 Imágenes</option>
-              <option value="16">16 Imágenes</option>
-              <option value="17">17 Imágenes</option>
-              <option value="18">18 Imágenes</option>
-              <option value="19">19 Imágenes</option>
               <option value="20">20 Imágenes</option>
+              <option value="25">25 Imágenes</option>
+              <option value="30">30 Imágenes</option>
+              <option value="35">35 Imágenes</option>
+              <option value="40">40 Imágenes</option>
+              <option value="45">45 Imágenes</option>
+              <option value="50">50 Imágenes</option>
             </select>
           </div>
 
           <div class="field-group">
-            <label for="modelSelect" class="field-label">
-              <i class="fas fa-robot"></i> Modelo:
+            <label for="aspectRatioSelect" class="field-label">
+              <i class="fas fa-expand-arrows-alt"></i> Formato de Imagen:
             </label>
-            <select id="modelSelect" class="field-select">
-              <option value="imagen4">Imagen 4.0</option>
-              <option value="gemini2" selected>Gemini 2.0</option>
+            <select id="aspectRatioSelect" class="field-select">
+              <option value="16:9" selected>16:9 (Horizontal/Paisaje)</option>
+              <option value="9:16">9:16 (Vertical/Retrato)</option>
+              <option value="1:1">1:1 (Cuadrado)</option>
             </select>
           </div>
 
@@ -510,8 +505,8 @@
               <i class="fas fa-brain"></i> Modelo LLM:
             </label>
             <select id="llmModelSelect" class="field-select">
-              <option value="gemini-2.5-pro" selected>Gemini 2.5 Pro</option>
-              <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+              <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+              <option value="gemini-2.5-flash" selected>Gemini 2.5 Flash</option>
               <option value="gpt-5">GPT-5</option>
               <option value="gpt-5-mini">GPT-5 Mini</option>
               <option value="gpt-5-nano">GPT-5 Nano</option>
@@ -634,15 +629,6 @@
 
           <div class="checkbox-group">
             <label class="checkbox-label">
-              <input type="checkbox" id="geminiGeneratedImages" class="checkbox-input">
-              <span class="checkbox-custom"></span>
-              <i class="fas fa-magic"></i>
-              Imágenes generadas por IA (Gemini/Imagen 4)
-            </label>
-          </div>
-
-          <div class="checkbox-group">
-            <label class="checkbox-label">
               <input type="checkbox" id="localAIImages" class="checkbox-input" 
                      onchange="
                        console.log('🎯 Checkbox cambiado:', this.checked);
@@ -662,7 +648,7 @@
                      ">
               <span class="checkbox-custom"></span>
               <i class="fas fa-brain"></i>
-              Imágenes IA en local
+              Generar imágenes con IA
             </label>
           </div>
 
@@ -771,7 +757,7 @@
             <label for="promptModifier" class="field-label">
               <i class="fas fa-magic"></i> Instrucciones para Imágenes:
             </label>
-            <textarea id="promptModifier" class="field-textarea" rows="4" placeholder="Ej: A Saria ponle cabello verde, armadura dorada..."></textarea>
+            <textarea id="promptModifier" class="field-textarea" rows="4" placeholder="Personaliza el estilo visual de las imágenes generadas...">Cartoonish, dramatic 2D, with a hand-drawn appearance, bold lines, flat shading with painted textures, visible pencil strokes, and imperfect coloring. A dark and melancholic atmosphere, inspired by graphic novels, with chiaroscuro effects and cinematic compositing</textarea>
           </div>
 
           <div class="field-group">
@@ -895,9 +881,24 @@
           <span>Video Simple (Sin Animación)</span>
         </button>
         
+        <button id="generateSeparateVideosBtn" class="generate-separate-videos-btn">
+          <i class="fas fa-video"></i>
+          <span>Clips Separados por Sección</span>
+        </button>
+        
         <button id="regenerateApplioAudiosBtn" class="regenerate-audio-btn" style="display: none;">
           <i class="fas fa-microphone-alt"></i>
           <span>Generar Audios Faltantes</span>
+        </button>
+        
+        <button id="generateMissingImagesBtn" class="generate-missing-images-btn" style="display: none;">
+          <i class="fas fa-image"></i>
+          <span>Generar Imágenes Faltantes</span>
+        </button>
+        
+        <button id="generateMissingPromptsBtn" class="generate-missing-prompts-btn" style="display: none;">
+          <i class="fas fa-file-text"></i>
+          <span>Generar Prompts de Imágenes Faltantes</span>
         </button>
         
         <button id="regenerateMissingScriptsBtn" class="regenerate-scripts-btn" style="display: none;">

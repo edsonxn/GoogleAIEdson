@@ -384,7 +384,7 @@ h1::after {
 
 .field-textarea {
   resize: vertical;
-  min-height: 80px;
+  min-height: 160px;
 }
 
 /* Estilos para el slider de pitch */
@@ -5033,6 +5033,66 @@ body.prompts-panel-active .container {
   background: rgba(0, 0, 0, 0.3);
   border-radius: 10px;
   border: 1px solid rgba(255, 255, 255, 0.1);
+  transition: all 0.3s ease;
+}
+
+/* Estilo especial para secciones colapsadas - fondo más claro */
+.metadata-section.collapsed {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  padding: 15px 20px;
+}
+
+/* Estilos para secciones colapsables */
+.metadata-section.collapsible .section-header {
+  cursor: pointer;
+  user-select: none;
+  padding: 10px 0;
+  transition: all 0.3s ease;
+  border-radius: 5px;
+}
+
+.metadata-section.collapsible .section-header:hover {
+  background: rgba(255, 255, 255, 0.05);
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+/* Hover especial para secciones colapsadas */
+.metadata-section.collapsed .section-header:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.metadata-section.collapsible .section-header h3 {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.metadata-section.collapsible .toggle-icon {
+  transition: transform 0.3s ease;
+  font-size: 1em;
+  color: #00ff7f;
+}
+
+.metadata-section.collapsed .toggle-icon {
+  transform: rotate(-90deg);
+}
+
+.metadata-section .section-content {
+  overflow: hidden;
+  transition: max-height 0.3s ease, opacity 0.3s ease;
+  max-height: 1000px;
+  opacity: 1;
+}
+
+.metadata-section.collapsed .section-content {
+  max-height: 0;
+  opacity: 0;
+  padding-top: 0;
+  padding-bottom: 0;
 }
 
 .metadata-section h3 {
@@ -5113,8 +5173,9 @@ body.prompts-panel-active .container {
   font-size: 0.95em;
   line-height: 1.6;
   resize: vertical;
-  min-height: 120px;
-  max-height: 300px;
+  min-height: 300px;
+  height: auto;
+  max-height: none;
 }
 
 .description-text:focus {
@@ -7595,6 +7656,47 @@ body.prompts-panel-active .container {
   font-size: 1.2rem;
 }
 
+/* Estilos para el botón de clips separados */
+.generate-separate-videos-btn {
+  width: 100%;
+  padding: 15px 20px;
+  background: linear-gradient(45deg, #17a2b8, #20c997);
+  border: none;
+  border-radius: 12px;
+  color: white;
+  font-size: 1.1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-bottom: 15px;
+  box-shadow: 0 4px 15px rgba(23, 162, 184, 0.3);
+}
+
+.generate-separate-videos-btn:hover {
+  background: linear-gradient(45deg, #138496, #1e7e34);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(23, 162, 184, 0.4);
+}
+
+.generate-separate-videos-btn:active {
+  transform: translateY(0);
+}
+
+.generate-separate-videos-btn:disabled {
+  background: #6c757d;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.generate-separate-videos-btn i {
+  font-size: 1.2rem;
+}
+
 /* Estilos para el botón de regenerar audios */
 .regenerate-audio-btn {
   width: 100%;
@@ -7674,6 +7776,86 @@ body.prompts-panel-active .container {
 }
 
 .regenerate-scripts-btn i {
+  font-size: 1.2rem;
+}
+
+/* Botón para generar imágenes faltantes */
+.generate-missing-images-btn {
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: white;
+  border: none;
+  padding: 14px 28px;
+  border-radius: 12px;
+  font-size: 1.1rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3);
+  margin: 10px 5px;
+}
+
+.generate-missing-images-btn:hover {
+  background: linear-gradient(135deg, #059669, #047857);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(16, 185, 129, 0.4);
+}
+
+.generate-missing-images-btn:active {
+  transform: translateY(0);
+}
+
+.generate-missing-images-btn:disabled {
+  background: linear-gradient(135deg, #666666, #777777);
+  color: #999999;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.generate-missing-images-btn i {
+  font-size: 1.2rem;
+}
+
+/* Botón para generar solo prompts de imágenes */
+.generate-missing-prompts-btn {
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  color: white;
+  border: none;
+  padding: 14px 28px;
+  border-radius: 12px;
+  font-size: 1.1rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 15px rgba(59, 130, 246, 0.3);
+  margin: 10px 5px;
+}
+
+.generate-missing-prompts-btn:hover {
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(59, 130, 246, 0.4);
+}
+
+.generate-missing-prompts-btn:active {
+  transform: translateY(0);
+}
+
+.generate-missing-prompts-btn:disabled {
+  background: linear-gradient(135deg, #666666, #777777);
+  color: #999999;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.generate-missing-prompts-btn i {
   font-size: 1.2rem;
 }
 
@@ -8198,5 +8380,109 @@ body.prompts-panel-active .container {
   .current-task {
     font-size: 0.8rem;
     padding: 10px 12px;
+  }
+}
+
+/* Estilos para el panel principal de metadata colapsable */
+.youtube-metadata-panel {
+  position: relative;
+}
+
+.youtube-metadata-header {
+  background: linear-gradient(135deg, rgba(138, 43, 226, 0.1), rgba(75, 0, 130, 0.1));
+  border: 1px solid rgba(138, 43, 226, 0.3);
+  border-radius: 12px 12px 0 0;
+  padding: 15px 20px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  user-select: none;
+}
+
+.youtube-metadata-header:hover {
+  background: linear-gradient(135deg, rgba(138, 43, 226, 0.15), rgba(75, 0, 130, 0.15));
+  border-color: rgba(138, 43, 226, 0.4);
+  transform: translateY(-1px);
+}
+
+.youtube-metadata-header h3 {
+  margin: 0;
+  color: #8a2be2;
+  font-size: 1.1rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.youtube-metadata-header h3 i {
+  color: #ff6b6b;
+  font-size: 1.2rem;
+}
+
+.metadata-topic-inline {
+  color: #00ff7f;
+  font-weight: 400;
+  font-size: 0.9rem;
+  margin-left: 8px;
+}
+
+.main-toggle-icon {
+  color: #8a2be2;
+  font-size: 1.1rem;
+  transition: transform 0.3s ease;
+}
+
+.youtube-metadata-panel.collapsed .main-toggle-icon {
+  transform: rotate(-90deg);
+}
+
+.youtube-metadata-content {
+  max-height: 2000px;
+  opacity: 1;
+  overflow: hidden;
+  transition: all 0.4s ease;
+  border: 1px solid rgba(138, 43, 226, 0.2);
+  border-top: none;
+  border-radius: 0 0 12px 12px;
+  background: rgba(138, 43, 226, 0.02);
+}
+
+.youtube-metadata-panel.collapsed .youtube-metadata-content {
+  max-height: 0;
+  opacity: 0;
+  border: none;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+/* Ocultar completamente las secciones internas cuando el panel principal está colapsado */
+.youtube-metadata-panel.collapsed .metadata-section {
+  display: none;
+}
+
+.youtube-metadata-panel.collapsed .metadata-actions {
+  display: none;
+}
+
+.youtube-metadata-panel.collapsed .youtube-metadata-header {
+  border-radius: 12px;
+  border-color: rgba(138, 43, 226, 0.25);
+}
+
+/* Responsive para panel principal */
+@media (max-width: 768px) {
+  .youtube-metadata-header {
+    padding: 12px 15px;
+  }
+  
+  .youtube-metadata-header h3 {
+    font-size: 1rem;
+  }
+  
+  .main-toggle-icon {
+    font-size: 1rem;
   }
 }

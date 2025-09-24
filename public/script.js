@@ -680,6 +680,21 @@ const defaultThumbnailStyles = {
 // Función para la generación automática completa
 async function runAutoGeneration() {
   console.log("🤖 Iniciando generación automática completa");
+  
+  // Verificar que los elementos del DOM estén disponibles
+  const requiredElements = [
+    'maxWords', 'styleSelect', 'imagesSelect', 'aspectRatioSelect', 
+    'promptModifier', 'llmModelSelect', 
+    'googleImages', 'localAIImages'
+  ];
+  
+  const missingElements = requiredElements.filter(id => !document.getElementById(id));
+  if (missingElements.length > 0) {
+    console.error("❌ Elementos del DOM faltantes:", missingElements);
+    showError(`Error: No se encontraron los siguientes elementos: ${missingElements.join(', ')}`);
+    return;
+  }
+  
   isAutoGenerating = true;
   
   const topic = promptInput.value.trim();
@@ -687,18 +702,27 @@ async function runAutoGeneration() {
   const selectedVoice = document.getElementById("voiceSelect").value;
   const selectedSections = document.getElementById("sectionsNumber").value;
   const minWords = parseInt(document.getElementById("minWords").value) || 800;
-  const maxWords = parseInt(document.getElementById("maxWords").value) || 1100;
-  const selectedStyle = document.getElementById("styleSelect").value;
-  const imageCount = parseInt(document.getElementById("imagesSelect").value);
-  const promptModifier = document.getElementById("promptModifier").value.trim();
-  const selectedImageModel = document.getElementById("modelSelect").value;
-  const selectedLlmModel = document.getElementById("llmModelSelect").value;
-  let googleImages = document.getElementById("googleImages").checked;
-  let localAIImages = document.getElementById("localAIImages").checked;
-  let geminiGeneratedImages = document.getElementById("geminiGeneratedImages").checked;
+  const maxWords = parseInt(document.getElementById("maxWords")?.value) || 1100;
+  const selectedStyle = document.getElementById("styleSelect")?.value || 'default';
+  const imageCount = parseInt(document.getElementById("imagesSelect")?.value) || 5;
+  const aspectRatio = document.getElementById("aspectRatioSelect")?.value || '16:9';
+  const promptModifier = document.getElementById("promptModifier")?.value?.trim() || '';
+  const selectedLlmModel = document.getElementById("llmModelSelect")?.value || 'gemini';
+  let googleImages = document.getElementById("googleImages")?.checked || false;
+  let localAIImages = document.getElementById("localAIImages")?.checked || false;
+  
+  // Para imágenes generadas por Gemini: solo generar si el usuario quiere IA (localAIImages checkbox)
+  // o si quiere imágenes de Google (que requiere prompts generados por IA)
+  let geminiGeneratedImages = localAIImages; // Solo si seleccionó "Generar imágenes con IA"
+  
+  console.log("🖼️ Configuración de imágenes:");
+  console.log("  - Google Images:", googleImages);
+  console.log("  - Local AI Images (ComfyUI):", localAIImages);
+  console.log("  - Gemini Generated Images:", geminiGeneratedImages);
   
   // Calcular automáticamente skipImages: true si NO hay opciones de imágenes activas
   let skipImages = !googleImages && !localAIImages && !geminiGeneratedImages;
+  console.log("  - Skip Images:", skipImages);
   
   const generateAudio = document.getElementById("autoGenerateAudio").checked;
   const generateApplioAudio = document.getElementById("autoGenerateApplioAudio").checked;
@@ -832,8 +856,9 @@ async function runAutoGeneration() {
         minWords: minWords,
         maxWords: maxWords,
         imageCount: imageCount,
+        aspectRatio: aspectRatio,
         promptModifier: promptModifier,
-        imageModel: selectedImageModel,
+        imageModel: 'gemini', // Usar Gemini por defecto
         llmModel: selectedLlmModel,
         skipImages: skipImages,
         googleImages: googleImages,
@@ -925,7 +950,8 @@ async function runAutoGeneration() {
           googleImages: googleImages,
           localAIImages: localAIImages,
           geminiGeneratedImages: geminiGeneratedImages,
-          imageModel: selectedImageModel,
+          imageModel: 'gemini', // Usar Gemini por defecto
+          aspectRatio: aspectRatio,
           comfyUISettings: comfyUISettings,
           folderName: projectData.projectKey  // Usar el projectKey del backend que ya está normalizado
         })
@@ -1490,7 +1516,7 @@ async function showAutoGenerationComplete() {
 function disableControls(disable) {
   const controls = [
     'prompt', 'folderName', 'voiceSelect', 'sectionsNumber', 
-    'styleSelect', 'imagesSelect', 'promptModifier', 'modelSelect', 'llmModelSelect',
+    'styleSelect', 'imagesSelect', 'aspectRatioSelect', 'promptModifier', 'modelSelect', 'llmModelSelect',
     'autoGenerateAudio', 'autoGenerateApplioAudio', 'googleImages', 'localAIImages', 'geminiGeneratedImages'
   ];
   
@@ -1514,6 +1540,11 @@ function disableControls(disable) {
   const generateSimpleVideoBtn = document.getElementById("generateSimpleVideoBtn");
   if (generateSimpleVideoBtn) {
     generateSimpleVideoBtn.disabled = disable;
+  }
+  
+  const generateSeparateVideosBtn = document.getElementById("generateSeparateVideosBtn");
+  if (generateSeparateVideosBtn) {
+    generateSeparateVideosBtn.disabled = disable;
   }
 }
 
@@ -1988,7 +2019,7 @@ async function regenerateImage(imageIndex, newPrompt) {
   regenerationStatus.style.display = "block";
   
   try {
-    const selectedImageModel = document.getElementById("modelSelect").value;
+    const selectedImageModel = 'gemini'; // Usar Gemini por defecto
     const response = await fetch("/regenerate-image", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -2575,7 +2606,10 @@ generateBtn.addEventListener("click", async () => {
   
   if (autoGenerate) {
     console.log("🤖 DETECTADO: Generación automática ACTIVADA - usando sistema de lotes");
-    await runAutoGeneration();
+    // Pequeño delay para asegurar que el DOM esté completamente listo
+    setTimeout(async () => {
+      await runAutoGeneration();
+    }, 100);
     return;
   }
   
@@ -2590,8 +2624,9 @@ generateBtn.addEventListener("click", async () => {
   const maxWords = parseInt(document.getElementById("maxWords").value) || 1100;
   const selectedStyle = document.getElementById("styleSelect").value;
   const imageCount = parseInt(document.getElementById("imagesSelect").value);
+  const aspectRatio = document.getElementById("aspectRatioSelect").value;
   const promptModifier = document.getElementById("promptModifier").value.trim();
-  const selectedImageModel = document.getElementById("modelSelect").value;
+  const selectedImageModel = 'gemini'; // Usar Gemini por defecto
   const selectedLlmModel = document.getElementById("llmModelSelect").value;
   const skipImages = document.getElementById("skipImages").checked;
   const googleImages = document.getElementById("googleImages").checked;
@@ -2677,6 +2712,7 @@ generateBtn.addEventListener("click", async () => {
         scriptStyle: selectedStyle,
         customStyleInstructions: customStyleInstructions,
         imageCount: imageCount,
+        aspectRatio: aspectRatio,
         promptModifier: promptModifier,
         imageModel: selectedImageModel,
         llmModel: selectedLlmModel,
@@ -2871,12 +2907,13 @@ continueBtn.addEventListener("click", async () => {
   console.log('🎯 Sección que se va a generar:', nextSection);
   
   const imageCount = parseInt(document.getElementById("imagesSelect").value);
+  const aspectRatio = document.getElementById("aspectRatioSelect").value;
   // 🔧 FIX: Usar el folderName del proyecto cargado si existe, sino el del input
   const folderName = window.currentProject ? window.currentProject.folderName : document.getElementById("folderName").value.trim();
   console.log('📁 Usando folderName:', folderName, 'desde proyecto cargado:', !!window.currentProject);
   const selectedStyle = document.getElementById("styleSelect").value;
   const promptModifier = document.getElementById("promptModifier").value.trim();
-  const selectedImageModel = document.getElementById("modelSelect").value;
+  const selectedImageModel = 'gemini'; // Usar Gemini por defecto
   const selectedLlmModel = document.getElementById("llmModelSelect").value;
   let skipImages = document.getElementById("skipImages").checked;
   let googleImages = document.getElementById("googleImages").checked;
@@ -2925,6 +2962,7 @@ continueBtn.addEventListener("click", async () => {
         scriptStyle: selectedStyle,
         customStyleInstructions: customStyleInstructions,
         imageCount: imageCount,
+        aspectRatio: aspectRatio,
         promptModifier: promptModifier,
         imageModel: selectedImageModel,
         llmModel: selectedLlmModel,
@@ -3204,6 +3242,42 @@ document.getElementById("generateSimpleVideoBtn").addEventListener("click", asyn
   }
 });
 
+// Event listener para el botón de generar clips separados por sección
+document.getElementById("generateSeparateVideosBtn").addEventListener("click", async () => {
+  // ✅ CORREGIDO: Usar folderName del proyecto actual, no del input original
+  let folderName;
+  
+  if (window.currentProject && window.currentProject.folderName) {
+    // Si hay proyecto cargado, usar su folderName normalizado
+    folderName = window.currentProject.folderName;
+    console.log(`🎯 Usando folderName del proyecto cargado: ${folderName}`);
+  } else {
+    // Fallback: usar el input y normalizarlo
+    const inputFolderName = document.getElementById("folderName").value.trim();
+    if (!inputFolderName) {
+      showError("Por favor, especifica el nombre de la carpeta del proyecto");
+      return;
+    }
+    // Normalizar el nombre como lo hace el backend
+    folderName = inputFolderName.toLowerCase().replace(/[^a-z0-9]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
+    console.log(`🔧 Normalizando folderName: "${inputFolderName}" → "${folderName}"`);
+  }
+  
+  if (!allSections || allSections.length === 0) {
+    showError("No hay secciones generadas para crear los clips");
+    return;
+  }
+  
+  console.log(`🎬 Iniciando generación de clips separados para proyecto: ${folderName}`);
+  
+  try {
+    await generateSeparateVideos(folderName);
+  } catch (error) {
+    console.error("❌ Error generando clips separados:", error);
+    showError(`Error generando clips separados: ${error.message}`);
+  }
+});
+
 // Event listener para el botón de regenerar audios con Applio
 document.getElementById("regenerateApplioAudiosBtn").addEventListener("click", async () => {
   console.log('🎤 Click en botón de regenerar audios con Applio');
@@ -3225,6 +3299,30 @@ document.getElementById("regenerateMissingScriptsBtn").addEventListener("click",
   } catch (error) {
     console.error("❌ Error regenerando guiones:", error);
     showError(`Error regenerando guiones: ${error.message}`);
+  }
+});
+
+// Event listener para el botón de generar imágenes faltantes
+document.getElementById("generateMissingImagesBtn").addEventListener("click", async () => {
+  console.log('🖼️ Click en botón de generar imágenes faltantes');
+  
+  try {
+    await generateMissingImages();
+  } catch (error) {
+    console.error("❌ Error generando imágenes:", error);
+    showError(`Error generando imágenes: ${error.message}`);
+  }
+});
+
+// Event listener para el botón de generar solo prompts de imágenes
+document.getElementById("generateMissingPromptsBtn").addEventListener("click", async () => {
+  console.log('📝 Click en botón de generar solo prompts de imágenes');
+  
+  try {
+    await generateMissingPrompts();
+  } catch (error) {
+    console.error("❌ Error generando prompts:", error);
+    showError(`Error generando prompts: ${error.message}`);
   }
 });
 
@@ -6018,70 +6116,95 @@ function showYouTubeMetadataResults(metadata, topic) {
   const sections = parseMetadata(metadata);
   
   metadataContainer.innerHTML = `
-    <div class="youtube-metadata-header">
-      <h2><i class="fas fa-youtube"></i> Metadata para YouTube</h2>
-      <p class="metadata-topic">Tema: <strong>${topic}</strong></p>
-    </div>
-    
-    <div class="metadata-section">
-      <h3><i class="fas fa-fire"></i> Títulos Clickbait</h3>
-      <div class="titles-list">
-        ${sections.titles.map(title => `
-          <div class="title-item">
-            <span class="title-text">${title}</span>
-            <button class="copy-btn" onclick="copyToClipboard('${title.replace(/'/g, "\\'")}')">
-              <i class="fas fa-copy"></i>
-            </button>
+    <div class="youtube-metadata-panel collapsed">
+      <div class="youtube-metadata-header" onclick="toggleMainMetadataPanel(this)">
+        <h3>
+          <i class="fas fa-youtube"></i> Metadata para YouTube
+          <span class="metadata-topic-inline">- ${topic}</span>
+        </h3>
+        <i class="fas fa-chevron-right main-toggle-icon"></i>
+      </div>
+      
+      <div class="youtube-metadata-content">
+        <div class="metadata-section collapsible">
+          <div class="section-header" onclick="toggleMetadataSection(this)">
+            <h3><i class="fas fa-fire"></i> Títulos Clickbait</h3>
+            <i class="fas fa-chevron-down toggle-icon"></i>
           </div>
-        `).join('')}
-      </div>
-    </div>
-    
-    <div class="metadata-section">
-      <h3><i class="fas fa-file-text"></i> Descripción SEO</h3>
-      <div class="description-container">
-        <textarea class="description-text" readonly>${sections.description}</textarea>
-        <button class="copy-btn-large" onclick="copyToClipboard(\`${sections.description.replace(/`/g, '\\`').replace(/\$/g, '\\$')}\`)">
-          <i class="fas fa-copy"></i> Copiar Descripción
-        </button>
-      </div>
-    </div>
-    
-    <div class="metadata-section">
-      <h3><i class="fas fa-tags"></i> Etiquetas (25)</h3>
-      <div class="tags-container">
-        <div class="tags-display">
-          ${sections.tags.map(tag => `<span class="tag-item">${tag}</span>`).join('')}
-        </div>
-        <button class="copy-btn-large" onclick="copyToClipboard('${sections.tagsString.replace(/'/g, "\\'")}')">
-          <i class="fas fa-copy"></i> Copiar Etiquetas
-        </button>
-      </div>
-    </div>
-    
-    <div class="metadata-section">
-      <h3><i class="fas fa-image"></i> Prompts para Miniaturas (5)</h3>
-      <div class="thumbnails-container">
-        <p class="thumbnails-description">
-          <i class="fas fa-info-circle"></i> 
-          Usa estos prompts para generar miniaturas llamativas en herramientas de IA como DALL-E, Midjourney o Stable Diffusion
-        </p>
-        <div class="thumbnails-list">
-          ${sections.thumbnailPrompts.map((prompt, index) => `
-            <div class="thumbnail-item">
-              <div class="thumbnail-number">${index + 1}</div>
-              <div class="thumbnail-content">
-                <span class="thumbnail-text">${prompt}</span>
-                <button class="copy-btn" onclick="copyToClipboard('${prompt.replace(/'/g, "\\'")}')">
+        <div class="section-content">
+          <div class="titles-list">
+            ${sections.titles.map(title => `
+              <div class="title-item">
+                <span class="title-text">${title}</span>
+                <button class="copy-btn" onclick="copyToClipboard('${title.replace(/'/g, "\\'")}')">
                   <i class="fas fa-copy"></i>
                 </button>
               </div>
-            </div>
-          `).join('')}
+            `).join('')}
+          </div>
         </div>
-        <button class="copy-btn-large" onclick="copyAllThumbnailPrompts(${JSON.stringify(sections.thumbnailPrompts).replace(/"/g, '&quot;')})">
-          <i class="fas fa-copy"></i> Copiar Todos los Prompts
-        </button>
+      </div>
+      
+      <div class="metadata-section collapsible">
+        <div class="section-header" onclick="toggleMetadataSection(this)">
+          <h3><i class="fas fa-file-text"></i> Descripción SEO</h3>
+          <i class="fas fa-chevron-down toggle-icon"></i>
+        </div>
+        <div class="section-content">
+          <div class="description-container">
+            <textarea class="description-text" readonly>${sections.description}</textarea>
+            <button class="copy-btn-large" onclick="copyToClipboard(\`${sections.description.replace(/`/g, '\\`').replace(/\$/g, '\\$')}\`)">
+              <i class="fas fa-copy"></i> Copiar Descripción
+            </button>
+          </div>
+      </div>
+    </div>
+    
+    <div class="metadata-section collapsible">
+      <div class="section-header" onclick="toggleMetadataSection(this)">
+        <h3><i class="fas fa-tags"></i> Etiquetas (25)</h3>
+        <i class="fas fa-chevron-down toggle-icon"></i>
+      </div>
+      <div class="section-content">
+        <div class="tags-container">
+          <div class="tags-display">
+            ${sections.tags.map(tag => `<span class="tag-item">${tag}</span>`).join('')}
+          </div>
+          <button class="copy-btn-large" onclick="copyToClipboard('${sections.tagsString.replace(/'/g, "\\'")}')">
+            <i class="fas fa-copy"></i> Copiar Etiquetas
+          </button>
+        </div>
+      </div>
+    </div>
+    
+    <div class="metadata-section collapsible">
+      <div class="section-header" onclick="toggleMetadataSection(this)">
+        <h3><i class="fas fa-image"></i> Prompts para Miniaturas (5)</h3>
+        <i class="fas fa-chevron-down toggle-icon"></i>
+      </div>
+      <div class="section-content">
+        <div class="thumbnails-container">
+          <p class="thumbnails-description">
+            <i class="fas fa-info-circle"></i> 
+            Usa estos prompts para generar miniaturas llamativas en herramientas de IA como DALL-E, Midjourney o Stable Diffusion
+          </p>
+          <div class="thumbnails-list">
+            ${sections.thumbnailPrompts.map((prompt, index) => `
+              <div class="thumbnail-item">
+                <div class="thumbnail-number">${index + 1}</div>
+                <div class="thumbnail-content">
+                  <span class="thumbnail-text">${prompt}</span>
+                  <button class="copy-btn" onclick="copyToClipboard('${prompt.replace(/'/g, "\\'")}')">
+                    <i class="fas fa-copy"></i>
+                  </button>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+          <button class="copy-btn-large" onclick="copyAllThumbnailPrompts(${JSON.stringify(sections.thumbnailPrompts).replace(/"/g, '&quot;')})">
+            <i class="fas fa-copy"></i> Copiar Todos los Prompts
+          </button>
+        </div>
       </div>
     </div>
     
@@ -6090,9 +6213,37 @@ function showYouTubeMetadataResults(metadata, topic) {
         <i class="fas fa-download"></i> Descargar Metadata
       </button>
     </div>
+    </div>
   `;
   
   output.appendChild(metadataContainer);
+  
+  // Ajustar altura del textarea de descripción al contenido
+  const descriptionTextarea = metadataContainer.querySelector('.description-text');
+  if (descriptionTextarea) {
+    // Función para ajustar altura automáticamente
+    function adjustTextareaHeight(textarea) {
+      textarea.style.height = 'auto';
+      textarea.style.height = (textarea.scrollHeight + 10) + 'px';
+    }
+    
+    // Ajustar inmediatamente
+    setTimeout(() => adjustTextareaHeight(descriptionTextarea), 50);
+  }
+  
+  // Inicializar secciones como colapsadas excepto la primera
+  initializeCollapsedSections();
+  
+  // Inicializar panel principal como colapsado por defecto
+  const mainPanel = output.querySelector('.youtube-metadata-panel');
+  if (mainPanel) {
+    mainPanel.classList.add('collapsed');
+    const mainIcon = mainPanel.querySelector('.main-toggle-icon');
+    if (mainIcon) {
+      mainIcon.classList.remove('fa-chevron-down');
+      mainIcon.classList.add('fa-chevron-right');
+    }
+  }
   
   // 🎬 MOSTRAR BOTÓN DE GENERACIÓN DE VIDEO DESPUÉS DE METADATOS
   // Solo mostrar si no se ha habilitado la generación automática
@@ -6218,6 +6369,69 @@ document.addEventListener('showToast', function(event) {
     setTimeout(() => document.body.removeChild(toast), 300);
   }, 3000);
 });
+
+// Función para colapsar/expandir secciones de metadata
+function toggleMetadataSection(headerElement) {
+  const section = headerElement.parentElement;
+  const content = section.querySelector('.section-content');
+  const icon = headerElement.querySelector('.toggle-icon');
+  
+  // Toggle la clase collapsed
+  section.classList.toggle('collapsed');
+  
+  // Cambiar el icono
+  if (section.classList.contains('collapsed')) {
+    icon.classList.remove('fa-chevron-down');
+    icon.classList.add('fa-chevron-right');
+    content.style.maxHeight = '0';
+    content.style.opacity = '0';
+  } else {
+    icon.classList.remove('fa-chevron-right');
+    icon.classList.add('fa-chevron-down');
+    content.style.maxHeight = content.scrollHeight + 'px';
+    content.style.opacity = '1';
+  }
+}
+
+// Función para inicializar secciones colapsadas
+function initializeCollapsedSections() {
+  const sections = document.querySelectorAll('.metadata-section.collapsible');
+  sections.forEach((section) => {
+    // Colapsar TODAS las secciones cuando el panel principal inicia colapsado
+    section.classList.add('collapsed');
+    const content = section.querySelector('.section-content');
+    const icon = section.querySelector('.toggle-icon');
+    
+    if (content && icon) {
+      icon.classList.remove('fa-chevron-down');
+      icon.classList.add('fa-chevron-right');
+      content.style.maxHeight = '0';
+      content.style.opacity = '0';
+    }
+  });
+}
+
+// Función para colapsar/expandir el panel principal de metadata
+function toggleMainMetadataPanel(headerElement) {
+  const panel = headerElement.parentElement;
+  const content = panel.querySelector('.youtube-metadata-content');
+  const icon = headerElement.querySelector('.main-toggle-icon');
+  
+  // Toggle la clase collapsed
+  panel.classList.toggle('collapsed');
+  
+  // Cambiar el icono
+  if (panel.classList.contains('collapsed')) {
+    icon.classList.remove('fa-chevron-down');
+    icon.classList.add('fa-chevron-right');
+  } else {
+    icon.classList.remove('fa-chevron-right');
+    icon.classList.add('fa-chevron-down');
+    
+    // Ya no expandir automáticamente la primera sección
+    // El usuario puede expandir manualmente la sección que desee
+  }
+}
 
 // ==========================================
 // SISTEMA DE ESTILOS DE MINIATURAS
@@ -7065,7 +7279,7 @@ function renderProjectsList(container, mode = 'load') {
     return `
       <div class="project-card" data-project="${project.folderName}">
         <div class="project-card-header">
-          <h3 class="project-title">${project.originalFolderName || project.topic}</h3>
+          <h3 class="project-title">${project.folderName}</h3>
           <span class="project-status">${isComplete ? 'Completo' : 'En progreso'}</span>
         </div>
         
@@ -7106,7 +7320,7 @@ function renderProjectsList(container, mode = 'load') {
               <i class="fas fa-copy"></i>
               Duplicar
             </button>
-            <button class="project-action-btn delete-action" onclick="confirmDeleteProject('${project.folderName}', '${project.originalFolderName || project.topic}')">
+            <button class="project-action-btn delete-action" onclick="confirmDeleteProject('${project.folderName}', '${project.folderName}')">>
               <i class="fas fa-trash"></i>
               Eliminar
             </button>
@@ -7163,7 +7377,7 @@ async function loadProject(folderName) {
       }
       
       if (folderNameElement) {
-        folderNameElement.value = window.currentProject.originalFolderName || window.currentProject.topic;
+        folderNameElement.value = window.currentProject.folderName;
       } else {
         console.warn('⚠️ Elemento folderName no encontrado');
       }
@@ -7334,7 +7548,7 @@ async function loadProject(folderName) {
       closeModal('loadProjectModal');
       closeModal('manageProjectsModal');
       
-      showNotification(`✅ Proyecto "${window.currentProject.originalFolderName || window.currentProject.topic}" cargado exitosamente`, 'success');
+      showNotification(`✅ Proyecto "${window.currentProject.folderName}" cargado exitosamente`, 'success');
       
       // Mostrar detalles del proyecto cargado
       showProjectDetails(window.currentProject);
@@ -7577,7 +7791,7 @@ function showProjectDetails(project) {
     return;
   }
   
-  title.innerHTML = `<i class="fas fa-folder"></i> ${project.originalFolderName || project.topic}`;
+  title.innerHTML = `<i class="fas fa-folder"></i> ${project.folderName}`;
   
   const progress = (project.completedSections.length / project.totalSections) * 100;
   const isComplete = project.completedSections.length >= project.totalSections;
@@ -8141,7 +8355,7 @@ function activateFullProject(projectData) {
       // Actualizar botones según el estado del proyecto
       updateProjectButtons(projectData);
       
-      showNotification(`🚀 Proyecto "${projectData.originalFolderName || projectData.topic}" activado. Usa ← → para navegar entre secciones.`, 'success');
+      showNotification(`🚀 Proyecto "${projectData.folderName}" activado. Usa ← → para navegar entre secciones.`, 'success');
     } else {
       showNotification('❌ No hay secciones con script disponibles', 'error');
     }
@@ -8269,6 +8483,20 @@ function updateProjectButtons(project) {
     if (regenerateScriptsBtn) {
       regenerateScriptsBtn.style.display = 'inline-flex';
       console.log('📝 Botón de regenerar guiones mostrado para proyecto cargado');
+    }
+    
+    // Actualizar visibility del botón de generar imágenes faltantes
+    const generateImagesBtn = document.getElementById('generateMissingImagesBtn');
+    if (generateImagesBtn) {
+      generateImagesBtn.style.display = 'inline-flex';
+      console.log('🖼️ Botón de generar imágenes mostrado para proyecto cargado');
+    }
+    
+    // Actualizar visibility del botón de generar solo prompts
+    const generatePromptsBtn = document.getElementById('generateMissingPromptsBtn');
+    if (generatePromptsBtn) {
+      generatePromptsBtn.style.display = 'inline-flex';
+      console.log('📝 Botón de generar prompts mostrado para proyecto cargado');
     }
   }
   
@@ -9484,6 +9712,58 @@ async function generateSimpleProjectVideo(folderName) {
   }
 }
 
+// Función para generar clips separados por sección
+async function generateSeparateVideos(folderName) {
+  if (isGeneratingVideo) {
+    console.log('⚠️ Ya se está generando un video');
+    return;
+  }
+
+  isGeneratingVideo = true;
+  const button = document.getElementById('generateSeparateVideosBtn');
+  
+  try {
+    // Deshabilitar botón y mostrar estado de carga
+    button.disabled = true;
+    button.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Generando Clips Separados...</span>';
+    
+    console.log('🎬 Iniciando generación de clips separados para proyecto:', folderName);
+    
+    const response = await fetch('/generate-separate-videos', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        folderName: folderName
+      }),
+    });
+
+    if (response.ok) {
+      const result = await response.json();
+      
+      if (result.success) {
+        showSuccess(`¡${result.videosGenerated} clips separados generados exitosamente en sus respectivas carpetas de sección!`);
+        console.log('✅ Clips separados generados:', result.videos);
+      } else {
+        throw new Error(result.error || 'Error interno del servidor');
+      }
+    } else {
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'Error interno del servidor');
+    }
+
+  } catch (error) {
+    console.error('❌ Error generando clips separados:', error);
+    showError(`Error generando clips separados: ${error.message}`);
+  } finally {
+    // Restaurar botón
+    isGeneratingVideo = false;
+    button.disabled = false;
+    button.innerHTML = '<i class="fas fa-video"></i><span>Clips Separados por Sección</span>';
+  }
+}
+
 // Función para mostrar progreso de video manual
 function showVideoProgress() {
   const progressContainer = document.getElementById('videoProgressContainer');
@@ -9856,6 +10136,211 @@ async function regenerateMissingScripts() {
       regenerateBtn.innerHTML = `
         <i class="fas fa-file-alt"></i>
         <span>Regenerar Guiones Vacíos</span>
+      `;
+    }
+  }
+}
+
+// Función para generar imágenes faltantes
+async function generateMissingImages() {
+  try {
+    // Verificar que haya un proyecto cargado
+    if (!window.currentProject || !window.currentProject.completedSections) {
+      showError('No hay un proyecto cargado con secciones completadas');
+      return;
+    }
+    
+    const folderName = document.getElementById("folderName").value.trim();
+    
+    if (!folderName) {
+      showError('No se ha especificado el nombre del proyecto');
+      return;
+    }
+    
+    // Obtener configuraciones para imágenes
+    const imageInstructions = document.getElementById('promptModifier')?.value || '';
+    const imageCount = parseInt(document.getElementById('imagesSelect')?.value) || 5;
+    const aspectRatio = document.getElementById('aspectRatioSelect')?.value || '9:16';
+    
+    // Verificar si se debe usar IA local (ComfyUI)
+    const useLocalAI = document.getElementById('localAIImages')?.checked || false;
+    
+    // Obtener configuraciones de ComfyUI si está habilitado
+    let comfyUIConfig = {};
+    if (useLocalAI) {
+      comfyUIConfig = {
+        steps: parseInt(document.getElementById('comfyUISteps')?.value) || 15,
+        guidance: parseFloat(document.getElementById('comfyUIGuidance')?.value) || 3.5,
+        width: parseInt(document.getElementById('comfyUIWidth')?.value) || 1280,
+        height: parseInt(document.getElementById('comfyUIHeight')?.value) || 720,
+        model: document.getElementById('comfyUIModel')?.value || 'flux1-dev-fp8.safetensors',
+        sampler: document.getElementById('comfyUISampler')?.value || 'euler',
+        scheduler: document.getElementById('comfyUIScheduler')?.value || 'simple'
+      };
+    }
+    
+    console.log('🖼️ Iniciando generación de imágenes faltantes...');
+    console.log('🖼️ Configuración:', {
+      proyecto: folderName,
+      instrucciones: imageInstructions.substring(0, 50) + '...',
+      cantidadImagenes: imageCount,
+      cantidadImagenesElemento: document.getElementById('imagesSelect')?.value,
+      usarIALocal: useLocalAI,
+      configComfyUI: useLocalAI ? comfyUIConfig : 'No aplicable'
+    });
+    
+    // Deshabilitar botón y mostrar progreso
+    const generateBtn = document.getElementById('generateMissingImagesBtn');
+    if (generateBtn) {
+      generateBtn.disabled = true;
+      generateBtn.innerHTML = `
+        <i class="fas fa-spinner fa-spin"></i>
+        <span>Generando Imágenes...</span>
+      `;
+    }
+    
+    console.log('📤 ENVIANDO AL SERVIDOR:', {
+      folderName: folderName,
+      imageInstructions: imageInstructions,
+      imageCount: imageCount,
+      aspectRatio: aspectRatio,
+      useLocalAI: useLocalAI,
+      comfyUIConfig: comfyUIConfig
+    });
+
+    // Hacer solicitud al servidor
+    const response = await fetch('/api/generate-missing-images', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        folderName: folderName,
+        imageInstructions: imageInstructions,
+        imageCount: imageCount,
+        aspectRatio: aspectRatio,
+        useLocalAI: useLocalAI,
+        comfyUIConfig: comfyUIConfig
+      })
+    });
+    
+    const data = await response.json();
+    
+    if (data.success) {
+      showSuccess(`✅ Proceso completado: ${data.message}`);
+      console.log('🖼️ Resultados:', data.data);
+      
+      // Mostrar detalles si hay información adicional
+      if (data.data.generatedPrompts && data.data.generatedPrompts.length > 0) {
+        console.log('🖼️ Prompts generados para secciones:', data.data.generatedPrompts);
+      }
+      
+      if (data.data.generatedImages && data.data.generatedImages.length > 0) {
+        console.log('🖼️ Imágenes generadas para secciones:', data.data.generatedImages);
+      }
+      
+    } else {
+      throw new Error(data.error || 'Error desconocido generando imágenes');
+    }
+    
+  } catch (error) {
+    console.error('❌ Error generando imágenes:', error);
+    showError(`Error generando imágenes: ${error.message}`);
+  } finally {
+    // Restaurar botón
+    const generateBtn = document.getElementById('generateMissingImagesBtn');
+    if (generateBtn) {
+      generateBtn.disabled = false;
+      generateBtn.innerHTML = `
+        <i class="fas fa-image"></i>
+        <span>Generar Imágenes Faltantes</span>
+      `;
+    }
+  }
+}
+
+// Función para generar solo prompts de imágenes (sin generar imágenes)
+async function generateMissingPrompts() {
+  try {
+    // Verificar que haya un proyecto cargado
+    if (!window.currentProject || !window.currentProject.completedSections) {
+      showError('No hay un proyecto cargado con secciones completadas');
+      return;
+    }
+    
+    const folderName = document.getElementById("folderName").value.trim();
+    
+    if (!folderName) {
+      showError('No se ha especificado el nombre del proyecto');
+      return;
+    }
+    
+    // Obtener configuraciones para imágenes
+    const imageInstructions = document.getElementById('promptModifier')?.value || '';
+    const imageCount = parseInt(document.getElementById('imagesSelect')?.value) || 5;
+    
+    console.log('📝 Iniciando generación de prompts de imágenes...');
+    console.log('📝 Configuración:', {
+      proyecto: folderName,
+      instrucciones: imageInstructions.substring(0, 50) + '...',
+      cantidadImagenes: imageCount
+    });
+    
+    // Deshabilitar botón y mostrar progreso
+    const generateBtn = document.getElementById('generateMissingPromptsBtn');
+    if (generateBtn) {
+      generateBtn.disabled = true;
+      generateBtn.innerHTML = `
+        <i class="fas fa-spinner fa-spin"></i>
+        <span>Generando Prompts...</span>
+      `;
+    }
+    
+    console.log('📤 ENVIANDO AL SERVIDOR:', {
+      folderName: folderName,
+      imageInstructions: imageInstructions,
+      imageCount: imageCount
+    });
+
+    // Hacer solicitud al servidor
+    const response = await fetch('/api/generate-prompts-only', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        folderName: folderName,
+        imageInstructions: imageInstructions,
+        imageCount: imageCount
+      })
+    });
+    
+    const data = await response.json();
+    
+    if (data.success) {
+      showSuccess(`✅ Prompts generados: ${data.message}`);
+      console.log('📝 Resultados:', data.data);
+      
+      // Mostrar detalles de prompts generados
+      if (data.data.generatedPrompts && data.data.generatedPrompts.length > 0) {
+        console.log('📝 Prompts generados para secciones:', data.data.generatedPrompts);
+      }
+      
+    } else {
+      throw new Error(data.error || 'Error desconocido generando prompts');
+    }
+    
+  } catch (error) {
+    console.error('❌ Error generando prompts:', error);
+    showError(`Error generando prompts: ${error.message}`);
+  } finally {
+    // Restaurar botón
+    const generateBtn = document.getElementById('generateMissingPromptsBtn');
+    if (generateBtn) {
+      generateBtn.disabled = false;
+      generateBtn.innerHTML = `
+        <i class="fas fa-file-text"></i>
+        <span>Generar Prompts de Imágenes Faltantes</span>
       `;
     }
   }

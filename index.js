@@ -6,12 +6,113 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import OpenAI from 'openai';
 import wav from 'wav';
 import fs from 'fs';
+import { writeFile } from 'fs/promises';
 import path from 'path';
 import fetch from 'node-fetch';
 import ApplioClient from "./applio-client.js";
 import { transcribeAudio, getAudioTracks } from "./transcriber.js";
 import multer from 'multer';
 import axios from 'axios';
+
+// Función para obtener una instancia de GoogleGenerativeAI con fallback automático
+async function getGoogleAI(model = "gemini-2.0-flash-exp") {
+  // Verificar que tenemos al menos una API key
+  if (!process.env.GOOGLE_API_KEY_GRATIS && !process.env.GOOGLE_API_KEY_GRATIS2 && !process.env.GOOGLE_API_KEY_GRATIS3 && !process.env.GOOGLE_API_KEY) {
+    throw new Error('No hay API keys de Google configuradas en las variables de entorno');
+  }
+
+  let lastError = null;
+
+  // Intentar primero con la API key gratuita 1
+  if (process.env.GOOGLE_API_KEY_GRATIS) {
+    try {
+      console.log('🆓 Intentando con API key gratuita 1 de Google...');
+      const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY_GRATIS);
+      const aiModel = genAI.getGenerativeModel({ model });
+      
+      // Hacer una prueba rápida para verificar que funciona
+      await aiModel.generateContent("test");
+      console.log('✅ API key gratuita 1 funcionando correctamente');
+      return { genAI, model: aiModel };
+    } catch (error) {
+      lastError = error;
+      console.log(`⚠️ API key gratuita 1 falló: ${error.message}`);
+    }
+  }
+
+  // Intentar con la API key gratuita 2
+  if (process.env.GOOGLE_API_KEY_GRATIS2) {
+    try {
+      console.log('🆓 Intentando con API key gratuita 2 de Google...');
+      const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY_GRATIS2);
+      const aiModel = genAI.getGenerativeModel({ model });
+      
+      // Hacer una prueba rápida para verificar que funciona
+      await aiModel.generateContent("test");
+      console.log('✅ API key gratuita 2 funcionando correctamente');
+      return { genAI, model: aiModel };
+    } catch (error) {
+      lastError = error;
+      console.log(`⚠️ API key gratuita 2 falló: ${error.message}`);
+    }
+  }
+
+  // Intentar con la API key gratuita 3
+  if (process.env.GOOGLE_API_KEY_GRATIS3) {
+    try {
+      console.log('🆓 Intentando con API key gratuita 3 de Google...');
+      const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY_GRATIS3);
+      const aiModel = genAI.getGenerativeModel({ model });
+      
+      // Hacer una prueba rápida para verificar que funciona
+      await aiModel.generateContent("test");
+      console.log('✅ API key gratuita 3 funcionando correctamente');
+      return { genAI, model: aiModel };
+    } catch (error) {
+      lastError = error;
+      console.log(`⚠️ API key gratuita 3 falló: ${error.message}`);
+    }
+  }
+
+  // Si fallan todas las gratuitas, usar la API key normal
+  if (process.env.GOOGLE_API_KEY) {
+    try {
+      console.log('💰 Usando API key normal de Google como fallback final...');
+      const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
+      const aiModel = genAI.getGenerativeModel({ model });
+      
+      // Hacer una prueba rápida para verificar que funciona
+      await aiModel.generateContent("test");
+      console.log('✅ API key normal funcionando correctamente');
+      return { genAI, model: aiModel };
+    } catch (error) {
+      console.error(`❌ API key normal también falló: ${error.message}`);
+      throw new Error(`Todas las API keys de Google fallaron. Último error: ${error.message}`);
+    }
+  }
+
+  throw new Error(`No se pudo inicializar Google AI. Último error: ${lastError?.message || 'API keys no disponibles'}`);
+}
+
+// Función auxiliar para obtener todas las API keys de Google en orden de prioridad
+function getGoogleAPIKeys() {
+  return [
+    { key: process.env.GOOGLE_API_KEY_GRATIS, name: 'GRATIS' },
+    { key: process.env.GOOGLE_API_KEY_GRATIS2, name: 'GRATIS2' },
+    { key: process.env.GOOGLE_API_KEY_GRATIS3, name: 'GRATIS3' },
+    { key: process.env.GOOGLE_API_KEY, name: 'NORMAL' }
+  ].filter(apiKey => apiKey.key); // Solo retornar las que estén configuradas
+}
+
+// Función auxiliar para obtener solo las API keys gratuitas
+function getFreeGoogleAPIKeys() {
+  return [
+    { key: process.env.GOOGLE_API_KEY_GRATIS, name: 'GRATIS' },
+    { key: process.env.GOOGLE_API_KEY_GRATIS2, name: 'GRATIS2' },
+    { key: process.env.GOOGLE_API_KEY_GRATIS3, name: 'GRATIS3' }
+  ].filter(apiKey => apiKey.key); // Solo retornar las que estén configuradas
+}
+
 import * as cheerio from 'cheerio';
 import ffmpeg from 'fluent-ffmpeg';
 import { spawn, exec } from 'child_process';
@@ -203,14 +304,8 @@ async function generateMissingScript(topic, sectionNumber, totalSections, chapte
         break;
     }
 
-    // Validar que la API key esté disponible
-    if (!process.env.GOOGLE_API_KEY) {
-      throw new Error('GOOGLE_API_KEY no está configurada en las variables de entorno');
-    }
-
-    // Usar el cliente de IA configurado (Gemini o similar)
-    const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
+    // Usar el cliente de IA con fallback automático
+    const { model } = await getGoogleAI("gemini-2.0-flash-exp");
     
     console.log('🤖 Enviando prompt al modelo de IA...');
     const result = await model.generateContent(prompt);
@@ -301,7 +396,7 @@ start.bat`;
     
     // Esperar a que ComfyUI esté listo (máximo 90 segundos para dar tiempo al inicio)
     console.log('⏳ Esperando a que ComfyUI esté listo en la nueva ventana...');
-    const maxAttempts = 90;
+    const maxAttempts = 360;
     let attempt = 0;
     
     while (attempt < maxAttempts) {
@@ -629,7 +724,22 @@ const upload = multer({
   }
 });
 
-const ai = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
+// La instancia de AI se inicializará dinámicamente con fallback cuando sea necesaria
+let ai = null;
+
+// Función para obtener instancia AI con fallback para TTS
+async function getGoogleAIForTTS() {
+  if (!ai) {
+    try {
+      ai = await getGoogleAI("gemini-2.5-flash-preview-tts");
+      console.log('✅ Google AI inicializado para TTS con fallback');
+    } catch (error) {
+      console.error('❌ Error inicializando Google AI para TTS:', error);
+      throw error;
+    }
+  }
+  return ai;
+}
 
 // Configurar cliente OpenAI
 const openai = new OpenAI({
@@ -738,9 +848,8 @@ async function generateUniversalContent(model, promptOrHistory, systemInstructio
         return result;
         
       } else {
-        // Usar Google AI (comportamiento existente)
-        const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
-        const model_instance = genAI.getGenerativeModel({ model: model });
+        // Usar Google AI con sistema de fallback
+        const { model: model_instance } = await getGoogleAI(model);
         
         // Si promptOrHistory es un array (historial de conversación)
         if (Array.isArray(promptOrHistory)) {
@@ -1112,19 +1221,12 @@ REGLAS ESTRICTAS:
 - NO hacer referencias a estilos anteriores
 `;
 
-    // Validar que la API key esté disponible
-    if (!process.env.GOOGLE_API_KEY) {
-      throw new Error('GOOGLE_API_KEY no está configurada en las variables de entorno');
-    }
-
     // Llamar a la IA para generar metadatos
-    const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
+    const { model } = await getGoogleAI('gemini-2.0-flash-exp');
     
     console.log(`🤖 Enviando request a Gemini para generar metadatos...`);
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const generatedMetadata = response.text();
+    const result = await model.generateContent([{ text: prompt }]);
+    const generatedMetadata = result.response.text();
     
     console.log(`✅ Metadatos generados exitosamente`);
     
@@ -1445,7 +1547,8 @@ function getAvailableProjects() {
               
               projects.push({
                 ...reconstructedState,
-                folderPath: folder,
+                folderName: folder, // Nombre real de la carpeta (con guiones bajos)
+                folderPath: folder, // Alias para compatibilidad
                 sectionsCompleted: reconstructedState.completedSections?.length || 0,
                 lastModifiedDate: new Date(reconstructedState.lastModified || Date.now()).toLocaleString()
               });
@@ -1485,7 +1588,8 @@ function getAvailableProjects() {
               
               projects.push({
                 ...projectState,
-                folderPath: folder,
+                folderName: folder, // Nombre real de la carpeta (con guiones bajos)
+                folderPath: folder, // Alias para compatibilidad
                 sectionsCompleted: projectState.completedSections?.length || 0,
                 lastModifiedDate: new Date(projectState.lastModified || Date.now()).toLocaleString()
               });
@@ -1500,7 +1604,8 @@ function getAvailableProjects() {
           const projectState = JSON.parse(fileContent);
           projects.push({
             ...projectState,
-            folderPath: folder,
+            folderName: folder, // Nombre real de la carpeta (con guiones bajos)
+            folderPath: folder, // Alias para compatibilidad
             sectionsCompleted: projectState.completedSections?.length || 0,
             lastModifiedDate: new Date(projectState.lastModified || Date.now()).toLocaleString()
           });
@@ -1534,12 +1639,23 @@ function getAvailableProjects() {
 // Función para cargar estado completo de un proyecto
 function loadProjectState(folderName) {
   try {
-    const projectStateFile = path.join('./public/outputs', folderName, 'project_state.json');
+    // Convertir el nombre del proyecto a formato seguro (espacios a guiones bajos)
+    const safeFolderName = createSafeFolderName(folderName);
+    let projectStateFile = path.join('./public/outputs', safeFolderName, 'project_state.json');
     console.log(`🔍 Buscando archivo de estado: ${projectStateFile}`);
     
+    // Si no existe con el nombre convertido, probar con el nombre original
     if (!fs.existsSync(projectStateFile)) {
-      console.log(`❌ Archivo project_state.json no existe para proyecto "${folderName}"`);
-      return null;
+      console.log(`❌ Archivo no encontrado con nombre convertido "${safeFolderName}"`);
+      console.log(`🔍 Intentando con nombre original: "${folderName}"`);
+      
+      projectStateFile = path.join('./public/outputs', folderName, 'project_state.json');
+      console.log(`🔍 Buscando archivo de estado: ${projectStateFile}`);
+      
+      if (!fs.existsSync(projectStateFile)) {
+        console.log(`❌ Archivo project_state.json no existe para proyecto "${folderName}" (probado como "${safeFolderName}" y "${folderName}")`);
+        return null;
+      }
     }
     
     console.log(`✅ Archivo de estado encontrado, leyendo contenido...`);
@@ -1933,17 +2049,24 @@ function getNarrationTone(topic) {
   return " ";
 }
 
-// Función para generar audio del guión
-async function generateStoryAudio(script, voiceName = 'Orus', sectionDir, topic, section, customNarrationStyle = null) {
+// Función para generar audio del guión (implementación Google TTS real)
+async function generateStoryAudio(ai, script, voiceName = 'Orus', sectionDir, topic, section, customNarrationStyle = null) {
   try {
     console.log(`🎵 Generando narración del guión con voz: ${voiceName}...`);
     console.log(`📝 Script a narrar (primeros 100 caracteres): ${script.substring(0, 100)}...`);
     console.log(`📏 Longitud del script: ${script.length} caracteres`);
     
     // Verificar si el script es demasiado largo
-    if (script.length > 5000) {
-      console.log(`⚠️ Script muy largo (${script.length} caracteres), truncando a 5000...`);
-      script = script.substring(0, 5000) + "...";
+    if (script.length > 3000) {
+      console.log(`⚠️ Script muy largo (${script.length} caracteres), truncando a 3000...`);
+      script = script.substring(0, 3000) + "...";
+    }
+    
+    // Limpiar el script de caracteres problemáticos
+    script = script.replace(/[^\w\sáéíóúñüÁÉÍÓÚÑÜ.,;:!?¿¡()-]/g, ' ').trim();
+    
+    if (script.length < 10) {
+      throw new Error('Script demasiado corto después de la limpieza');
     }
     
     // Usar estilo de narración personalizado si se proporciona, sino usar el tono por defecto
@@ -1956,51 +2079,65 @@ async function generateStoryAudio(script, voiceName = 'Orus', sectionDir, topic,
       console.log(`🎭 Tono de narración por defecto: ${narrationTone}`);
     }
     
-    // Intentar con configuración más simple
-    const response = await ai.models.generateContent({
+    // Configuración correcta basada en la documentación oficial
+    const model = ai.getGenerativeModel({ 
       model: "gemini-2.5-flash-preview-tts",
-      contents: [{ 
-        parts: [{ 
-          text: `Narra el siguiente guión ${narrationTone}:
-
-${script}`
-        }] 
-      }],
-      config: {
-        responseModalities: ['AUDIO'],
+      generationConfig: {
+        responseModalities: ["AUDIO"],
         speechConfig: {
           voiceConfig: {
             prebuiltVoiceConfig: { 
-              voiceName: voiceName 
+              voiceName: 'Kore'  // Usar voz Kore que funciona bien
             }
           }
         }
       }
     });
+    
+    console.log(`🔧 Enviando request con configuración correcta de TTS...`);
+    const response = await model.generateContent([{
+      text: script
+    }]);
 
     console.log(`🔍 Respuesta recibida:`, {
-      candidates: response.candidates?.length || 0,
-      hasContent: !!response.candidates?.[0]?.content,
-      hasParts: !!response.candidates?.[0]?.content?.parts,
-      partsLength: response.candidates?.[0]?.content?.parts?.length || 0
+      candidates: response.response?.candidates?.length || 0,
+      hasContent: !!response.response?.candidates?.[0]?.content,
+      hasParts: !!response.response?.candidates?.[0]?.content?.parts,
+      partsLength: response.response?.candidates?.[0]?.content?.parts?.length || 0
     });
 
-    const audioData = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    const audioData = response.response?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
     
     if (!audioData) {
-      console.log(`❌ Estructura de respuesta completa:`, JSON.stringify(response, null, 2));
+      console.log(`❌ Estructura de respuesta completa:`, JSON.stringify(response.response, null, 2));
       throw new Error('No se generó audio - revisa los logs para más detalles');
     }
 
     console.log(`✅ Audio data recibido, tamaño: ${audioData.length} caracteres`);
+    
+    // Verificar si el audio data es válido
+    if (audioData.length < 1000) {
+      console.log(`⚠️ Audio data muy pequeño (${audioData.length} caracteres), posible error`);
+      console.log(`🔍 Primeros 200 caracteres del audio data: ${audioData.substring(0, 200)}`);
+      throw new Error('Audio data inválido - demasiado pequeño');
+    }
+    
+    // Verificar si es solo caracteres repetidos (indica error)
+    const firstChar = audioData.charAt(0);
+    const allSame = audioData.split('').every(char => char === firstChar);
+    if (allSame) {
+      console.log(`⚠️ Audio data contiene solo el caracter '${firstChar}' repetido, esto indica un error`);
+      throw new Error('Audio data inválido - solo caracteres repetidos');
+    }
 
     const audioBuffer = Buffer.from(audioData, 'base64');
     const safeTopicName = createSafeFolderName(topic);
     const fileName = `${safeTopicName}_seccion_${section}_${Date.now()}.wav`;
     const filePath = path.join(sectionDir, fileName);
     
-    await saveWaveFile(filePath, audioBuffer);
-    console.log(`✅ Audio generado exitosamente con voz ${voiceName} en: ${filePath}`);
+    // Guardar directamente el buffer de audio (formato devuelto por Gemini TTS)
+    await writeFile(filePath, audioBuffer);
+    console.log(`✅ Audio generado exitosamente con voz Kore en: ${filePath}`);
     
     // Retornar la ruta relativa para acceso web
     const relativePath = path.relative('./public', filePath).replace(/\\/g, '/');
@@ -2049,7 +2186,7 @@ guardado para referencia futura.
 }
 
 // Función para generar imágenes con diferentes modelos
-async function generateImageWithModel(ai, prompt, modelType) {
+async function generateImageWithModel(ai, prompt, modelType, aspectRatio = '9:16') {
   if (modelType === 'gemini2') {
     console.log(`🤖 Usando Gemini 2.0 Flash nativo...`);
     // Usar Gemini 2.0 nativo con responseModalities
@@ -2057,7 +2194,8 @@ async function generateImageWithModel(ai, prompt, modelType) {
       model: "gemini-2.0-flash-preview-image-generation",
       contents: prompt,
       config: {
-        responseModalities: [Modality.TEXT, Modality.IMAGE],
+        responseModalities: ["TEXT", "IMAGE"],
+        aspectRatio: aspectRatio,
       },
     });
 
@@ -2083,7 +2221,7 @@ async function generateImageWithModel(ai, prompt, modelType) {
       prompt: prompt,
       config: {
         numberOfImages: 1,
-        aspectRatio: "16:9",
+        aspectRatio: aspectRatio,
       },
     });
   }
@@ -2097,7 +2235,7 @@ async function generateImageWithModel(ai, prompt, modelType) {
 const comfyUIClient = new ComfyUIClient('http://127.0.0.1:8188');
 
 // Función para generar imágenes usando IA Local (ComfyUI + Flux)
-async function generateLocalAIImages(imagePrompts, additionalInstructions, sectionDir, sectionNumber, customSettings = null, keepAlive = false) {
+async function generateLocalAIImages(imagePrompts, additionalInstructions, sectionDir, sectionNumber, customSettings = null, keepAlive = false, aspectRatio = '9:16') {
   const generatedImages = [];
   
   try {
@@ -2131,10 +2269,10 @@ async function generateLocalAIImages(imagePrompts, additionalInstructions, secti
       try {
         // Configurar opciones (usar configuración personalizada si está disponible)
         const options = customSettings ? {
-          width: parseInt(customSettings.width) || 1280,
-          height: parseInt(customSettings.height) || 720,
-          steps: parseInt(customSettings.steps) || 25,
-          cfg: 1,
+          width: parseInt(customSettings.width) || 800,
+          height: parseInt(customSettings.height) || 400,
+          steps: parseInt(customSettings.steps) || 15,
+          cfg: 1.8,
           guidance: parseFloat(customSettings.guidance) || 3.5,
           sampler: customSettings.sampler || "euler",
           scheduler: customSettings.scheduler || "simple",
@@ -2142,16 +2280,16 @@ async function generateLocalAIImages(imagePrompts, additionalInstructions, secti
           negativePrompt: customSettings.negativePrompt || "low quality, blurry, distorted",
           timeout: Math.max(180, parseInt(customSettings.steps) * 6) // Timeout dinámico basado en pasos
         } : {
-          width: 1280,
-          height: 720,
-          steps: 25, // Valor por defecto
-          cfg: 1,
+          width: 800,  // Resolución 16:9 Full HD por defecto
+          height: 400,
+          steps: 15, // Valor por defecto
+          cfg: 1.8,
           guidance: 3.5,
           sampler: "euler",
           scheduler: "simple",
           model: "flux1-dev-fp8.safetensors", // Modelo Flux optimizado
           negativePrompt: "low quality, blurry, distorted",
-          timeout: 180 // 3 minutos timeout por defecto
+          timeout: 360 // 3 minutos timeout por defecto
         };
         
         console.log(`⚙️ Usando configuración ComfyUI:`, {
@@ -2267,9 +2405,10 @@ function generateProjectStateFile(projectData, requestData) {
     } = requestData;
     
     const projectState = {
-      topic: topic,
+      topic: folderName, // Usar el nombre de carpeta elegido por el usuario
       folderName: folderName,
       originalFolderName: folderName,
+      generatedTopic: topic, // Guardar el topic generado por IA como campo separado
       totalSections: sections.length,
       currentSection: sections.length,
       voice: voice || 'Orus',
@@ -3405,7 +3544,7 @@ RECUERDA: ESTE ES UN CAPÍTULO INTERMEDIO DE UN VIDEO YA INICIADO - CONTINÚA LA
 // NUEVO ENDPOINT PARA GENERACIÓN AUTOMÁTICA POR LOTES
 app.post('/generate-batch-automatic', async (req, res) => {
   try {
-    const { topic, folderName, voice, totalSections, minWords, maxWords, imageCount, promptModifier, imageModel, llmModel, skipImages, googleImages, localAIImages, geminiGeneratedImages, comfyUISettings, scriptStyle, customStyleInstructions, applioVoice, applioModel, applioPitch, useApplio } = req.body;
+    const { topic, folderName, voice, totalSections, minWords, maxWords, imageCount, aspectRatio, promptModifier, imageModel, llmModel, skipImages, googleImages, localAIImages, geminiGeneratedImages, comfyUISettings, scriptStyle, customStyleInstructions, applioVoice, applioModel, applioPitch, useApplio } = req.body;
     
     console.log('\n' + '='.repeat(80));
     console.log('🚀 INICIANDO GENERACIÓN AUTOMÁTICA POR LOTES');
@@ -3915,16 +4054,43 @@ app.post('/generate-batch-audio', async (req, res) => {
           console.log(`✅ Audio Applio generado: ${audioPath}`);
           
         } else {
-          // Generar con Google TTS
-          audioPath = await generateStoryAudio(
-            section.cleanScript, 
-            voice || 'Orus', 
-            sectionFolderStructure.sectionDir, 
-            section.title, 
-            section.section
-          );
-          
-          console.log(`✅ Audio Google TTS generado: ${audioPath}`);
+          // Generar con Google TTS - Si falla, usar Applio como fallback
+          try {
+            audioPath = await generateStoryAudio(
+              ai,
+              section.cleanScript, 
+              voice || 'Orus', 
+              sectionFolderStructure.sectionDir, 
+              section.title, 
+              section.section
+            );
+            console.log(`✅ Audio Google TTS generado: ${audioPath}`);
+          } catch (ttsError) {
+            console.log(`⚠️ Google TTS falló, usando Applio como fallback: ${ttsError.message}`);
+            
+            // Fallback a Applio
+            await applioClient.ensureConnection();
+            const audioResponse = await applioClient.generateTTS(
+              section.cleanScript,
+              applioVoice || 'RemyOriginal',
+              applioModel || 'fr-FR-RemyMultilingualNeural',
+              applioPitch || 0
+            );
+            
+            if (!audioResponse.success || !audioResponse.audioPath) {
+              throw new Error('Tanto Google TTS como Applio fallaron');
+            }
+            
+            // Copiar el archivo generado por Applio a la ubicación correcta
+            const sourceFile = audioResponse.audioPath;
+            const safeTitle = createSafeFolderName(section.title);
+            const fileName = `${safeTitle}_seccion_${section.section}_${Date.now()}.wav`;
+            const filePath = path.join(sectionFolderStructure.sectionDir, fileName);
+            
+            fs.copyFileSync(sourceFile, filePath);
+            audioPath = path.relative('./public', filePath).replace(/\\/g, '/');
+            console.log(`✅ Audio Applio (fallback) generado: ${audioPath}`);
+          }
         }
         
         audioResults.push({
@@ -4591,10 +4757,1135 @@ app.post('/generate-missing-scripts', async (req, res) => {
   }
 });
 
+// ENDPOINT PARA GENERAR IMÁGENES FALTANTES
+// Función auxiliar para generar imágenes faltantes de un proyecto (para uso interno)
+async function generateMissingImagesForProject(data) {
+  const { 
+    folderName, 
+    imageInstructions = '', 
+    imageCount = 5, 
+    useLocalAI = false, 
+    comfyUIConfig = {} 
+  } = data;
+
+  console.log('🖼️ Iniciando generación automática de imágenes...');
+  
+  // Verificar que el proyecto existe
+  const projectState = loadProjectState(folderName);
+  if (!projectState) {
+    throw new Error('Proyecto no encontrado');
+  }
+  
+  console.log(`🖼️ Verificando imágenes faltantes en proyecto: ${folderName}`);
+  console.log(`📊 Total de secciones: ${projectState.totalSections}`);
+  console.log(`🎨 Instrucciones para imágenes: "${imageInstructions || 'Por defecto'}"`);
+  console.log(`📱 Cantidad de imágenes por sección: ${imageCount}`);
+  console.log(`🤖 Usar IA local (ComfyUI): ${useLocalAI}`);
+  
+  const sectionsToProcess = [];
+  
+  // Preparar las secciones que necesitan imágenes
+  for (let sectionNum = 1; sectionNum <= projectState.totalSections; sectionNum++) {
+    const sectionDir = path.join('./public/outputs', folderName, `seccion_${sectionNum}`);
+    
+    if (!fs.existsSync(sectionDir)) {
+      console.log(`⚠️ Sección ${sectionNum} no existe, saltando...`);
+      continue;
+    }
+    
+    // Cargar prompts para esta sección
+    const promptsFilePath = path.join(sectionDir, `${folderName}_seccion_${sectionNum}_prompts_imagenes.txt`);
+    
+    if (!fs.existsSync(promptsFilePath)) {
+      console.log(`🎨 Archivo de prompts no encontrado para sección ${sectionNum}: ${promptsFilePath}`);
+      continue;
+    }
+    
+    const promptsContent = fs.readFileSync(promptsFilePath, 'utf8');
+    const prompts = promptsContent
+      .split(/\d+\s*===/)
+      .slice(1)
+      .map(p => p.replace(/^\d+\s*===/, '').trim()).filter(p => p);
+    
+    if (prompts.length === 0) {
+      console.log(`⚠️ No se pudieron extraer prompts de sección ${sectionNum}, saltando...`);
+      continue;
+    }
+    
+    // Verificar cuántas imágenes ya existen
+    const existingImages = fs.readdirSync(sectionDir).filter(file => 
+      file.match(/\.(jpg|jpeg|png|webp)$/i)
+    );
+    
+    console.log(`📊 Sección ${sectionNum}: ${existingImages.length} imágenes existentes, necesita ${imageCount} total`);
+    
+    const imagesToGenerate = Math.max(0, imageCount - existingImages.length);
+    if (imagesToGenerate === 0) {
+      console.log(`✅ Sección ${sectionNum} ya tiene suficientes imágenes`);
+      continue;
+    }
+    
+    sectionsToProcess.push({
+      section: sectionNum,
+      sectionDir,
+      prompts,
+      existingImages,
+      imagesToGenerate
+    });
+  }
+  
+  if (sectionsToProcess.length === 0) {
+    console.log(`✅ Todas las secciones tienen suficientes imágenes`);
+    return { successful: 0, failed: 0, sections: [] };
+  }
+  
+  let totalGenerated = 0;
+  let totalFailed = 0;
+  const generatedImages = [];
+  
+  // Procesar cada sección
+  for (const section of sectionsToProcess) {
+    console.log(`🖼️ Generando imágenes para sección ${section.section}...`);
+    
+    // Calcular índice de inicio basado en imágenes existentes
+    const startIndex = section.existingImages.length;
+    console.log(`🔢 Comenzando generación desde prompt ${startIndex + 1} (índice ${startIndex})`);
+    
+    // Generar imágenes una por una
+    let generatedCount = 0;
+    for (let i = 0; i < Math.min(section.imagesToGenerate, section.prompts.length - startIndex); i++) {
+      const promptIndex = startIndex + i;
+      
+      try {
+        // Verificar que el prompt existe
+        if (promptIndex >= section.prompts.length) {
+          console.log(`⚠️ No hay más prompts disponibles (prompt ${promptIndex + 1} no existe)`);
+          break;
+        }
+        
+        const prompt = section.prompts[promptIndex];
+        const imageNumber = promptIndex + 1;
+        const imageName = `seccion_${section.section}_imagen_${imageNumber}`;
+        
+        console.log(`🎨 Generando imagen ${i + 1}/${section.imagesToGenerate} para sección ${section.section} (prompt ${imageNumber})...`);
+        console.log(`📝 Usando prompt: ${prompt.substring(0, 100)}...`);
+        
+        let imageResult = null;
+        
+        // PASO 1: Intentar con Google Gemini (SOLO API GRATIS) - 2 intentos con las API keys disponibles
+        console.log(`🔸 Intentando generación con Google Gemini (${getFreeGoogleAPIKeys().length} API keys, 2 intentos cada una)...`);
+        
+        // Intentar con todas las API keys gratuitas disponibles
+        const apiKeys = getFreeGoogleAPIKeys();
+        
+        for (const { key, name } of apiKeys) {
+          if (imageResult && imageResult.success) break; // Si ya se generó, salir
+          
+          if (!key) {
+            console.log(`⚠️ API key ${name} no disponible, saltando...`);
+            continue;
+          }
+          
+          for (let googleAttempt = 1; googleAttempt <= 2; googleAttempt++) {
+            try {
+              if (googleAttempt > 1) {
+                console.log(`🔸 Reintentando con Google Gemini ${name} - Intento ${googleAttempt}/2...`);
+                await new Promise(resolve => setTimeout(resolve, 1000));
+              } else {
+                console.log(`🔸 Intentando con Google Gemini ${name} - Intento ${googleAttempt}/2...`);
+              }
+              
+              imageResult = await generateImageWithGoogleGratis(prompt, imageName, section.sectionDir, key, aspectRatio);
+              
+              if (imageResult && imageResult.success) {
+                generatedCount++;
+                totalGenerated++;
+                console.log(`✅ Imagen generada exitosamente con Google Gemini ${name} (intento ${googleAttempt}): ${imageResult.filename}`);
+                generatedImages.push({
+                  section: section.section,
+                  filename: imageResult.filename,
+                  method: `Google Gemini ${name}`,
+                  attempt: googleAttempt
+                });
+                break; // Salir del bucle de intentos si fue exitoso
+              } else {
+                console.log(`⚠️ Google Gemini ${name} falló en intento ${googleAttempt}: ${imageResult?.error || 'Error desconocido'}`);
+                imageResult = null;
+              }
+            } catch (googleError) {
+              console.log(`⚠️ Error con Google Gemini ${name} en intento ${googleAttempt}: ${googleError.message}`);
+              imageResult = null;
+              
+              // Si es un error de cuota, no tiene sentido intentar de nuevo con la misma key
+              if (googleError.message.includes('quota') || googleError.message.includes('QUOTA_EXCEEDED') || googleError.status === 429) {
+                console.log(`🚫 Error de cuota detectado en ${name}, saltando intentos restantes con esta API key`);
+                break;
+              }
+            }
+          }
+          
+          if (imageResult && imageResult.success) break; // Si se generó con esta key, no probar la siguiente
+        }
+        
+        // PASO 2: Si Google falló, intentar con ComfyUI como fallback
+        if (!imageResult || !imageResult.success) {
+          console.log(`🔸 Fallback: Intentando generación con ComfyUI...`);
+          
+          // Preparar configuración para ComfyUI
+          const imageConfig = useLocalAI ? {
+            width: comfyUIConfig.width || 1920,
+            height: comfyUIConfig.height || 1080,
+            steps: comfyUIConfig.steps || 25,
+            guidance: comfyUIConfig.guidance || 3.5,
+            sampler: comfyUIConfig.sampler || "euler",
+            scheduler: comfyUIConfig.scheduler || "simple",
+            model: comfyUIConfig.model || "flux1-dev-fp8.safetensors"
+          } : {};
+          
+          try {
+            imageResult = await generateComfyUIImage(prompt, imageName, section.sectionDir, imageConfig, aspectRatio);
+            
+            if (imageResult && imageResult.success) {
+              generatedCount++;
+              totalGenerated++;
+              console.log(`✅ Imagen generada exitosamente con ComfyUI (fallback): ${imageResult.filename}`);
+              generatedImages.push({
+                section: section.section,
+                filename: imageResult.filename,
+                method: 'ComfyUI (Fallback)',
+                attempt: 1
+              });
+            } else {
+              console.log(`❌ Error con ComfyUI también: ${imageResult?.error || 'Error desconocido'}`);
+              totalFailed++;
+            }
+          } catch (comfyError) {
+            console.log(`❌ Error con ComfyUI: ${comfyError.message}`);
+            totalFailed++;
+          }
+        }
+        
+        // Pausa entre generaciones para evitar sobrecarga
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+      } catch (error) {
+        console.error(`❌ Error generando imagen ${i + 1} para sección ${section.section} (prompt ${promptIndex + 1}):`, error);
+        totalFailed++;
+      }
+    }
+    
+    if (generatedCount > 0) {
+      console.log(`✅ Sección ${section.section}: ${generatedCount} imágenes generadas exitosamente`);
+    }
+  }
+  
+  console.log(`🎯 Resumen final: ${totalGenerated} imágenes generadas, ${totalFailed} fallidas`);
+  
+  return {
+    successful: totalGenerated,
+    failed: totalFailed,
+    generatedImages: generatedImages
+  };
+}
+
+app.post('/api/generate-missing-images', async (req, res) => {
+  try {
+    console.log('📥 DATOS RECIBIDOS DEL FRONTEND:', JSON.stringify(req.body, null, 2));
+    
+    const { 
+      folderName, 
+      imageInstructions = '', 
+      imageCount = 5, 
+      aspectRatio = '9:16',
+      useLocalAI = false, 
+      comfyUIConfig = {} 
+    } = req.body;
+    
+    console.log('\n' + '🖼️'.repeat(20));
+    console.log('🖼️ GENERANDO IMÁGENES FALTANTES');
+    console.log('🖼️'.repeat(20));
+    
+    // Verificar que el proyecto existe
+    const projectState = loadProjectState(folderName);
+    if (!projectState) {
+      return res.status(404).json({ error: 'Proyecto no encontrado' });
+    }
+    
+    console.log(`🖼️ Verificando imágenes faltantes en proyecto: ${folderName}`);
+    console.log(`📊 Total de secciones: ${projectState.completedSections.length}`);
+    console.log(`🎨 Instrucciones para imágenes: "${imageInstructions || 'Por defecto'}"`);
+    console.log(`📱 Cantidad de imágenes por sección: ${imageCount}`);
+    console.log(`🤖 Usar IA local (ComfyUI): ${useLocalAI}`);
+    
+    if (useLocalAI) {
+      console.log(`⚙️ Configuración ComfyUI:`, {
+        steps: comfyUIConfig.steps || 15,
+        guidance: comfyUIConfig.guidance || 3.5,
+        resolution: `${comfyUIConfig.width || 1280}x${comfyUIConfig.height || 720}`,
+        model: comfyUIConfig.model || 'flux1-dev-fp8.safetensors',
+        sampler: comfyUIConfig.sampler || 'euler',
+        scheduler: comfyUIConfig.scheduler || 'simple'
+      });
+    }
+    
+    const projectDir = path.join('./public/outputs', folderName);
+    const sectionsNeedingPrompts = [];
+    const sectionsNeedingImages = [];
+    
+    // PASO 1: Verificar qué secciones necesitan prompts de imágenes
+    for (let i = 0; i < projectState.completedSections.length; i++) {
+      const section = projectState.completedSections[i];
+      const sectionDir = path.join(projectDir, `seccion_${section.section}`);
+      
+      if (fs.existsSync(sectionDir)) {
+        // Buscar archivo de prompts de imágenes
+        const promptFiles = fs.readdirSync(sectionDir).filter(file => 
+          file.includes('prompts') && file.includes('imagenes') && file.endsWith('.txt')
+        );
+        
+        if (promptFiles.length === 0) {
+          console.log(`🖼️ Sección ${section.section} necesita prompts de imágenes`);
+          sectionsNeedingPrompts.push(section);
+        } else {
+          // Verificar si hay imágenes generadas
+          const imageFiles = fs.readdirSync(sectionDir).filter(file => 
+            file.match(/\.(jpg|jpeg|png|webp)$/i)
+          );
+          
+          if (imageFiles.length < imageCount) {
+            console.log(`🖼️ Sección ${section.section} tiene prompts pero necesita más imágenes (${imageFiles.length}/${imageCount})`);
+            sectionsNeedingImages.push(section);
+          }
+        }
+      }
+    }
+    
+    const generatedPrompts = [];
+    const generatedImages = [];
+    
+    // PASO 2: Generar prompts faltantes
+    if (sectionsNeedingPrompts.length > 0) {
+      console.log(`🎨 Generando prompts para ${sectionsNeedingPrompts.length} secciones...`);
+      
+      for (const section of sectionsNeedingPrompts) {
+        try {
+          console.log(`🎨 Generando prompts para sección ${section.section}...`);
+          
+          // Leer el guión de la sección
+          const sectionDir = path.join(projectDir, `seccion_${section.section}`);
+          const scriptFiles = fs.readdirSync(sectionDir).filter(file => 
+            file.endsWith('.txt') && !file.includes('metadata') && !file.includes('keywords') && !file.includes('prompts')
+          );
+          
+          if (scriptFiles.length === 0) {
+            console.log(`⚠️ No se encontró guión para sección ${section.section}, saltando...`);
+            continue;
+          }
+          
+          const scriptFilePath = path.join(sectionDir, scriptFiles[0]);
+          const scriptContent = fs.readFileSync(scriptFilePath, 'utf8');
+          const extractedScript = extractScriptContent(scriptContent);
+          
+          if (extractedScript.isEmpty) {
+            console.log(`⚠️ Guión vacío en sección ${section.section}, saltando...`);
+            continue;
+          }
+          
+          // Generar prompts usando Gemini
+          const promptsResult = await generateImagePrompts(extractedScript.content, imageInstructions, imageCount);
+          
+          if (promptsResult && promptsResult.prompts && promptsResult.prompts.length > 0) {
+            // Guardar prompts en archivo
+            const promptsFileName = `seccion_${section.section}_prompts_imagenes.txt`;
+            const promptsFilePath = path.join(sectionDir, promptsFileName);
+            
+            const promptsContent = promptsResult.prompts.map((prompt, index) => 
+              `=== PROMPT ${index + 1} ===\n${prompt}\n`
+            ).join('\n');
+            
+            fs.writeFileSync(promptsFilePath, promptsContent, 'utf8');
+            console.log(`✅ Prompts guardados para sección ${section.section}`);
+            
+            generatedPrompts.push(section.section);
+            sectionsNeedingImages.push(section); // Agregar a la lista de secciones que necesitan imágenes
+          }
+          
+        } catch (error) {
+          console.error(`❌ Error generando prompts para sección ${section.section}:`, error);
+        }
+      }
+    }
+    
+    // PASO 3: Generar imágenes faltantes
+    if (sectionsNeedingImages.length > 0) {
+      const aiService = useLocalAI ? 'ComfyUI (IA Local)' : 'ComfyUI (configuración por defecto)';
+      console.log(`🖼️ Generando imágenes para ${sectionsNeedingImages.length} secciones usando ${aiService}...`);
+      
+      for (const section of sectionsNeedingImages) {
+        try {
+          console.log(`🖼️ Generando imágenes para sección ${section.section}...`);
+          
+          const sectionDir = path.join(projectDir, `seccion_${section.section}`);
+          
+          // Buscar archivo de prompts
+          const promptFiles = fs.readdirSync(sectionDir).filter(file => 
+            file.includes('prompts') && file.includes('imagenes') && file.endsWith('.txt')
+          );
+          
+          if (promptFiles.length === 0) {
+            console.log(`⚠️ No se encontraron prompts para sección ${section.section}, saltando...`);
+            continue;
+          }
+          
+          const promptsFilePath = path.join(sectionDir, promptFiles[0]);
+          const promptsContent = fs.readFileSync(promptsFilePath, 'utf8');
+          
+          // Extraer prompts individuales usando el formato correcto (=== PROMPT N ===)
+          const prompts = promptsContent
+            .split(/===\s*PROMPT\s+\d+\s*===/i)
+            .slice(1)
+            .map(p => p.trim())
+            .filter(p => p);
+          
+          console.log(`🔍 DEBUG: Archivo de prompts leído. Contenido: ${promptsContent.substring(0, 200)}...`);
+          console.log(`🔍 DEBUG: Prompts extraídos: ${prompts.length} prompts encontrados`);
+          
+          if (prompts.length === 0) {
+            console.log(`⚠️ No se pudieron extraer prompts de sección ${section.section}, saltando...`);
+            continue;
+          }
+          
+          // Verificar cuántas imágenes ya existen
+          const existingImages = fs.readdirSync(sectionDir).filter(file => 
+            file.match(/\.(jpg|jpeg|png|webp)$/i)
+          );
+          
+          console.log(`📊 Sección ${section.section}: ${existingImages.length} imágenes existentes, necesita ${imageCount} total`);
+          
+          const imagesToGenerate = Math.max(0, imageCount - existingImages.length);
+          if (imagesToGenerate === 0) {
+            console.log(`✅ Sección ${section.section} ya tiene suficientes imágenes`);
+            continue;
+          }
+          
+          // Calcular índice de inicio basado en imágenes existentes
+          const startIndex = existingImages.length;
+          console.log(`🔢 Comenzando generación desde prompt ${startIndex + 1} (índice ${startIndex})`);
+          
+          // Generar imágenes usando ComfyUI
+          let generatedCount = 0;
+          const totalIterations = Math.min(imagesToGenerate, prompts.length - startIndex);
+          console.log(`🔄 BUCLE DE GENERACIÓN: ${totalIterations} iteraciones programadas (imagesToGenerate: ${imagesToGenerate}, prompts disponibles: ${prompts.length - startIndex})`);
+          
+          for (let i = 0; i < totalIterations; i++) {
+            const promptIndex = startIndex + i;
+            
+            console.log(`🔄 ITERACIÓN ${i + 1}/${totalIterations}: Iniciando generación de imagen ${i + 1}`);
+            
+            try {
+              // Verificar que el prompt existe
+              if (promptIndex >= prompts.length) {
+                console.log(`⚠️ No hay más prompts disponibles (prompt ${promptIndex + 1} no existe)`);
+                break;
+              }
+              
+              const prompt = prompts[promptIndex];
+              const imageNumber = promptIndex + 1;
+              const imageName = `seccion_${section.section}_imagen_${imageNumber}`;
+              
+              console.log(`🎨 Generando imagen ${i + 1}/${imagesToGenerate} para sección ${section.section} (prompt ${imageNumber})...`);
+              console.log(`📝 Usando prompt: ${prompt.substring(0, 100)}...`);
+              
+              let imageResult = null;
+              
+              // PASO 1: Intentar con todas las API keys gratuitas de Google Gemini
+              const googleApiKeys = getFreeGoogleAPIKeys();
+              
+              console.log(`🔸 Intentando generación con Google Gemini usando ${googleApiKeys.length} API keys gratuitas...`);
+              
+              for (const apiKeyInfo of googleApiKeys) {
+                if (!apiKeyInfo.key) {
+                  console.log(`⚠️ API key ${apiKeyInfo.name} no disponible, saltando...`);
+                  continue;
+                }
+                
+                console.log(`🔑 Probando con API key ${apiKeyInfo.name} (2 intentos)...`);
+                
+                // 2 intentos por cada API key
+                for (let attempt = 1; attempt <= 2; attempt++) {
+                  try {
+                    if (attempt > 1) {
+                      console.log(`� Reintentando con API key ${apiKeyInfo.name} - Intento ${attempt}/2...`);
+                      // Pequeña pausa entre intentos
+                      await new Promise(resolve => setTimeout(resolve, 1000));
+                    } else {
+                      console.log(`🚀 Primer intento con API key ${apiKeyInfo.name} - Intento ${attempt}/2...`);
+                    }
+                    
+                    imageResult = await generateImageWithGoogleGratis(prompt, imageName, sectionDir, apiKeyInfo.key, aspectRatio);
+                    
+                    if (imageResult && imageResult.success) {
+                      generatedCount++;
+                      console.log(`✅ Imagen generada exitosamente con Google Gemini (${apiKeyInfo.name}, intento ${attempt}): ${imageResult.filename}`);
+                      break; // Salir de los bucles de intentos si fue exitoso
+                    } else {
+                      console.log(`⚠️ Google Gemini ${apiKeyInfo.name} falló en intento ${attempt}: ${imageResult?.error || 'Error desconocido'}`);
+                      imageResult = null;
+                    }
+                  } catch (googleError) {
+                    console.log(`⚠️ Error con Google Gemini ${apiKeyInfo.name} en intento ${attempt}: ${googleError.message}`);
+                    imageResult = null;
+                    
+                    // Si es un error de cuota, no tiene sentido intentar de nuevo con esta key
+                    if (googleError.message.includes('quota') || googleError.message.includes('QUOTA_EXCEEDED') || googleError.status === 429) {
+                      console.log(`🚫 Error de cuota detectado en ${apiKeyInfo.name}, probando siguiente API key...`);
+                      break; // Salir de los intentos para esta API key
+                    }
+                  }
+                }
+                
+                // Si ya tenemos éxito, salir del bucle de API keys
+                if (imageResult && imageResult.success) {
+                  break;
+                }
+              }
+              
+              // PASO 2: Si Google falló, intentar con ComfyUI como fallback
+              if (!imageResult || !imageResult.success) {
+                console.log(`🔸 Fallback: Intentando generación con ComfyUI...`);
+                
+                // Preparar configuración para ComfyUI
+                const imageConfig = useLocalAI ? {
+                  width: comfyUIConfig.width || 1280,
+                  height: comfyUIConfig.height || 720,
+                  steps: comfyUIConfig.steps || 15,
+                  guidance: comfyUIConfig.guidance || 3.5,
+                  sampler: comfyUIConfig.sampler || "euler",
+                  scheduler: comfyUIConfig.scheduler || "simple",
+                  model: comfyUIConfig.model || "flux1-dev-fp8.safetensors"
+                } : {};
+                
+                try {
+                  imageResult = await generateComfyUIImage(prompt, imageName, sectionDir, imageConfig, aspectRatio);
+                  
+                  if (imageResult && imageResult.success) {
+                    generatedCount++;
+                    console.log(`✅ Imagen generada exitosamente con ComfyUI (fallback): ${imageResult.filename}`);
+                  } else {
+                    console.log(`❌ Error con ComfyUI también: ${imageResult?.error || 'Error desconocido'}`);
+                  }
+                } catch (comfyError) {
+                  console.log(`❌ Error con ComfyUI: ${comfyError.message}`);
+                }
+              }
+              
+              // Pausa entre generaciones para evitar sobrecarga
+              await new Promise(resolve => setTimeout(resolve, 3000));
+              
+              console.log(`✅ ITERACIÓN ${i + 1}/${totalIterations} COMPLETADA. Continuando con siguiente imagen...`);
+              
+            } catch (error) {
+              console.error(`❌ Error generando imagen ${i + 1} para sección ${section.section} (prompt ${promptIndex + 1}):`, error);
+              console.log(`🔄 Continuando con siguiente imagen a pesar del error...`);
+            }
+          }
+          
+          console.log(`🏁 BUCLE DE GENERACIÓN TERMINADO. Generadas: ${generatedCount}/${totalIterations} imágenes`);
+          
+          
+          if (generatedCount > 0) {
+            generatedImages.push({
+              section: section.section,
+              generated: generatedCount,
+              total: imagesToGenerate
+            });
+          }
+          
+        } catch (error) {
+          console.error(`❌ Error generando imágenes para sección ${section.section}:`, error);
+        }
+      }
+    }
+    
+    const aiServiceUsed = 'Google Gemini (gratis) → ComfyUI (fallback)';
+    console.log(`\n✅ GENERACIÓN DE IMÁGENES COMPLETADA (${aiServiceUsed}):`);
+    console.log(`🎨 ${generatedPrompts.length} secciones obtuvieron nuevos prompts`);
+    console.log(`🖼️ ${generatedImages.length} secciones obtuvieron nuevas imágenes`);
+    
+    res.json({
+      success: true,
+      message: `Proceso completado con ${aiServiceUsed}: ${generatedPrompts.length} prompts y ${generatedImages.length} secciones con imágenes generadas`,
+      data: {
+        generatedPrompts: generatedPrompts,
+        generatedImages: generatedImages,
+        totalSections: projectState.completedSections.length,
+        sectionsNeedingPrompts: sectionsNeedingPrompts.length,
+        sectionsNeedingImages: sectionsNeedingImages.length,
+        aiService: aiServiceUsed,
+        useLocalAI: useLocalAI,
+        comfyUIConfig: useLocalAI ? comfyUIConfig : null
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Error en generación de imágenes:', error);
+    res.status(500).json({ error: 'Error generando imágenes: ' + error.message });
+  }
+});
+
+// ENDPOINT PARA GENERAR SOLO PROMPTS DE IMÁGENES (SIN GENERAR IMÁGENES)
+app.post('/api/generate-prompts-only', async (req, res) => {
+  try {
+    console.log('📥 DATOS RECIBIDOS DEL FRONTEND:', JSON.stringify(req.body, null, 2));
+    
+    const { 
+      folderName, 
+      imageInstructions = '', 
+      imageCount = 5
+    } = req.body;
+    
+    console.log('\n' + '📝'.repeat(20));
+    console.log('📝 GENERANDO SOLO PROMPTS DE IMÁGENES');
+    console.log('📝'.repeat(20));
+    
+    // Verificar que el proyecto existe
+    const projectState = loadProjectState(folderName);
+    if (!projectState) {
+      return res.status(404).json({ error: 'Proyecto no encontrado' });
+    }
+    
+    console.log(`📝 Generando prompts para proyecto: ${folderName}`);
+    console.log(`📊 Total de secciones: ${projectState.completedSections.length}`);
+    console.log(`🎨 Instrucciones para imágenes: "${imageInstructions || 'Por defecto'}"`);
+    console.log(`📱 Cantidad de imágenes por sección: ${imageCount}`);
+    
+    const projectDir = path.join('./public/outputs', folderName);
+    const sectionsNeedingPrompts = [];
+    
+    // Verificar qué secciones necesitan prompts de imágenes
+    for (let i = 0; i < projectState.completedSections.length; i++) {
+      const section = projectState.completedSections[i];
+      const sectionDir = path.join(projectDir, `seccion_${section.section}`);
+      
+      if (fs.existsSync(sectionDir)) {
+        // Buscar archivo de prompts de imágenes
+        const promptFiles = fs.readdirSync(sectionDir).filter(file => 
+          file.includes('prompts') && file.includes('imagenes') && file.endsWith('.txt')
+        );
+        
+        if (promptFiles.length === 0) {
+          console.log(`📝 Sección ${section.section} necesita prompts de imágenes`);
+          sectionsNeedingPrompts.push(section);
+        } else {
+          console.log(`✅ Sección ${section.section} ya tiene prompts de imágenes`);
+        }
+      }
+    }
+    
+    if (sectionsNeedingPrompts.length === 0) {
+      return res.json({
+        success: true,
+        message: 'Todas las secciones ya tienen prompts de imágenes',
+        data: {
+          generatedPrompts: [],
+          totalSections: projectState.completedSections.length,
+          sectionsNeedingPrompts: 0
+        }
+      });
+    }
+    
+    const generatedPrompts = [];
+    
+    // Generar prompts faltantes
+    console.log(`🎨 Generando prompts para ${sectionsNeedingPrompts.length} secciones...`);
+    
+    for (const section of sectionsNeedingPrompts) {
+      try {
+        console.log(`🎨 Generando prompts para sección ${section.section}...`);
+        
+        // Leer el guión de la sección
+        const sectionDir = path.join(projectDir, `seccion_${section.section}`);
+        const scriptFiles = fs.readdirSync(sectionDir).filter(file => 
+          file.endsWith('.txt') && !file.includes('metadata') && !file.includes('keywords') && !file.includes('prompts')
+        );
+        
+        if (scriptFiles.length === 0) {
+          console.log(`⚠️ No se encontró guión para sección ${section.section}, saltando...`);
+          continue;
+        }
+        
+        const scriptFilePath = path.join(sectionDir, scriptFiles[0]);
+        const scriptContent = fs.readFileSync(scriptFilePath, 'utf8');
+        const extractedScript = extractScriptContent(scriptContent);
+        
+        if (extractedScript.isEmpty) {
+          console.log(`⚠️ Guión vacío en sección ${section.section}, saltando...`);
+          continue;
+        }
+        
+        // Generar prompts usando Gemini
+        const promptsResult = await generateImagePrompts(extractedScript.content, imageInstructions, imageCount);
+        
+        if (promptsResult && promptsResult.prompts && promptsResult.prompts.length > 0) {
+          // Guardar prompts en archivo
+          const promptsFileName = `seccion_${section.section}_prompts_imagenes.txt`;
+          const promptsFilePath = path.join(sectionDir, promptsFileName);
+          
+          const promptsFileContent = promptsResult.prompts
+            .map((prompt, index) => `=== PROMPT ${index + 1} ===\n${prompt}`)
+            .join('\n\n');
+          
+          fs.writeFileSync(promptsFilePath, promptsFileContent, 'utf8');
+          console.log(`✅ Prompts guardados para sección ${section.section}: ${promptsFileName}`);
+          
+          generatedPrompts.push({
+            section: section.section,
+            promptsCount: promptsResult.prompts.length,
+            filename: promptsFileName
+          });
+        } else {
+          console.log(`❌ Error generando prompts para sección ${section.section}`);
+        }
+        
+      } catch (sectionError) {
+        console.error(`❌ Error procesando sección ${section.section}:`, sectionError);
+      }
+    }
+    
+    console.log(`\n✅ GENERACIÓN DE PROMPTS COMPLETADA:`);
+    console.log(`📝 ${generatedPrompts.length} secciones obtuvieron nuevos prompts`);
+    
+    res.json({
+      success: true,
+      message: `Prompts generados para ${generatedPrompts.length} sección(es)`,
+      data: {
+        generatedPrompts: generatedPrompts,
+        totalSections: projectState.completedSections.length,
+        sectionsNeedingPrompts: sectionsNeedingPrompts.length
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Error en generación de prompts:', error);
+    res.status(500).json({ error: 'Error generando prompts: ' + error.message });
+  }
+});
+
+// Función auxiliar para generar prompts de imágenes usando Gemini
+async function generateImagePrompts(scriptContent, imageInstructions = '', imageCount = 5) {
+  try {
+    console.log(`🎨 Generando ${imageCount} prompts basados en el guión...`);
+    
+    if (imageInstructions && imageInstructions.trim()) {
+      console.log(`🎯 Instrucciones personalizadas del usuario: "${imageInstructions}"`);
+    } else {
+      console.log(`📝 Usando instrucciones por defecto (no se especificaron instrucciones personalizadas)`);
+    }
+    
+    // NUEVA FUNCIONALIDAD: Dividir el script en segmentos secuenciales
+    const words = scriptContent.split(/\s+/).filter(word => word.length > 0);
+    const totalWords = words.length;
+    const wordsPerImage = Math.ceil(totalWords / imageCount);
+    
+    console.log(`📊 Análisis secuencial del script:`);
+    console.log(`   • Total de palabras: ${totalWords}`);
+    console.log(`   • Palabras por imagen: ~${wordsPerImage}`);
+    console.log(`   • Imágenes a generar: ${imageCount}`);
+    
+    // Dividir el script en segmentos iguales
+    const scriptSegments = [];
+    for (let i = 0; i < imageCount; i++) {
+      const startIndex = i * wordsPerImage;
+      const endIndex = Math.min(startIndex + wordsPerImage, totalWords);
+      const segmentWords = words.slice(startIndex, endIndex);
+      const segmentText = segmentWords.join(' ');
+      
+      const segmentInfo = {
+        number: i + 1,
+        startWord: startIndex + 1,
+        endWord: endIndex,
+        wordCount: segmentWords.length,
+        text: segmentText
+      };
+      
+      scriptSegments.push(segmentInfo);
+      
+      console.log(`   📝 Segmento ${i + 1}: palabras ${startIndex + 1}-${endIndex} (${segmentWords.length} palabras)`);
+    }
+    
+    const { model } = await getGoogleAI("gemini-2.0-flash-exp");
+
+    const baseInstructions = `
+Basándote en los siguientes segmentos secuenciales del guión/script, genera ${imageCount} prompts MUY DETALLADOS para generar imágenes que representen ESPECÍFICAMENTE cada segmento en orden cronológico.
+
+IMPORTANTE: Cada prompt debe representar ÚNICAMENTE el contenido de su segmento correspondiente, manteniendo la secuencia temporal de la narrativa.
+
+INSTRUCCIONES ESPECÍFICAS DEL USUARIO:
+${imageInstructions || 'Crear imágenes cinematográficas que ilustren los conceptos principales del texto de manera visualmente impactante.'}
+
+REGLAS PARA LOS PROMPTS DETALLADOS:
+1. Cada prompt debe ser EXTENSO y DESCRIPTIVO (mínimo 3-4 oraciones)
+2. Describir ESCENAS COMPLETAS con múltiples elementos visuales
+3. Incluir detalles específicos sobre:
+   - Composición y encuadre (close-up, wide shot, bird's eye view, etc.)
+   - Iluminación y atmósfera (dramatic lighting, golden hour, neon lights, etc.)
+   - Colores dominantes y paleta cromática
+   - Texturas y materiales (rough concrete, polished metal, soft fabric, etc.)
+   - Elementos arquitectónicos o del entorno
+   - Gestos y posturas corporales (sin mencionar nombres específicos)
+   - Efectos visuales y detalles cinematográficos
+4. Describir PERSONAJES de forma genérica sin usar nombres propios:
+   - "A determined young woman", "An elderly wise man", "A group of armed soldiers"
+   - Incluir descripciones físicas generales, vestimenta, expresiones
+5. Los prompts deben estar en INGLÉS para mejor compatibilidad con IA
+6. Evitar texto visible en las imágenes
+7. Crear una progresión visual secuencial que cuente la historia cronológicamente
+8. Usar vocabulario cinematográfico profesional
+9. Incluir detalles de época, estilo y género cuando sea relevante
+10. MANTENER CONTINUIDAD VISUAL entre segmentos cuando sea apropiado
+
+ESTILO DE PROMPT OBJETIVO:
+En lugar de: "A man in a room"
+Crear: "Wide establishing shot of a dimly lit underground bunker, rough concrete walls covered in moisture and shadow, dramatic chiaroscuro lighting from a single hanging bulb casting long shadows, a middle-aged man in worn military fatigues stands with his back turned, hands clasped behind him, studying detailed maps spread across a weathered wooden table, steam rising from a metal cup nearby, cold blue and amber color palette, cinematic composition with depth of field, film noir aesthetic"
+
+SEGMENTOS DEL GUIÓN (en orden secuencial):
+${scriptSegments.map(segment => 
+  `\n--- SEGMENTO ${segment.number} (palabras ${segment.startWord}-${segment.endWord}) ---\n${segment.text}\n`
+).join('')}
+
+FORMATO DE RESPUESTA:
+Devuelve exactamente ${imageCount} prompts extensos y detallados, uno por línea, sin numeración ni formato adicional. 
+Cada prompt debe corresponder secuencialmente a su segmento respectivo (Prompt 1 = Segmento 1, Prompt 2 = Segmento 2, etc.).
+
+PROMPTS CINEMATOGRÁFICOS DETALLADOS (en inglés, uno por segmento en orden):`;
+
+    const result = await model.generateContent([{ text: baseInstructions }]);
+    const response = result.response;
+    const generatedText = response.text();
+
+    if (!generatedText) {
+      throw new Error('No se generó contenido');
+    }
+
+    // Procesar y limpiar los prompts
+    let prompts = generatedText
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line.length > 10) // Filtrar líneas muy cortas
+      .slice(0, imageCount); // Asegurar que no tengamos más prompts de los solicitados
+
+    if (prompts.length === 0) {
+      throw new Error('No se pudieron extraer prompts válidos de la respuesta');
+    }
+
+    // Agregar instrucciones personalizadas al final de cada prompt si existen
+    if (imageInstructions && imageInstructions.trim()) {
+      console.log(`🔧 Agregando instrucciones personalizadas al final de cada prompt: "${imageInstructions}"`);
+      prompts = prompts.map(prompt => {
+        // Asegurar que haya una coma antes de las instrucciones si el prompt no termina en puntuación
+        const separator = prompt.match(/[.,;!?]$/) ? ' ' : ', ';
+        return `${prompt}${separator}${imageInstructions.trim()}`;
+      });
+    }
+
+    console.log(`✅ ${prompts.length} prompts detallados generados exitosamente`);
+    prompts.forEach((prompt, index) => {
+      const promptLength = prompt.length;
+      const hasCustomInstructions = imageInstructions && imageInstructions.trim() ? '(+instrucciones personalizadas)' : '';
+      console.log(`🎨 Prompt ${index + 1} (${promptLength} caracteres) ${hasCustomInstructions}: ${prompt.substring(0, 150)}...`);
+    });
+
+    return {
+      success: true,
+      prompts: prompts,
+      count: prompts.length
+    };
+
+  } catch (error) {
+    console.error('❌ Error generando prompts de imágenes:', error);
+    throw error;
+  }
+}
+
+// Función para generar imágenes con Google Gemini usando SOLO las API keys gratis
+async function generateImageWithGoogleGratis(prompt, imageName, outputDir, apiKey = null, aspectRatio = '9:16') {
+  try {
+    const selectedApiKey = apiKey || process.env.GOOGLE_API_KEY_GRATIS;
+    let keyName = 'GRATIS';
+    
+    if (apiKey === process.env.GOOGLE_API_KEY_GRATIS2) {
+      keyName = 'GRATIS2';
+    } else if (apiKey === process.env.GOOGLE_API_KEY_GRATIS3) {
+      keyName = 'GRATIS3';
+    }
+    
+    console.log(`🔸 Generando imagen con Google Gemini (API ${keyName}): ${imageName}`);
+    
+    // Verificar que la API key esté disponible
+    if (!selectedApiKey) {
+      throw new Error(`API key ${keyName} no disponible`);
+    }
+    
+    console.log(`🔑 Usando API key ${keyName} para generación de imágenes...`);
+    
+    // Crear instancia de Google AI con la API key seleccionada
+    const genAI = new GoogleGenerativeAI(selectedApiKey);
+    
+    // Usar el modelo específico para generación de imágenes
+    console.log(`🤖 Usando modelo gemini-2.0-flash-preview-image-generation con API ${keyName}...`);
+    
+    const model = genAI.getGenerativeModel({ 
+      model: "gemini-2.0-flash-preview-image-generation",
+      generationConfig: {
+        temperature: 0.7,
+        maxOutputTokens: 1024,
+      }
+    });
+
+    // Configurar prompt dinámico basado en aspect ratio
+    let formatDescription, orientation, dimensions;
+    
+    switch(aspectRatio) {
+      case '16:9':
+        formatDescription = '16:9 aspect ratio image (widescreen format, landscape orientation, 1920x1080 or similar proportions)';
+        orientation = 'landscape orientation with 16:9 aspect ratio';
+        break;
+      case '1:1':
+        formatDescription = '1:1 aspect ratio image (square format, 1024x1024 or similar proportions)';
+        orientation = 'square format with 1:1 aspect ratio';
+        break;
+      case '9:16':
+      default:
+        formatDescription = '9:16 aspect ratio image (vertical format, portrait orientation, 720x1280 or similar proportions)';
+        orientation = 'portrait orientation with 9:16 aspect ratio';
+        break;
+    }
+
+    // Generar imagen usando el método correcto con formato configurable
+    console.log(`📡 Enviando prompt para generación de imagen en formato ${aspectRatio}...`);
+    const response = await model.generateContent({
+      contents: [{
+        role: "user",
+        parts: [{
+          text: `Generate a ${formatDescription}: ${prompt}. The image should be in ${orientation}.`
+        }]
+      }],
+      generationConfig: {
+        responseModalities: ["TEXT", "IMAGE"]
+      }
+    });
+    
+    console.log(`📡 Respuesta recibida, procesando imágenes...`);
+    
+    let imageCount = 0;
+    let savedFilePath = null;
+    
+    // Procesar la respuesta directa (no stream)
+    if (response.response?.candidates && response.response.candidates[0]?.content) {
+      const parts = response.response.candidates[0].content.parts || [];
+      
+      for (const part of parts) {
+        // Verificar si hay datos de imagen en este part
+        if (part.inlineData && part.inlineData.mimeType && part.inlineData.mimeType.includes('image')) {
+          console.log(`🖼️ Imagen encontrada con tipo MIME: ${part.inlineData.mimeType}`);
+          
+          // Convertir de base64 a buffer
+          const buffer = Buffer.from(part.inlineData.data || '', 'base64');
+          
+          // Determinar extensión de archivo
+          const fileExtension = part.inlineData.mimeType.includes('png') ? 'png' : 
+                               part.inlineData.mimeType.includes('jpeg') ? 'jpg' : 'png';
+          
+          // Crear nombre de archivo con timestamp
+          const timestamp = Date.now();
+          const filename = `${imageName}_google_${timestamp}.${fileExtension}`;
+          const filepath = path.join(outputDir, filename);
+          
+          // Asegurar que el directorio existe
+          if (!fs.existsSync(outputDir)) {
+            fs.mkdirSync(outputDir, { recursive: true });
+          }
+          
+          // Guardar imagen
+          fs.writeFileSync(filepath, buffer);
+          
+          console.log(`✅ Imagen generada con Google Gemini (gratis): ${filename}`);
+          console.log(`📁 Guardada en: ${filepath}`);
+          console.log(`📏 Tamaño: ${buffer.length} bytes`);
+          
+          savedFilePath = filepath;
+          imageCount++;
+          
+          // Solo necesitamos la primera imagen
+          break;
+        } else if (part.text) {
+          console.log(`📝 Texto de respuesta: ${part.text.substring(0, 100)}...`);
+        }
+      }
+    }
+    
+    if (imageCount === 0) {
+      throw new Error('No se generaron imágenes en la respuesta');
+    }
+    
+    return {
+      success: true,
+      filename: path.basename(savedFilePath),
+      filepath: savedFilePath,
+      method: `Google Gemini (API ${keyName})`,
+      model: 'gemini-2.0-flash-preview-image-generation',
+      apiKey: keyName
+    };
+    
+  } catch (error) {
+    let keyName = 'GRATIS';
+    
+    if (apiKey === process.env.GOOGLE_API_KEY_GRATIS2) {
+      keyName = 'GRATIS2';
+    } else if (apiKey === process.env.GOOGLE_API_KEY_GRATIS3) {
+      keyName = 'GRATIS3';
+    }
+    
+    console.log(`❌ Error generando imagen con Google Gemini (${keyName}): ${error.message}`);
+    
+    // Verificar si es un error de cuota específicamente
+    if (error.message.includes('quota') || error.message.includes('QUOTA_EXCEEDED') || error.status === 429) {
+      console.log(`🚫 Cuota de API ${keyName} agotada para imágenes`);
+    }
+    
+    throw error;
+  }
+}// Función auxiliar para generar una imagen con ComfyUI y guardarla en una carpeta específica
+async function generateComfyUIImage(prompt, imageName, outputDir, customConfig = {}, aspectRatio = '9:16') {
+  try {
+    console.log(`🎨 Generando imagen: ${imageName}`);
+    console.log(`📁 Directorio de salida: ${outputDir}`);
+    console.log(`🖼️ Prompt: ${prompt.substring(0, 100)}...`);
+    
+    // Configuración dinámica basada en aspect ratio
+    let defaultOptions;
+    switch(aspectRatio) {
+      case '16:9':
+        defaultOptions = {
+          width: 1280,   // Resolución 16:9 HD
+          height: 720,
+          steps: 25,
+          cfg: 1.8,
+          guidance: 3.5,
+          sampler: "euler",
+          scheduler: "simple",
+          model: "flux1-dev-fp8.safetensors",
+          negativePrompt: "low quality, blurry, distorted, text, watermark",
+          timeout: 180
+        };
+        break;
+      case '1:1':
+        defaultOptions = {
+          width: 1024,   // Resolución 1:1 cuadrada
+          height: 1024,
+          steps: 25,
+          cfg: 1.8,
+          guidance: 3.5,
+          sampler: "euler",
+          scheduler: "simple",
+          model: "flux1-dev-fp8.safetensors",
+          negativePrompt: "low quality, blurry, distorted, text, watermark",
+          timeout: 180
+        };
+        break;
+      case '9:16':
+      default:
+        defaultOptions = {
+          width: 720,   // Resolución 9:16 HD
+          height: 1280,
+          steps: 25,
+          cfg: 1.8,
+          guidance: 3.5,
+          sampler: "euler",
+          scheduler: "simple",
+          model: "flux1-dev-fp8.safetensors",
+          negativePrompt: "low quality, blurry, distorted, text, watermark",
+          timeout: 180
+        };
+        break;
+    }
+    
+    // Combinar configuración por defecto con configuración personalizada
+    const options = {
+      ...defaultOptions,
+      ...customConfig,
+      width: customConfig.width || defaultOptions.width,
+      height: customConfig.height || defaultOptions.height,
+      steps: customConfig.steps || defaultOptions.steps,
+      guidance: customConfig.guidance || defaultOptions.guidance,
+      sampler: customConfig.sampler || defaultOptions.sampler,
+      scheduler: customConfig.scheduler || defaultOptions.scheduler,
+      model: customConfig.model || defaultOptions.model
+    };
+    
+    console.log(`⚙️ Configuración de generación:`, {
+      resolution: `${options.width}x${options.height}`,
+      steps: options.steps,
+      guidance: options.guidance,
+      model: options.model,
+      sampler: options.sampler,
+      scheduler: options.scheduler
+    });
+    
+    // Usar la función existente de generación con auto-restart
+    const result = await generateImageWithAutoRestart(prompt, options);
+    
+    if (result.success && result.filename) {
+      // Mover la imagen generada al directorio de la sección
+      const generatedImagePath = path.join('./public/outputs', result.filename);
+      const targetImageName = `${imageName}.png`;
+      const targetImagePath = path.join(outputDir, targetImageName);
+      
+      if (fs.existsSync(generatedImagePath)) {
+        // Asegurar que el directorio de destino existe
+        if (!fs.existsSync(outputDir)) {
+          fs.mkdirSync(outputDir, { recursive: true });
+        }
+        
+        // Mover la imagen
+        fs.renameSync(generatedImagePath, targetImagePath);
+        
+        console.log(`✅ Imagen movida a: ${targetImagePath}`);
+        
+        return {
+          success: true,
+          filename: targetImageName,
+          path: targetImagePath,
+          prompt: prompt
+        };
+      } else {
+        console.log(`❌ No se encontró la imagen generada en: ${generatedImagePath}`);
+        return {
+          success: false,
+          error: 'Imagen generada no encontrada'
+        };
+      }
+    } else {
+      console.log(`❌ Error en generación de imagen:`, result.error);
+      return {
+        success: false,
+        error: result.error || 'Error desconocido en ComfyUI'
+      };
+    }
+    
+  } catch (error) {
+    console.error(`❌ Error en generateComfyUIImage:`, error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+
 // ENDPOINT PARA CONTINUAR CON FASE 3: GENERACIÓN DE IMÁGENES POR LOTES
 app.post('/generate-batch-images', async (req, res) => {
   try {
-    const { projectData, skipImages, googleImages, localAIImages, geminiGeneratedImages, imageModel, comfyUISettings, folderName } = req.body;
+    const { projectData, skipImages, googleImages, localAIImages, geminiGeneratedImages, imageModel, aspectRatio = '9:16', comfyUISettings, folderName } = req.body;
     
     console.log('\n' + '🎨'.repeat(20));
     console.log('🎨 FASE 3: GENERANDO TODAS LAS IMÁGENES');
@@ -4696,58 +5987,69 @@ app.post('/generate-batch-images', async (req, res) => {
             }
           }
           
-        } else {
-          // Generar con IA en la nube
-          console.log(`🤖 Generando con IA en la nube (modelo: ${imageModel})...`);
+        } else if (shouldUseGeminiImages) {
+          // Generar con Google Gemini usando solo API keys gratuitas
+          console.log(`🤖 Generando con Google Gemini (solo API keys gratuitas)...`);
+          
+          const freeApiKeys = getFreeGoogleAPIKeys();
           
           for (let promptIndex = 0; promptIndex < sectionImagePrompts.length; promptIndex++) {
             const prompt = sectionImagePrompts[promptIndex];
+            let imageGenerated = false;
             
-            try {
-              const enhancedPrompt = `${prompt.trim()}.`;
-              const imageResponse = await generateImageWithModel(ai, enhancedPrompt, imageModel);
+            // Intentar con cada API key gratuita disponible
+            for (const apiKeyInfo of freeApiKeys) {
+              if (imageGenerated) break;
               
-              if (imageResponse.generatedImages && imageResponse.generatedImages.length > 0) {
-                const generatedImage = imageResponse.generatedImages[0];
-                const imageData = generatedImage.image.imageBytes;
+              try {
+                console.log(`🔑 Intentando generar imagen ${promptIndex + 1} con API ${apiKeyInfo.name}...`);
                 
-                // Guardar imagen
-                const timestamp = Date.now();
-                const imageFileName = `seccion_${section.section}_imagen_${promptIndex + 1}_${timestamp}.png`;
-                const imageFilePath = path.join(sectionFolderStructure.sectionDir, imageFileName);
+                const imageResult = await generateImageWithGoogleGratis(
+                  prompt,
+                  `seccion_${section.section}_imagen_${promptIndex + 1}`,
+                  sectionFolderStructure.sectionDir,
+                  apiKeyInfo.key,
+                  aspectRatio
+                );
                 
-                const imageBuffer = Buffer.from(imageData, 'base64');
-                fs.writeFileSync(imageFilePath, imageBuffer);
+                if (imageResult.success) {
+                  // Retornar ruta relativa para acceso web
+                  const relativePath = path.relative('./public', imageResult.path).replace(/\\/g, '/');
+                  
+                  sectionImages.push({
+                    path: relativePath,
+                    prompt: prompt,
+                    filename: imageResult.filename,
+                    source: `Google Gemini (${apiKeyInfo.name})`,
+                    index: promptIndex + 1
+                  });
+                  
+                  console.log(`✅ Imagen ${promptIndex + 1} generada con Google Gemini ${apiKeyInfo.name}`);
+                  imageGenerated = true;
+                } else {
+                  console.log(`❌ Falló generación con API ${apiKeyInfo.name}: ${imageResult.error}`);
+                }
                 
-                // Retornar ruta relativa para acceso web
-                const relativePath = path.relative('./public', imageFilePath).replace(/\\/g, '/');
-                
-                sectionImages.push({
-                  path: relativePath,
-                  prompt: prompt,
-                  filename: imageFileName,
-                  source: `IA en la nube (${imageModel === 'gemini2' ? 'Gemini 2.0' : 'Imagen 4.0'})`,
-                  index: promptIndex + 1
-                });
-                
-                console.log(`✅ Imagen ${promptIndex + 1} generada con IA en la nube`);
-                
-              } else {
-                throw new Error('No se generó imagen');
+              } catch (imageError) {
+                console.error(`❌ Error generando imagen ${promptIndex + 1} con API ${apiKeyInfo.name}:`, imageError);
               }
-              
-            } catch (imageError) {
-              console.error(`❌ Error generando imagen ${promptIndex + 1} con IA:`, imageError);
+            }
+            
+            // Si no se pudo generar con ninguna API key gratuita
+            if (!imageGenerated) {
               sectionImages.push({
                 path: null,
                 prompt: prompt,
                 filename: null,
-                source: 'IA en la nube Error',
+                source: 'Google Gemini Error (todas las API keys gratuitas fallaron)',
                 index: promptIndex + 1,
-                error: imageError.message
+                error: 'Todas las API keys gratuitas fallaron'
               });
             }
           }
+          
+        } else {
+          console.log(`⚠️ Método de generación de imágenes no reconocido, saltando sección ${section.section}...`);
         }
         
         // Guardar los prompts de esta sección en archivo TXT
@@ -4892,6 +6194,7 @@ Generado automáticamente por el sistema de creación de contenido (Modo Batch)
     try {
       await generateProjectStateFile(projectData, {
         topic,
+        folderName,
         voice: selectedVoice,
         totalSections,
         imageCount,
@@ -4967,7 +6270,7 @@ app.get('/progress/:projectKey', (req, res) => {
 
 app.post('/generate', async (req, res) => {
   try {
-    const { topic, folderName, voice, totalSections, currentSection, previousSections, minWords, maxWords, imageCount, promptModifier, imageModel, llmModel, skipImages, googleImages, localAIImages, comfyUISettings, scriptStyle, customStyleInstructions, applioVoice, applioModel, applioPitch } = req.body;
+    const { topic, folderName, voice, totalSections, currentSection, previousSections, minWords, maxWords, imageCount, aspectRatio, promptModifier, imageModel, llmModel, skipImages, googleImages, localAIImages, comfyUISettings, scriptStyle, customStyleInstructions, applioVoice, applioModel, applioPitch } = req.body;
     
     const selectedVoice = voice || 'Orus';
     const sections = totalSections || 3;
@@ -5369,14 +6672,140 @@ Generado automáticamente por el sistema de creación de contenido
           enhancedPrompts = [`Error generando keywords o descargando imágenes: ${error.message}`];
         }
       } else if (shouldUseLocalAI) {
-        console.log(`🤖 Generando ${numImages} imágenes con IA Local (ComfyUI + Flux)...`);
+        console.log(`🖼️ Modo "Generar imágenes con IA" activado - Iniciando proceso automático completo...`);
         
         try {
-          // Paso 1: Obtener prompts anteriores para mantener consistencia
-          console.log(`🧠 Recuperando contexto de prompts anteriores...`);
-          const { previousPrompts, contextInfo } = getPreviousImagePrompts(projectKey, section);
+          // Paso 1: Generar prompts para las imágenes
+          console.log(`📝 Generando prompts para ${numImages} imágenes...`);
           
-          // Paso 2: Construir contexto de consistencia
+          let basePrompt = `Analiza este guión y crea ${numImages} prompts detallados para generar imágenes que ilustren visualmente su contenido:
+
+GUIÓN A ANALIZAR:
+${cleanScript}
+
+TEMA PRINCIPAL: ${topic}
+
+CONTEXTO DEL PROYECTO:
+- Sección ${section} de ${sections}
+- Palabras del guión: ${wordsMin}-${wordsMax}
+
+INSTRUCCIONES CRÍTICAS PARA EL FORMATO:
+- DEBES crear ${numImages} prompts independientes que representen la MISMA sección desde diferentes perspectivas
+- NO dividas el contenido en secuencia cronológica - todas las imágenes son de la MISMA sección`;
+          
+          // Integrar instrucciones adicionales en el prompt del LLM
+          const finalPromptForLLM = integrateAdditionalInstructions(basePrompt, additionalInstructions);
+          
+          console.log(`🧠 Creando prompts para secuencia de ${numImages} imágenes...`);
+          if (additionalInstructions && additionalInstructions.trim()) {
+            console.log(`📝 Integrando instrucciones adicionales: "${additionalInstructions.trim()}"`);
+          }
+          
+          const promptsResponse = await generateUniversalContent(
+            selectedLlmModel,
+            finalPromptForLLM + `
+            - DEBES separar cada prompt con "||PROMPT||" (sin espacios adicionales)
+            - DEBES asegurarte de que haya exactamente ${numImages} prompts en tu respuesta
+            - Las imágenes deben contar la historia del guión de forma visual secuencial
+            - Incluye detalles específicos mencionados en el texto del guión
+
+            REQUISITOS OBLIGATORIOS para cada prompt:
+            - Formato: Aspecto 16:9 (widescreen)
+            - Estilo: Realista, alta calidad, 4K
+            
+            FORMATO DE RESPUESTA OBLIGATORIO:
+            DEBES presentar EXACTAMENTE ${numImages} prompts separados por "||PROMPT||" (sin espacios antes o después del delimitador).
+            
+            ESTRUCTURA REQUERIDA:
+            Prompt 1 aquí||PROMPT||Prompt 2 aquí||PROMPT||Prompt 3 aquí||PROMPT||... hasta el Prompt ${numImages}
+            
+            VERIFICACIÓN FINAL: Tu respuesta debe contener exactamente ${numImages - 1} ocurrencias del delimitador "||PROMPT||" para generar ${numImages} prompts.`,
+            `Eres un experto en arte conceptual y narrativa visual. Tu ÚNICA tarea es crear prompts separados por "||PROMPT||". 
+
+REGLAS CRÍTICAS:
+1. SIEMPRE usa el delimitador exacto "||PROMPT||" (sin espacios adicionales)
+2. NUNCA generes texto adicional fuera de los prompts
+3. CUENTA cuidadosamente para generar el número exacto solicitado
+4. DIVIDE el contenido equitativamente entre todos los prompts
+5. Cada prompt debe ser independiente y descriptivo
+
+Si te piden N prompts, tu respuesta debe tener exactamente (N-1) delimitadores "||PROMPT||".`
+          );
+
+          const promptsText = promptsResponse || '';
+          console.log(`📝 Prompts generados exitosamente`);
+          
+          const imagePrompts = promptsText.split('||PROMPT||').filter(p => p.trim()).slice(0, numImages);
+          console.log(`🎨 ${imagePrompts.length} prompts secuenciales generados`);
+          
+          // Guardar prompts en archivo
+          const promptsFileName = `${folderStructure.safeTopicName}_seccion_${section}_prompts_imagenes.txt`;
+          const promptsFilePath = path.join(folderStructure.sectionDir, promptsFileName);
+          
+          const promptsContent = `PROMPTS DE IMÁGENES - SECCIÓN ${section}
+===============================
+Tema: ${topic}
+Sección: ${section}/${sections}
+Fecha: ${new Date().toLocaleDateString('es-ES')}
+${folderName ? `Nombre del proyecto: ${folderName}` : ''}
+${additionalInstructions ? `Instrucciones adicionales: ${additionalInstructions}` : ''}
+
+${imagePrompts.map((prompt, index) => `${index + 1} ===
+${prompt.trim()}`).join('\n\n')}
+
+===============================
+Generado automáticamente
+`;
+          
+          fs.writeFileSync(promptsFilePath, promptsContent, 'utf8');
+          console.log(`📝 Prompts guardados en: ${promptsFilePath}`);
+
+          // Paso 2: Usar la función existente de generación de imágenes (Google → ComfyUI)
+          console.log(`🖼️ Iniciando generación automática de imágenes con proceso Google → ComfyUI...`);
+          
+          // Crear la estructura de datos necesaria para la función de generación
+          const imageGenerationResult = await generateMissingImagesForProject({
+            folderName: actualFolderName,
+            imageInstructions: additionalInstructions || "",
+            imageCount: numImages,
+            useLocalAI: false, // Usar el proceso híbrido Google → ComfyUI
+            comfyUIConfig: comfyUISettings || {}
+          });
+          
+          console.log(`✅ Generación de imágenes completada: ${imageGenerationResult.successful} imágenes generadas`);
+          
+          // Buscar las imágenes generadas en el directorio
+          const generatedImageFiles = fs.readdirSync(folderStructure.sectionDir)
+            .filter(file => file.match(/\.(jpg|jpeg|png|webp)$/i))
+            .slice(0, numImages);
+          
+          // Configurar respuesta con las imágenes generadas
+          enhancedPrompts = imagePrompts;
+          localAIImages = generatedImageFiles.map((filename, index) => ({
+            filename: filename,
+            path: `outputs/${actualFolderName}/seccion_${section}/${filename}`,
+            prompt: imagePrompts[index] || `Imagen ${index + 1}`,
+            method: 'Google Gemini → ComfyUI (Automático)'
+          }));
+          
+        } catch (error) {
+          console.error(`❌ Error en proceso automático de generación de imágenes:`, error.message);
+          // Fallback: solo generar prompts
+          try {
+            const promptsResponse = await generateUniversalContent(
+              selectedLlmModel,
+              `Crea ${numImages} prompts detallados para imágenes basados en este guión: ${cleanScript}. Separa cada prompt con "||PROMPT||".`
+            );
+            
+            const imagePrompts = promptsResponse.split('||PROMPT||').filter(p => p.trim()).slice(0, numImages);
+            enhancedPrompts = imagePrompts.map((prompt, index) => `Prompt ${index + 1}: ${prompt}`);
+            localAIImages = [];
+          } catch (fallbackError) {
+            console.error(`❌ Error en fallback de prompts:`, fallbackError.message);
+            enhancedPrompts = [`Error generando contenido: ${error.message}`];
+            localAIImages = [];
+          }
+        }
           const consistencyContext = buildConsistencyContext(previousPrompts, contextInfo);
           
           // Paso 3: Construir prompt base para el LLM
@@ -5480,10 +6909,6 @@ Si te piden N prompts, tu respuesta debe tener exactamente (N-1) delimitadores "
               `IA Local prompt ${index + 1}: ${prompt}`
             );
           }
-        } catch (error) {
-          console.error(`❌ Error generando imágenes con IA Local:`, error.message);
-          enhancedPrompts = [`Error generando imágenes con IA Local: ${error.message}`];
-        }
       } else {
         console.log(`🎨 Generando prompts para secuencia de ${numImages} imágenes (solo texto)...`);
         
@@ -6167,7 +7592,7 @@ app.post('/generate-audio', async (req, res) => {
     }
     
     try {
-      const audioFilePath = await generateStoryAudio(scriptContent, selectedVoice, folderStructure.sectionDir, topic, section, customNarrationStyle);
+      const audioFilePath = await generateStoryAudio(await getGoogleAIForTTS(), scriptContent, selectedVoice, folderStructure.sectionDir, topic, section, customNarrationStyle);
       
       res.json({ 
         success: true,
@@ -6298,7 +7723,7 @@ app.post('/generate-comfyui-image', async (req, res) => {
         width: parseInt(options.width) || 1280,
         height: parseInt(options.height) || 720,
         steps: parseInt(options.steps) || 25,
-        cfg: options.cfg || 1,
+        cfg: options.cfg || 1.8,
         guidance: parseFloat(options.guidance) || 3.5,
         sampler: options.sampler || "euler",
         scheduler: options.scheduler || "simple",
@@ -7018,12 +8443,10 @@ tag1, tag2, tag3, ...
 5. [prompt completo para miniatura]
     `;
 
-    const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
+    const { model } = await getGoogleAI("gemini-2.0-flash-exp");
     
-    const response = await model.generateContent(prompt);
-    const result = await response.response;
-    const responseText = await result.text();
+    const response = await model.generateContent([{ text: prompt }]);
+    const responseText = response.response.text();
 
     // Validar que los prompts de miniatura no estén incompletos
     const thumbnailSection = responseText.match(/\*\*PROMPTS PARA MINIATURAS:\*\*([\s\S]*?)(?=\n\n|$)/);
@@ -7062,16 +8485,14 @@ REGLAS ESTRICTAS:
 5. [prompt completo]
         `;
         
-        const regenerateResponse = await ai.models.generateContent({
-          model: "gemini-2.0-flash-exp",
-          contents: [{
-            role: "user",
-            parts: [{ text: regeneratePrompt }]
-          }]
-        });
+        const { model: regenerateModel } = await getGoogleAI("gemini-2.0-flash-exp");
+        const regenerateResponse = await regenerateModel.generateContent([{
+          role: "user",
+          parts: [{ text: regeneratePrompt }]
+        }]);
         
         // Reemplazar la sección de prompts en la respuesta original
-        const newThumbnailPrompts = regenerateResponse.text.trim();
+        const newThumbnailPrompts = regenerateResponse.response.text().trim();
         const updatedResponse = responseText.replace(
           /(\*\*PROMPTS PARA MINIATURAS:\*\*)([\s\S]*?)(?=\n\n|$)/,
           `$1\n${newThumbnailPrompts}`
@@ -8058,6 +9479,68 @@ app.post('/generate-simple-video', async (req, res) => {
 
   } catch (error) {
     console.error('❌ Error al procesar video simple:', error);
+    res.status(500).json({ error: 'Error interno del servidor' });
+  }
+});
+
+// Endpoint para generar clips separados por sección
+app.post('/generate-separate-videos', async (req, res) => {
+  try {
+    const { folderName } = req.body;
+    
+    if (!folderName) {
+      return res.status(400).json({ error: 'Nombre de carpeta requerido' });
+    }
+
+    console.log(`🎬 Iniciando generación de clips separados para proyecto: ${folderName}`);
+    
+    // Intentar primero con el nombre normalizado
+    const normalizedFolderName = createSafeFolderName(folderName);
+    let projectPath = path.join(process.cwd(), 'public', 'outputs', normalizedFolderName);
+    
+    if (!fs.existsSync(projectPath)) {
+      console.log(`❌ Proyecto no encontrado con nombre normalizado: ${normalizedFolderName}`);
+      console.log(`🔍 Intentando con nombre original: ${folderName}`);
+      
+      // Intentar con el nombre original
+      projectPath = path.join(process.cwd(), 'public', 'outputs', folderName);
+      
+      if (!fs.existsSync(projectPath)) {
+        console.log(`❌ Proyecto no encontrado: ${folderName}`);
+        return res.status(404).json({ error: 'Proyecto no encontrado' });
+      }
+    }
+
+    console.log(`✅ Proyecto encontrado en: ${projectPath}`);
+
+    // Organizar archivos por secciones
+    const secciones = await organizarArchivosPorSecciones(projectPath);
+    
+    if (secciones.length === 0) {
+      return res.status(404).json({ error: 'No se encontraron secciones con imágenes' });
+    }
+
+    console.log(`🎬 Encontradas ${secciones.length} secciones para procesar clips separados`);
+    
+    // Usar el nombre de carpeta que realmente funcionó
+    const actualFolderName = fs.existsSync(path.join(process.cwd(), 'public', 'outputs', normalizedFolderName)) 
+      ? normalizedFolderName 
+      : folderName;
+    
+    // Generar clips separados (sin concatenar)
+    const videosGenerados = await procesarClipsSeparados(secciones, actualFolderName);
+    
+    console.log('✅ Clips separados generados exitosamente');
+    
+    res.json({ 
+      success: true,
+      message: 'Clips separados generados exitosamente',
+      videosGenerated: videosGenerados.length,
+      videos: videosGenerados
+    });
+
+  } catch (error) {
+    console.error('❌ Error al procesar clips separados:', error);
     res.status(500).json({ error: 'Error interno del servidor' });
   }
 });
@@ -9183,6 +10666,179 @@ async function combinarSeccionesVideoSimple(videosSeccionesTemp, finalOutputPath
       reject(err);
     });
   });
+}
+
+// Función para procesar clips separados (guarda 1 video por cada imagen)
+async function procesarClipsSeparados(secciones, projectName) {
+  const videosGenerados = [];
+  
+  try {
+    console.log(`🎬 Procesando clips separados - 1 video por imagen para ${secciones.length} secciones`);
+    
+    // Procesar cada sección para extraer videos individuales por imagen
+    for (let i = 0; i < secciones.length; i++) {
+      const seccion = secciones[i];
+      
+      console.log(`📹 Procesando sección ${i + 1}/${secciones.length}: ${seccion.nombre} con ${seccion.imagenes?.length || 0} imágenes`);
+      
+      if (!seccion.imagenes || seccion.imagenes.length === 0) {
+        console.log(`⚠️ Sección ${seccion.nombre} no tiene imágenes, saltando...`);
+        continue;
+      }
+      
+      // Buscar archivo de audio para esta sección
+      let audioPath = null;
+      let finalDuration = 3; // Duración por defecto si no hay audio (3 segundos por imagen)
+      let audioDuration = 0; // Duración total del audio
+      
+      if (seccion.audios && seccion.audios.length > 0) {
+        audioPath = seccion.audios[0].path;
+        if (fs.existsSync(audioPath)) {
+          console.log(`🎵 Audio encontrado para ${seccion.nombre}: ${audioPath}`);
+          
+          // Obtener duración del audio
+          try {
+            audioDuration = await getAudioDuration(audioPath);
+            if (audioDuration > 0) {
+              // Calcular duración por imagen para que el video dure lo mismo que el audio
+              finalDuration = audioDuration / seccion.imagenes.length;
+              console.log(`🎵 Duración del audio: ${audioDuration.toFixed(2)} segundos`);
+              console.log(`📐 Duración calculada por imagen: ${finalDuration.toFixed(2)} segundos`);
+            }
+          } catch (error) {
+            console.warn(`⚠️ No se pudo obtener duración del audio: ${error.message}`);
+            audioDuration = 0;
+          }
+        } else {
+          console.warn(`⚠️ Archivo de audio no existe: ${audioPath}`);
+          audioPath = null;
+        }
+      }
+      
+      // Generar un video por cada imagen
+      for (let imgIndex = 0; imgIndex < seccion.imagenes.length; imgIndex++) {
+        const imagen = seccion.imagenes[imgIndex];
+        
+        // Generar nombre del archivo de video para esta imagen específica
+        const videoFileName = `${projectName}_seccion_${seccion.numero}_imagen_${imgIndex + 1}.mp4`;
+        const videoOutputPath = path.join(seccion.path, videoFileName);
+        
+        console.log(`🖼️ Generando video ${imgIndex + 1}/${seccion.imagenes.length} de ${seccion.nombre}: ${videoFileName}`);
+        
+        // Procesar imagen individual como video
+        const videoPath = await procesarImagenIndividualComoVideo(imagen, audioPath, videoOutputPath, finalDuration, audioDuration, imgIndex, seccion.imagenes.length);
+        
+        if (videoPath && fs.existsSync(videoPath)) {
+          videosGenerados.push({
+            seccion: seccion.numero,
+            imagen: imgIndex + 1,
+            nombre: `${seccion.nombre} - Imagen ${imgIndex + 1}`,
+            archivo: videoFileName,
+            ruta: videoPath
+          });
+          console.log(`✅ Video generado: ${videoFileName}`);
+        }
+      }
+    }
+    
+    console.log(`🎬 ✅ ${videosGenerados.length} clips individuales generados exitosamente`);
+    return videosGenerados;
+    
+  } catch (error) {
+    console.error('❌ Error procesando clips separados:', error);
+    throw error;
+  }
+}
+
+// Función para procesar una imagen individual como video con segmento de audio correspondiente
+async function procesarImagenIndividualComoVideo(imagen, audioPath, outputPath, duracionPorImagen, duracionTotalAudio, indiceImagen, totalImagenes) {
+  try {
+    console.log(`🖼️ Procesando imagen individual: ${path.basename(imagen.path)} → ${outputPath}`);
+    
+    // Validar que la imagen existe
+    let imagePath = imagen.path;
+    if (!path.isAbsolute(imagePath)) {
+      imagePath = path.resolve(imagePath);
+    }
+    
+    if (!fs.existsSync(imagePath)) {
+      throw new Error(`Imagen no encontrada: ${imagePath}`);
+    }
+    
+    // Verificar formato de imagen
+    const ext = path.extname(imagePath).toLowerCase();
+    if (!['.jpg', '.jpeg', '.png', '.bmp', '.gif', '.webp'].includes(ext)) {
+      throw new Error(`Formato de imagen no soportado: ${ext}`);
+    }
+    
+    // Preparar argumentos de FFmpeg
+    const ffmpegArgs = [
+      '-y', // Sobrescribir archivo de salida
+      '-loop', '1', // Loop de imagen
+      '-i', imagePath, // Imagen de entrada
+    ];
+    
+    // Si hay audio, agregar segmento correspondiente a esta imagen
+    if (audioPath && fs.existsSync(audioPath) && duracionTotalAudio) {
+      const inicioSegmentoAudio = indiceImagen * duracionPorImagen;
+      const finSegmentoAudio = Math.min((indiceImagen + 1) * duracionPorImagen, duracionTotalAudio);
+      
+      console.log(`🎵 Usando segmento de audio: ${inicioSegmentoAudio.toFixed(2)}s - ${finSegmentoAudio.toFixed(2)}s`);
+      
+      ffmpegArgs.push(
+        '-ss', inicioSegmentoAudio.toString(), // Inicio del segmento de audio
+        '-i', audioPath, // Archivo de audio
+        '-t', (finSegmentoAudio - inicioSegmentoAudio).toString(), // Duración del segmento
+        '-c:a', 'aac', // Codec de audio
+        '-b:a', '128k' // Bitrate de audio
+      );
+    }
+    
+    // Configuración de video
+    ffmpegArgs.push(
+      '-c:v', 'libx264', // Codec de video
+      '-t', duracionPorImagen.toString(), // Duración del video
+      '-pix_fmt', 'yuv420p', // Formato de pixel compatible
+      '-r', '30', // Frame rate
+      '-vf', 'scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:-1:-1:black', // Escalar a 16:9
+      outputPath
+    );
+    
+    console.log(`📹 Generando video con FFmpeg: ${path.basename(outputPath)}`);
+    
+    // Ejecutar FFmpeg
+    const ffmpegProcess = spawn('ffmpeg', ffmpegArgs, {
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+    
+    return new Promise((resolve, reject) => {
+      let stderr = '';
+      
+      ffmpegProcess.stderr.on('data', (data) => {
+        stderr += data.toString();
+      });
+      
+      ffmpegProcess.on('close', (code) => {
+        if (code === 0) {
+          console.log(`✅ Video generado exitosamente: ${outputPath}`);
+          resolve(outputPath);
+        } else {
+          console.error(`❌ Error en FFmpeg (código ${code}):`);
+          console.error(stderr);
+          reject(new Error(`FFmpeg failed with code ${code}`));
+        }
+      });
+      
+      ffmpegProcess.on('error', (error) => {
+        console.error(`❌ Error ejecutando FFmpeg:`, error);
+        reject(error);
+      });
+    });
+    
+  } catch (error) {
+    console.error(`❌ Error procesando imagen individual: ${error.message}`);
+    throw error;
+  }
 }
 
 // ================================
