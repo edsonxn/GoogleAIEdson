@@ -382,15 +382,11 @@
   </div>
 
   <div class="container">
-    <!-- Botón de prueba temporal -->
-    <button onclick="alert('Botón de prueba funciona!'); console.log('🧪 Botón de prueba clickeado');" style="position: fixed; top: 100px; right: 20px; z-index: 99999; background: red; color: white; padding: 10px; border: none; border-radius: 5px;">
-      PRUEBA
-    </button>
-    
+   
     <div class="header">
       <div class="header-content">
         <div class="header-title">
-          <h1><i class="fas fa-gamepad"></i> Crónicas del Gaming</h1>
+          <h1><i class="fas fa-gamepad"></i> Zia</h1>
           <p class="subtitle">Generador de guiones para YouTube con IA</p>
         </div>
         <div class="header-actions">
@@ -398,6 +394,35 @@
             <i class="fas fa-images"></i>
             <span>Prompts</span>
           </button>
+        </div>
+      </div>
+      <div class="header-meta">
+        <div class="meta-card">
+          <div class="meta-icon">
+            <i class="fas fa-magic"></i>
+          </div>
+          <div class="meta-content">
+            <p class="meta-title">Flujo creativo completo</p>
+            <p class="meta-subtitle">Genera guión, audio, imágenes y video en una sola plataforma.</p>
+          </div>
+        </div>
+        <div class="meta-card">
+          <div class="meta-icon">
+            <i class="fas fa-diagram-project"></i>
+          </div>
+          <div class="meta-content">
+            <p class="meta-title">Organiza tus proyectos</p>
+            <p class="meta-subtitle">Guarda estilos, gestiona versiones y recupera ideas al instante.</p>
+          </div>
+        </div>
+        <div class="meta-card">
+          <div class="meta-icon">
+            <i class="fas fa-wave-square"></i>
+          </div>
+          <div class="meta-content">
+            <p class="meta-title">Optimización inteligente</p>
+            <p class="meta-subtitle">Configuraciones balanceadas para lograr resultados consistentes.</p>
+          </div>
         </div>
       </div>
     </div>
@@ -629,115 +654,14 @@
 
           <div class="checkbox-group">
             <label class="checkbox-label">
-              <input type="checkbox" id="localAIImages" class="checkbox-input" 
-                     onchange="
-                       console.log('🎯 Checkbox cambiado:', this.checked);
-                       const config = document.getElementById('comfyUIConfig');
-                       if (config) {
-                         if (this.checked) {
-                           config.style.display = 'block';
-                           console.log('✅ Mostrando controles ComfyUI');
-                           if (typeof checkComfyUIStatus === 'function') checkComfyUIStatus();
-                         } else {
-                           config.style.display = 'none';
-                           console.log('❌ Ocultando controles ComfyUI');
-                         }
-                       } else {
-                         console.error('❌ No se encontró elemento comfyUIConfig');
-                       }
-                     ">
+              <input type="checkbox" id="localAIImages" class="checkbox-input">
               <span class="checkbox-custom"></span>
               <i class="fas fa-brain"></i>
               Generar imágenes con IA
             </label>
           </div>
 
-          <!-- Configuraciones de ComfyUI (aparece cuando se activa IA local) -->
-          <div id="comfyUIConfig" class="comfyui-config" style="display: none; background: #1a1a2e; border: 2px solid #00ff7f; padding: 20px; margin: 15px 0; border-radius: 8px;">
-            <h4 style="color: #00ff7f; margin-bottom: 15px;">🎨 Configuración ComfyUI + Flux</h4>
-            
-            <div style="margin-bottom: 15px;">
-              <label style="color: #e1e5e9; display: block; margin-bottom: 5px;">Pasos de generación:</label>
-              <input type="range" id="comfyUISteps" min="5" max="50" value="15" style="width: 100%;">
-              <span id="stepsValue" style="color: #00ff7f; font-weight: bold;">15</span>
-              <small style="color: #888; display: block;">Más pasos = mejor calidad, más tiempo</small>
-            </div>
-            
-            <div style="margin-bottom: 15px;">
-              <label style="color: #e1e5e9; display: block; margin-bottom: 5px;">Resolución (16:9 automático):</label>
-              
-              <div style="margin-bottom: 10px;">
-                <label style="color: #ccc; font-size: 0.9rem;">Ancho:</label>
-                <input type="range" id="comfyUIWidth" min="200" max="2000" value="800" style="width: 200px; margin: 0 10px;">
-                <span id="widthValue" style="color: #00ff7f; font-weight: bold;">800px</span>
-              </div>
-              
-              <div style="margin-bottom: 10px;">
-                <label style="color: #ccc; font-size: 0.9rem;">Alto (automático):</label>
-                <span id="heightValue" style="color: #00ff7f; font-weight: bold; font-size: 1.1rem; margin-left: 10px;">450px</span>
-                <input type="hidden" id="comfyUIHeight" value="450">
-                <small style="color: #888; display: block; margin-top: 5px;">La altura se calcula automáticamente para mantener proporción 16:9</small>
-              </div>
-            </div>
-          </div>
 
-          <script>
-            // Script inline para asegurar que funcione
-            document.addEventListener('DOMContentLoaded', function() {
-              console.log('🎯 Script inline ejecutándose...');
-              
-              // Configurar sliders
-              const stepsSlider = document.getElementById('comfyUISteps');
-              const stepsValue = document.getElementById('stepsValue');
-              const widthSlider = document.getElementById('comfyUIWidth');
-              const widthValue = document.getElementById('widthValue');
-              const heightSlider = document.getElementById('comfyUIHeight');
-              const heightValue = document.getElementById('heightValue');
-              
-              // Función para calcular altura 16:9
-              function updateHeight(width) {
-                const height = Math.round(width / 16 * 9);
-                if (heightSlider) heightSlider.value = height;
-                if (heightValue) heightValue.textContent = height + 'px';
-                return height;
-              }
-              
-              if (stepsSlider && stepsValue) {
-                stepsSlider.addEventListener('input', function() {
-                  stepsValue.textContent = this.value;
-                  console.log('Pasos:', this.value);
-                });
-              }
-              
-              if (widthSlider && widthValue) {
-                widthSlider.addEventListener('input', function() {
-                  const width = parseInt(this.value);
-                  widthValue.textContent = width + 'px';
-                  const height = updateHeight(width);
-                  console.log('Resolución:', width + 'x' + height + ' (16:9)');
-                });
-              }
-              
-              // Función para obtener configuración actual
-              window.getComfyUISettings = function() {
-                const steps = document.getElementById('comfyUISteps')?.value || 15;
-                const width = document.getElementById('comfyUIWidth')?.value || 800;
-                const height = document.getElementById('comfyUIHeight')?.value || 450;
-                
-                return {
-                  steps: parseInt(steps),
-                  width: parseInt(width),
-                  height: parseInt(height),
-                  guidance: 3.5, // Valor fijo
-                  sampler: 'euler', // Valor fijo
-                  scheduler: 'simple', // Valor fijo
-                  negativePrompt: 'low quality, blurry, distorted, ugly, bad anatomy' // Valor fijo
-                };
-              };
-              
-              console.log('✅ Script inline configurado - Sliders de resolución añadidos');
-            });
-          </script>
 
           <div class="checkbox-group">
             <label class="checkbox-label">
@@ -802,40 +726,73 @@
       </div>
 
       <!-- Barra de progreso para generación por lotes -->
-      <div id="progressContainer" style="display: none;">
+      <div id="progressContainer" class="progress-card" style="display: none;">
         <div class="progress-header">
-          <h4><i class="fas fa-tasks"></i> Progreso de Generación</h4>
-          <div class="progress-info">
-            <span id="currentPhase">Iniciando...</span>
-            <span id="progressPercentage">0%</span>
+          <div class="progress-title">
+            <div class="progress-icon">
+              <i class="fas fa-tasks"></i>
+            </div>
+            <div class="progress-heading">
+              <span class="progress-label">Progreso de generación</span>
+              <h4 class="progress-subheading">Seguimiento en tiempo real</h4>
+            </div>
+          </div>
+          <div class="progress-summary">
+            <span class="phase-pill" id="currentPhase">Iniciando...</span>
+            <span class="progress-percentage" id="progressPercentage">0%</span>
           </div>
         </div>
-        
-        <div class="progress-bar-container">
+
+        <div class="progress-bar-wrapper">
           <div class="progress-bar" id="progressBar">
             <div class="progress-fill" id="progressFill" style="width: 0%;"></div>
           </div>
         </div>
-        
-        <div class="progress-details">
+
+        <div class="progress-body">
           <div class="progress-stats">
             <div class="stat-item">
-              <i class="fas fa-hourglass-half"></i>
-              <span>Tiempo transcurrido: <span id="elapsedTime">0:00</span></span>
+              <span class="stat-label">Tiempo transcurrido</span>
+              <span class="stat-value" id="elapsedTime">0:00</span>
             </div>
             <div class="stat-item">
-              <i class="fas fa-clock"></i>
-              <span>Tiempo estimado restante: <span id="estimatedTime">Calculando...</span></span>
+              <span class="stat-label">Tiempo restante</span>
+              <span class="stat-value" id="estimatedTime">Calculando...</span>
             </div>
             <div class="stat-item">
-              <i class="fas fa-list-ol"></i>
-              <span>Elementos: <span id="currentProgress">0 / 0</span></span>
+              <span class="stat-label">Elementos completados</span>
+              <span class="stat-value" id="currentProgress">0 / 0</span>
             </div>
           </div>
-          <div class="current-task">
-            <i class="fas fa-cog fa-spin"></i>
-            <span id="currentTask">Preparando generación...</span>
+
+          <div class="progress-phases">
+            <div class="phase-item is-active" data-phase="script">
+              <div class="phase-icon"><i class="fas fa-pen-nib"></i></div>
+              <div class="phase-info">
+                <span class="phase-name">Guiones</span>
+                <span class="phase-status" id="phaseScriptStatus">Pendiente</span>
+              </div>
+            </div>
+            <div class="phase-item is-pending" data-phase="audio">
+              <div class="phase-icon"><i class="fas fa-microphone-lines"></i></div>
+              <div class="phase-info">
+                <span class="phase-name">Audios</span>
+                <span class="phase-status" id="phaseAudioStatus">Pendiente</span>
+              </div>
+            </div>
+            <div class="phase-item is-pending" data-phase="images">
+              <div class="phase-icon"><i class="fas fa-images"></i></div>
+              <div class="phase-info">
+                <span class="phase-name">Imágenes</span>
+                <span class="phase-status" id="phaseImagesStatus">Pendiente</span>
+              </div>
+            </div>
           </div>
+        </div>
+
+        <div class="current-task">
+          <i class="fas fa-cog fa-spin"></i>
+          <span id="currentTask">Preparando generación...</span>
         </div>
       </div>
     </div>
@@ -848,34 +805,6 @@
         <h3><i class="fas fa-video"></i> Generación de Video</h3>
         <p class="video-description">Convierte todas las secciones generadas en un video compilado con transiciones y audio sincronizado.</p>
         
-        <div class="video-settings">
-          <div class="video-setting-item" id="videoAnimationSetting">
-            <label for="videoAnimation">Animación:</label>
-            <select id="videoAnimation">
-              <option value="zoom-in">Zoom In (acercar)</option>
-              <option value="zoom-out" selected>Zoom Out (alejar)</option>
-              <option value="pan-right">Pan derecha</option>
-              <option value="pan-left">Pan izquierda</option>
-            </select>
-            <small class="setting-help">Solo para video con animaciones</small>
-          </div>
-          
-          <div class="video-setting-item" id="videoQualitySetting">
-            <label for="videoQuality">Calidad:</label>
-            <select id="videoQuality">
-              <option value="standard" selected>Estándar (recomendado)</option>
-              <option value="smooth">Suave (más FPS)</option>
-              <option value="ultra">Ultra suave (máximo FPS)</option>
-            </select>
-            <small class="setting-help">Solo para video con animaciones</small>
-          </div>
-        </div>
-        
-        <button id="generateVideoBtn" class="generate-video-btn">
-          <i class="fas fa-play-circle"></i>
-          <span>Generar Video Completo</span>
-        </button>
-        
         <button id="generateSimpleVideoBtn" class="generate-simple-video-btn">
           <i class="fas fa-images"></i>
           <span>Video Simple (Sin Animación)</span>
@@ -885,16 +814,61 @@
           <i class="fas fa-video"></i>
           <span>Clips Separados por Sección</span>
         </button>
+
+        <div id="sectionClipsContainer" class="section-clips-container" style="display: none;">
+          <div class="section-clips-header">
+            <i class="fas fa-cut"></i>
+            <span>Generar clips individuales por sección</span>
+          </div>
+          <div id="sectionClipsButtons" class="section-clips-grid">
+            <!-- Botones dinámicos por sección -->
+          </div>
+        </div>
         
         <button id="regenerateApplioAudiosBtn" class="regenerate-audio-btn" style="display: none;">
           <i class="fas fa-microphone-alt"></i>
           <span>Generar Audios Faltantes</span>
         </button>
-        
-        <button id="generateMissingImagesBtn" class="generate-missing-images-btn" style="display: none;">
-          <i class="fas fa-image"></i>
-          <span>Generar Imágenes Faltantes</span>
+
+        <button id="generateYouTubeMetadataBtn" class="generate-youtube-metadata-btn" style="display: none;">
+          <i class="fas fa-youtube"></i>
+          <span>Generar Metadatos</span>
         </button>
+        
+        <div id="generateMissingImagesControls" class="generate-missing-images-controls" style="display: none;">
+          <div id="googleApiSelector" class="google-api-selector" style="display: none;">
+            <div class="google-api-selector__header">
+              <i class="fas fa-plug"></i>
+              <span>Selecciona las APIs de Google</span>
+            </div>
+            <div id="googleApiOptions" class="google-api-options">
+              <!-- Opciones de APIs de Google se insertan dinámicamente -->
+            </div>
+            <p class="google-api-selector__hint">Se enviarán 5 imágenes por lote y se esperarán 10 segundos entre cada intento.</p>
+          </div>
+          <button id="generateMissingImagesBtn" class="generate-missing-images-btn">
+            <i class="fas fa-image"></i>
+            <span>Generar Imágenes Faltantes</span>
+          </button>
+          <button id="cancelMissingImagesBtn" class="cancel-missing-images-btn" style="display: none;">
+            <i class="fas fa-stop-circle"></i>
+            <span>Detener Generación</span>
+          </button>
+          <label for="attemptComfyCheckbox" class="attempt-comfy-toggle">
+            <input type="checkbox" id="attemptComfyCheckbox">
+            <span>Intentar con Comfy</span>
+          </label>
+        </div>
+
+        <div id="sectionImagesContainer" class="section-images-container" style="display: none;">
+          <div class="section-images-header">
+            <i class="fas fa-images"></i>
+            <span>Generar imágenes por sección</span>
+          </div>
+          <div id="sectionImagesButtons" class="section-images-grid">
+            <!-- Botones dinámicos por sección -->
+          </div>
+        </div>
         
         <button id="generateMissingPromptsBtn" class="generate-missing-prompts-btn" style="display: none;">
           <i class="fas fa-file-text"></i>

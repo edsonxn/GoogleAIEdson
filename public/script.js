@@ -14,6 +14,352 @@ let isGeneratingVideo = false;
 let currentVideoSession = null;
 
 // ================================
+// VARIABLES GLOBALES PARA GENERACIÓN DE IMÁGENES
+// ================================
+let isGeneratingImages = false;
+let isCancellingImages = false;
+
+const GOOGLE_IMAGE_API_DEFINITIONS = [
+  { id: 'GRATIS', label: 'API Gratis 1', type: 'free', badge: 'Gratis' },
+  { id: 'GRATIS2', label: 'API Gratis 2', type: 'free', badge: 'Gratis' },
+  { id: 'GRATIS3', label: 'API Gratis 3', type: 'free', badge: 'Gratis' },
+  { id: 'GRATIS4', label: 'API Gratis 4', type: 'free', badge: 'Gratis' },
+  { id: 'GRATIS5', label: 'API Gratis 5', type: 'free', badge: 'Gratis' },
+  { id: 'PRINCIPAL', label: 'API Principal', type: 'primary', badge: 'Principal' }
+];
+
+const googleApiSelectorState = {
+  isLoaded: false,
+  isLoading: false,
+  available: [],
+  selected: new Set(),
+  isTemporarilyLocked: false,
+  container: null,
+  optionsWrapper: null,
+  fetchPromise: null
+};
+
+let googleApiSelectorLockCount = 0;
+
+function getGoogleApiSelectorElements() {
+  if (!googleApiSelectorState.container || !googleApiSelectorState.optionsWrapper) {
+    googleApiSelectorState.container = document.getElementById('googleApiSelector');
+    googleApiSelectorState.optionsWrapper = document.getElementById('googleApiOptions');
+  }
+
+  if (!googleApiSelectorState.container || !googleApiSelectorState.optionsWrapper) {
+    return null;
+  }
+
+  return {
+    container: googleApiSelectorState.container,
+    optionsWrapper: googleApiSelectorState.optionsWrapper
+  };
+}
+
+function ensureDefaultGoogleApiSelection() {
+  const selectableApis = googleApiSelectorState.available.filter(api => api.available);
+  const validSelections = new Set();
+
+  googleApiSelectorState.selected.forEach(id => {
+    const api = selectableApis.find(item => item.id === id);
+    if (api) {
+      validSelections.add(api.id);
+    }
+  });
+
+  if (!validSelections.size && selectableApis.length) {
+    const defaultApi = selectableApis.find(api => api.defaultSelected) ||
+      selectableApis.find(api => api.type === 'free') ||
+      selectableApis[0];
+    if (defaultApi) {
+      validSelections.add(defaultApi.id);
+    }
+  }
+
+  googleApiSelectorState.selected = validSelections;
+}
+
+function createGoogleApiOptionElement(api, disabled) {
+  const label = document.createElement('label');
+  label.className = 'google-api-option';
+
+  if (disabled) {
+    label.classList.add('is-disabled');
+  }
+
+  const checkbox = document.createElement('input');
+  checkbox.type = 'checkbox';
+  checkbox.value = api.id;
+  checkbox.checked = googleApiSelectorState.selected.has(api.id);
+  checkbox.disabled = disabled || googleApiSelectorState.isTemporarilyLocked;
+  checkbox.dataset.permanentDisabled = disabled ? 'true' : 'false';
+  checkbox.addEventListener('change', (event) => handleGoogleApiCheckboxChange(event, api));
+
+  const labelSpan = document.createElement('span');
+  labelSpan.className = 'api-label';
+  labelSpan.textContent = api.label;
+
+  const tag = document.createElement('span');
+  tag.className = 'api-tag';
+  if (api.type === 'primary') {
+    tag.classList.add('api-tag--primary');
+    tag.textContent = 'Principal';
+  } else {
+    tag.textContent = 'Gratis';
+  }
+
+  label.appendChild(checkbox);
+  label.appendChild(labelSpan);
+  label.appendChild(tag);
+  if (checkbox.checked) {
+    label.classList.add('is-checked');
+  }
+
+  return label;
+}
+
+function handleGoogleApiCheckboxChange(event, api) {
+  const { checked } = event.target;
+
+  if (checked) {
+    googleApiSelectorState.selected.add(api.id);
+  } else {
+    if (googleApiSelectorState.selected.size <= 1) {
+      event.target.checked = true;
+      googleApiSelectorState.selected.add(api.id);
+      showNotification('Debes mantener al menos una API seleccionada para los intentos.', 'warning');
+      refreshGoogleApiOptionStyles();
+      return;
+    }
+    googleApiSelectorState.selected.delete(api.id);
+  }
+
+  refreshGoogleApiOptionStyles();
+}
+
+function renderGoogleApiSelector(error = null) {
+  const elements = getGoogleApiSelectorElements();
+  if (!elements) {
+    return;
+  }
+
+  const { container, optionsWrapper } = elements;
+  container.style.display = 'flex';
+  optionsWrapper.innerHTML = '';
+
+  if (error) {
+    const errorMessage = document.createElement('p');
+    errorMessage.className = 'google-api-empty';
+    errorMessage.textContent = 'No se pudieron cargar las APIs de Google. Intenta recargar la página.';
+    optionsWrapper.appendChild(errorMessage);
+    updateGenerateImagesButtonState();
+    return;
+  }
+
+  if (!googleApiSelectorState.available.length) {
+    const emptyMessage = document.createElement('p');
+    emptyMessage.className = 'google-api-empty';
+    emptyMessage.textContent = 'No se detectaron APIs de Google configuradas. Configura tus claves en el servidor.';
+    optionsWrapper.appendChild(emptyMessage);
+    updateGenerateImagesButtonState();
+    return;
+  }
+
+  googleApiSelectorState.available.forEach((api) => {
+    const disabled = !api.available;
+    const optionElement = createGoogleApiOptionElement(api, disabled);
+    optionsWrapper.appendChild(optionElement);
+  });
+
+  container.classList.toggle('is-locked', googleApiSelectorState.isTemporarilyLocked);
+  container.style.pointerEvents = googleApiSelectorState.isTemporarilyLocked ? 'none' : '';
+  container.style.opacity = googleApiSelectorState.isTemporarilyLocked ? '0.6' : '';
+  refreshGoogleApiOptionStyles();
+  updateGenerateImagesButtonState();
+}
+
+async function initializeGoogleApiSelector(forceReload = false) {
+  const elements = getGoogleApiSelectorElements();
+  if (!elements) {
+    return;
+  }
+
+  if (googleApiSelectorState.isLoaded && !forceReload) {
+    renderGoogleApiSelector();
+    return;
+  }
+
+  if (googleApiSelectorState.isLoading && googleApiSelectorState.fetchPromise) {
+    try {
+      await googleApiSelectorState.fetchPromise;
+    } catch (error) {
+      // Error ya manejado en la promesa original
+    }
+    return;
+  }
+
+  googleApiSelectorState.isLoading = true;
+  googleApiSelectorState.fetchPromise = fetch('/api/google-image-apis')
+    .then(async (response) => {
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || 'Error cargando APIs de Google');
+      }
+      return response.json();
+    })
+    .then((data) => {
+      const apiEntries = Array.isArray(data.apis) ? data.apis : [];
+      const normalizedApis = apiEntries.map((api) => {
+        const definition = GOOGLE_IMAGE_API_DEFINITIONS.find((item) => item.id === api.id);
+        return {
+          id: api.id || definition?.id || 'API',
+          label: api.label || definition?.label || api.id || 'API',
+          type: api.type || definition?.type || 'free',
+          available: Boolean(api.available),
+          defaultSelected: Boolean(api.defaultSelected)
+        };
+      });
+
+      googleApiSelectorState.available = normalizedApis;
+      googleApiSelectorState.selected = new Set(
+        normalizedApis
+          .filter((api) => api.available && api.defaultSelected)
+          .map((api) => api.id)
+      );
+
+      ensureDefaultGoogleApiSelection();
+      googleApiSelectorState.isLoaded = true;
+      renderGoogleApiSelector();
+    })
+    .catch((error) => {
+      console.error('❌ Error cargando APIs de Google:', error);
+      googleApiSelectorState.available = [];
+      googleApiSelectorState.selected = new Set();
+      googleApiSelectorState.isLoaded = false;
+      renderGoogleApiSelector(error);
+    })
+    .finally(() => {
+      googleApiSelectorState.isLoading = false;
+      googleApiSelectorState.fetchPromise = null;
+    });
+
+  try {
+    await googleApiSelectorState.fetchPromise;
+  } catch (error) {
+    // Error ya fue manejado
+  }
+}
+
+async function ensureGoogleApiSelectionReady() {
+  if (googleApiSelectorState.isLoaded) {
+    return true;
+  }
+
+  await initializeGoogleApiSelector();
+  return googleApiSelectorState.isLoaded;
+}
+
+function getSelectedGoogleApis() {
+  return Array.from(googleApiSelectorState.selected);
+}
+
+function setGoogleApiCheckboxesDisabled(disabled) {
+  if (disabled) {
+    googleApiSelectorLockCount += 1;
+  } else if (googleApiSelectorLockCount > 0) {
+    googleApiSelectorLockCount -= 1;
+  }
+
+  const shouldLock = googleApiSelectorLockCount > 0;
+  googleApiSelectorState.isTemporarilyLocked = shouldLock;
+
+  const applyState = (state) => {
+    const elements = getGoogleApiSelectorElements();
+    if (!elements) {
+      return;
+    }
+
+    elements.container.classList.toggle('is-locked', state);
+    elements.container.style.pointerEvents = state ? 'none' : '';
+    elements.container.style.opacity = state ? '0.6' : '';
+
+    const checkboxes = elements.container.querySelectorAll('input[type="checkbox"]');
+    checkboxes.forEach((checkbox) => {
+      const permanentlyDisabled = checkbox.dataset.permanentDisabled === 'true';
+      const nextDisabled = permanentlyDisabled || state;
+      checkbox.disabled = nextDisabled;
+
+      if (!nextDisabled) {
+        checkbox.removeAttribute('disabled');
+      }
+    });
+
+    refreshGoogleApiOptionStyles();
+    if (!state) {
+      updateGenerateImagesButtonState();
+    }
+  };
+
+  applyState(shouldLock);
+
+  if (!shouldLock) {
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => applyState(false));
+    }
+    setTimeout(() => applyState(false), 150);
+    setTimeout(() => applyState(false), 400);
+  }
+}
+
+function refreshGoogleApiOptionStyles() {
+  const elements = getGoogleApiSelectorElements();
+  if (!elements) {
+    return;
+  }
+
+  const { container } = elements;
+  container.querySelectorAll('.google-api-option').forEach((label) => {
+    const checkbox = label.querySelector('input[type="checkbox"]');
+    if (!checkbox) {
+      return;
+    }
+
+    const permanentlyDisabled = checkbox.dataset.permanentDisabled === 'true';
+    if (permanentlyDisabled) {
+      label.classList.add('is-disabled');
+    } else {
+      label.classList.toggle('is-disabled', checkbox.disabled);
+    }
+
+    label.classList.toggle('is-checked', checkbox.checked);
+  });
+}
+
+function updateGenerateImagesButtonState() {
+  const generateBtn = document.getElementById('generateMissingImagesBtn');
+  if (!generateBtn || isGeneratingImages) {
+    return;
+  }
+
+  const hasSelectableApis = googleApiSelectorState.available.some((api) => api.available);
+
+  if (!hasSelectableApis) {
+    generateBtn.disabled = true;
+    generateBtn.dataset.disabledNoApis = 'true';
+    generateBtn.title = 'Configura al menos una API de Google disponible para generar imágenes.';
+  } else {
+    if (generateBtn.dataset.disabledNoApis === 'true') {
+      generateBtn.disabled = false;
+    }
+    generateBtn.dataset.disabledNoApis = 'false';
+    if (generateBtn.title === 'Configura al menos una API de Google disponible para generar imágenes.') {
+      generateBtn.title = '';
+    }
+  }
+}
+
+// ================================
 // FUNCIÓN PARA MANEJAR SELECTOR NUMÉRICO DE SECCIONES
 // ================================
 function changeSectionCount(change) {
@@ -75,6 +421,7 @@ function updateSectionButtons() {
 document.addEventListener('DOMContentLoaded', function() {
   console.log('🎯 Inicializando selector numérico de secciones...');
   updateSectionButtons();
+  initializeGoogleApiSelector();
   
   // También agregar listener para cambios manuales en el input
   const input = document.getElementById('sectionsNumber');
@@ -135,6 +482,313 @@ let progressInterval = null;
 let progressPollingInterval = null;
 let currentProjectKey = null;
 
+const PROGRESS_PHASES = ['script', 'audio', 'images'];
+
+const DEFAULT_PHASE_EXPECTATIONS = {
+  script: 60,
+  audio: 30,
+  images: 18
+};
+
+const progressEstimation = {
+  currentPhase: null,
+  currentStepStart: null,
+  currentStepCount: 0,
+  config: {
+    averageWordsPerSection: 300,
+    sections: 0,
+    audioEnabled: false,
+    imagesEnabled: false,
+    estimatedImages: 0
+  },
+  phases: {
+    script: createPhaseTimingState(DEFAULT_PHASE_EXPECTATIONS.script, true),
+    audio: createPhaseTimingState(DEFAULT_PHASE_EXPECTATIONS.audio, false),
+    images: createPhaseTimingState(DEFAULT_PHASE_EXPECTATIONS.images, false)
+  }
+};
+
+function createPhaseTimingState(expectedSeconds, enabled) {
+  return {
+    durations: [],
+    expectedSeconds,
+    totalSteps: 0,
+    completed: 0,
+    partialElapsed: 0,
+    isEnabled: enabled
+  };
+}
+
+function resetProgressEstimation() {
+  progressEstimation.currentPhase = null;
+  progressEstimation.currentStepStart = null;
+  progressEstimation.currentStepCount = 0;
+
+  PROGRESS_PHASES.forEach(phaseName => {
+    const phaseState = progressEstimation.phases[phaseName];
+    if (!phaseState) return;
+    phaseState.durations = [];
+    phaseState.totalSteps = phaseState.isEnabled ? phaseState.totalSteps : 0;
+    phaseState.completed = 0;
+    phaseState.partialElapsed = 0;
+  });
+}
+
+function configureProgressEstimation(config = {}) {
+  const {
+    averageWordsPerSection = 300,
+    sections = 0,
+    audioEnabled = false,
+    imagesEnabled = false,
+    estimatedImages = 0
+  } = config;
+
+  progressEstimation.config = {
+    averageWordsPerSection,
+    sections,
+    audioEnabled,
+    imagesEnabled,
+    estimatedImages
+  };
+
+  const scriptSeconds = estimateScriptSeconds(averageWordsPerSection);
+  const audioSeconds = estimateAudioSeconds(averageWordsPerSection);
+  const imageSeconds = estimateImageSeconds(estimatedImages);
+
+  const scriptState = progressEstimation.phases.script;
+  scriptState.expectedSeconds = scriptSeconds;
+  scriptState.isEnabled = sections > 0;
+  scriptState.totalSteps = sections;
+
+  const audioState = progressEstimation.phases.audio;
+  audioState.expectedSeconds = audioEnabled ? audioSeconds : 0;
+  audioState.isEnabled = audioEnabled;
+  audioState.totalSteps = audioEnabled ? sections : 0;
+
+  const imagesState = progressEstimation.phases.images;
+  imagesState.expectedSeconds = imagesEnabled ? imageSeconds : 0;
+  imagesState.isEnabled = imagesEnabled;
+  imagesState.totalSteps = imagesEnabled ? Math.max(estimatedImages, sections) : 0;
+
+  resetProgressEstimation();
+}
+
+function estimateScriptSeconds(wordsPerSection) {
+  const safeWords = Math.max(150, Number(wordsPerSection) || 300);
+  const slope = 1 / 700; // ≈1 minuto para 300 palabras, ≈2 para 1000, ≈5 para 3000
+  const intercept = 0.5714;
+  const minutes = Math.max(0.6, intercept + slope * safeWords);
+  return minutes * 60;
+}
+
+function estimateAudioSeconds(wordsPerSection) {
+  if (!wordsPerSection) return DEFAULT_PHASE_EXPECTATIONS.audio;
+  const baseWords = 300;
+  const perChunk = 30; // segundos por 300 palabras
+  const multiplier = Math.max(0.5, wordsPerSection / baseWords);
+  return perChunk * multiplier;
+}
+
+function estimateImageSeconds(totalImages) {
+  if (!totalImages || totalImages <= 0) {
+    return DEFAULT_PHASE_EXPECTATIONS.images;
+  }
+  const capped = Math.min(totalImages, 60);
+  return 10 + (capped / 10); // entre ~10s y ~16s según cantidad
+}
+
+function updatePhaseTiming(phase, currentStep, totalSteps) {
+  const phaseState = progressEstimation.phases[phase];
+  if (!phaseState) {
+    return;
+  }
+
+  if (totalSteps && totalSteps > 0) {
+    phaseState.totalSteps = totalSteps;
+  } else if (!phaseState.totalSteps) {
+    if (phase === 'script') {
+      phaseState.totalSteps = progressEstimation.config.sections;
+    } else if (phase === 'audio' && progressEstimation.config.audioEnabled) {
+      phaseState.totalSteps = progressEstimation.config.sections;
+    } else if (phase === 'images' && progressEstimation.config.imagesEnabled) {
+      phaseState.totalSteps = Math.max(progressEstimation.config.estimatedImages, progressEstimation.config.sections);
+    }
+  }
+
+  const now = Date.now();
+
+  const previousPhase = progressEstimation.currentPhase;
+
+  if (previousPhase !== phase) {
+    if (previousPhase && progressEstimation.phases[previousPhase]) {
+      const previousState = progressEstimation.phases[previousPhase];
+      if (previousState.totalSteps && previousState.completed < previousState.totalSteps) {
+        previousState.completed = previousState.totalSteps;
+      }
+      previousState.partialElapsed = 0;
+    }
+
+    progressEstimation.currentPhase = phase;
+    progressEstimation.currentStepStart = now;
+    progressEstimation.currentStepCount = Math.max(0, currentStep || 0);
+    phaseState.partialElapsed = 0;
+  } else {
+    const previousCount = progressEstimation.currentStepCount;
+    const increment = (currentStep || 0) - previousCount;
+    if (increment > 0) {
+      const elapsed = (now - (progressEstimation.currentStepStart || now)) / Math.max(increment, 1);
+      const elapsedSeconds = Math.max(elapsed / 1000, 0);
+      for (let i = 0; i < increment; i += 1) {
+        phaseState.durations.push(elapsedSeconds);
+      }
+      progressEstimation.currentStepStart = now;
+      progressEstimation.currentStepCount = currentStep;
+      phaseState.partialElapsed = 0;
+    } else if (progressEstimation.currentStepStart) {
+      phaseState.partialElapsed = (now - progressEstimation.currentStepStart) / 1000;
+    }
+  }
+
+  phaseState.completed = Math.max(phaseState.completed || 0, currentStep || 0);
+  if (progressEstimation.currentPhase === phase && progressEstimation.currentStepStart) {
+    phaseState.partialElapsed = (now - progressEstimation.currentStepStart) / 1000;
+  }
+}
+
+function calculateRemainingSeconds(activePhase) {
+  if (activePhase === 'completed') {
+    return 0;
+  }
+
+  const activeIndex = Math.max(PROGRESS_PHASES.indexOf(activePhase), 0);
+  let totalRemaining = 0;
+
+  PROGRESS_PHASES.forEach((phaseName, index) => {
+    const phaseState = progressEstimation.phases[phaseName];
+    if (!phaseState || (!phaseState.isEnabled && phaseState.durations.length === 0)) {
+      return;
+    }
+
+    const totalSteps = phaseState.totalSteps || 0;
+    if (totalSteps <= 0) {
+      return;
+    }
+
+    const completed = Math.min(phaseState.completed || 0, totalSteps);
+    const average = getAverageDuration(phaseState);
+    if (average <= 0) {
+      return;
+    }
+
+    const remainingSteps = Math.max(totalSteps - completed, 0);
+
+    if (index < activeIndex) {
+      if (remainingSteps > 0) {
+        totalRemaining += remainingSteps * average;
+      }
+      return;
+    }
+
+    if (index === activeIndex) {
+      if (remainingSteps <= 0) {
+        return;
+      }
+      const elapsedCurrent = Math.min(phaseState.partialElapsed || 0, average);
+      const remainingCurrent = Math.max(average - elapsedCurrent, 0);
+      const remainingFullSteps = Math.max(remainingSteps - 1, 0);
+      totalRemaining += remainingCurrent + (remainingFullSteps * average);
+      return;
+    }
+
+    totalRemaining += remainingSteps * average;
+  });
+
+  return totalRemaining;
+}
+
+function getAverageDuration(phaseState) {
+  if (phaseState.durations.length > 0) {
+    const sum = phaseState.durations.reduce((acc, value) => acc + value, 0);
+    return sum / phaseState.durations.length;
+  }
+  return Math.max(phaseState.expectedSeconds || 0, 0);
+}
+
+function setCurrentTaskIcon(iconClass, spin = false) {
+  const iconElement = document.querySelector('#progressContainer .current-task i');
+  if (!iconElement) return;
+  iconElement.className = `fas ${iconClass}`;
+  if (spin) {
+    iconElement.classList.add('fa-spin');
+  }
+}
+
+function formatDurationLabel(value) {
+  if (value === null || value === undefined || value === '') {
+    return 'Calculando...';
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const minutes = Math.floor(value / 60);
+    const seconds = Math.floor(value % 60);
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  }
+  return String(value);
+}
+
+function normalizeStepValue(value) {
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) && numericValue >= 0 ? numericValue : 0;
+}
+
+function clampPercentage(value) {
+  const numeric = Number.parseFloat(value);
+  if (Number.isFinite(numeric)) {
+    return Math.min(100, Math.max(0, numeric));
+  }
+  return null;
+}
+
+function updatePhaseIndicators(activePhase) {
+  const normalizedPhase = PROGRESS_PHASES.includes(activePhase)
+    ? activePhase
+    : activePhase === 'completed'
+      ? 'completed'
+      : 'script';
+  const activeIndex = PROGRESS_PHASES.indexOf(normalizedPhase);
+
+  PROGRESS_PHASES.forEach((phaseName, index) => {
+    const phaseElement = document.querySelector(`.phase-item[data-phase="${phaseName}"]`);
+    const statusElement = document.getElementById(`phase${phaseName.charAt(0).toUpperCase()}${phaseName.slice(1)}Status`);
+    if (!phaseElement || !statusElement) return;
+
+    phaseElement.classList.remove('is-active', 'is-complete', 'is-pending');
+
+    let statusText = 'Pendiente';
+
+    if (normalizedPhase === 'completed') {
+      phaseElement.classList.add('is-complete');
+      statusText = 'Completado';
+    } else if (activeIndex === -1) {
+      if (phaseName === 'script') {
+        phaseElement.classList.add('is-active');
+        statusText = 'En progreso';
+      } else {
+        phaseElement.classList.add('is-pending');
+      }
+    } else if (index < activeIndex) {
+      phaseElement.classList.add('is-complete');
+      statusText = 'Completado';
+    } else if (index === activeIndex) {
+      phaseElement.classList.add('is-active');
+      statusText = 'En progreso';
+    } else {
+      phaseElement.classList.add('is-pending');
+    }
+
+    statusElement.textContent = statusText;
+  });
+}
+
 // Mostrar la barra de progreso
 function showProgressBar() {
   const progressContainer = document.getElementById('progressContainer');
@@ -144,6 +798,12 @@ function showProgressBar() {
     progressContainer.style.display = 'block';
     progressStartTime = Date.now();
     updateElapsedTime();
+    updatePhaseIndicators('script');
+    setCurrentTaskIcon('fa-cog', true);
+    const taskContainer = document.querySelector('#progressContainer .current-task');
+    if (taskContainer) {
+      taskContainer.classList.remove('is-error');
+    }
   }
   
   // Ocultar el botón de generación mientras se muestra el progreso
@@ -178,6 +838,8 @@ function hideProgressBar() {
     clearInterval(progressPollingInterval);
     progressPollingInterval = null;
   }
+
+  resetProgressEstimation();
 }
 
 // Iniciar polling del progreso desde el servidor
@@ -250,42 +912,81 @@ function stopProgressPolling() {
 // Actualizar la barra de progreso
 function updateProgressBar(data) {
   const { percentage, phase, currentStep, totalSteps, estimatedTimeRemaining, currentTask } = data;
-  
-  // Actualizar porcentaje
+
   const progressFill = document.getElementById('progressFill');
   const progressPercentage = document.getElementById('progressPercentage');
-  if (progressFill && progressPercentage) {
-    progressFill.style.width = `${percentage}%`;
-    progressPercentage.textContent = `${Math.round(percentage)}%`;
+
+  const totalStepsNumber = normalizeStepValue(totalSteps);
+  const currentStepNumber = Math.min(normalizeStepValue(currentStep), totalStepsNumber || normalizeStepValue(currentStep));
+
+  const normalizedPhase = PROGRESS_PHASES.includes(phase)
+    ? phase
+    : phase === 'completed'
+      ? 'completed'
+      : 'script';
+
+  if (PROGRESS_PHASES.includes(normalizedPhase)) {
+    updatePhaseTiming(normalizedPhase, currentStepNumber, totalStepsNumber);
   }
-  
-  // Actualizar fase actual
+
+  if (progressFill && progressPercentage) {
+    let normalizedPercentage = clampPercentage(percentage);
+    if (normalizedPercentage === null) {
+      if (totalStepsNumber > 0) {
+        normalizedPercentage = Math.min(100, Math.max(0, (currentStepNumber / totalStepsNumber) * 100));
+      } else {
+        normalizedPercentage = 0;
+      }
+    }
+
+    progressFill.style.width = `${normalizedPercentage}%`;
+    progressPercentage.textContent = `${Math.round(normalizedPercentage)}%`;
+  }
+
+  updatePhaseIndicators(normalizedPhase);
+
   const currentPhaseElement = document.getElementById('currentPhase');
   if (currentPhaseElement) {
     const phaseNames = {
-      'script': 'Generando Textos',
-      'audio': 'Generando Audios', 
-      'images': 'Generando Imágenes'
+      script: 'Generando textos',
+      audio: 'Generando audios',
+      images: 'Generando imágenes',
+      completed: 'Generación finalizada'
     };
-    currentPhaseElement.textContent = phaseNames[phase] || 'Procesando...';
+    currentPhaseElement.textContent = phaseNames[normalizedPhase] || 'Procesando...';
   }
-  
-  // Actualizar progreso actual
+
   const currentProgress = document.getElementById('currentProgress');
   if (currentProgress) {
-    currentProgress.textContent = `${currentStep} / ${totalSteps}`;
+    if (totalStepsNumber > 0) {
+      currentProgress.textContent = `${currentStepNumber} / ${totalStepsNumber}`;
+    } else {
+      currentProgress.textContent = '-- / --';
+    }
   }
-  
-  // Actualizar tiempo estimado
+
   const estimatedTime = document.getElementById('estimatedTime');
   if (estimatedTime) {
-    estimatedTime.textContent = estimatedTimeRemaining || 'Calculando...';
+    let remainingSeconds = null;
+    if (normalizedPhase === 'completed') {
+      remainingSeconds = 0;
+    } else if (PROGRESS_PHASES.includes(normalizedPhase)) {
+      remainingSeconds = calculateRemainingSeconds(normalizedPhase);
+    }
+
+    if (Number.isFinite(remainingSeconds) && remainingSeconds >= 0) {
+      estimatedTime.textContent = formatDurationLabel(remainingSeconds);
+    } else {
+      estimatedTime.textContent = formatDurationLabel(estimatedTimeRemaining);
+    }
   }
-  
-  // Actualizar tarea actual
+
   const currentTaskElement = document.getElementById('currentTask');
   if (currentTaskElement) {
-    currentTaskElement.textContent = currentTask || 'Procesando...';
+    const safeTask = typeof currentTask === 'string' && currentTask.trim() !== ''
+      ? currentTask
+      : 'Procesando...';
+    currentTaskElement.textContent = safeTask;
   }
 }
 
@@ -312,6 +1013,12 @@ function startElapsedTimeCounter() {
 
 // Resetear la barra de progreso
 function resetProgressBar() {
+  setCurrentTaskIcon('fa-cog', true);
+  const taskContainer = document.querySelector('#progressContainer .current-task');
+  if (taskContainer) {
+    taskContainer.classList.remove('is-error');
+  }
+  resetProgressEstimation();
   updateProgressBar({
     percentage: 0,
     phase: 'script',
@@ -334,9 +1041,14 @@ function completeProgressBar(message = 'Generación completada') {
     phase: 'completed',
     currentStep: 1,
     totalSteps: 1,
-    estimatedTimeRemaining: '0:00',
+    estimatedTimeRemaining: 0,
     currentTask: message
   });
+  const taskContainer = document.querySelector('#progressContainer .current-task');
+  if (taskContainer) {
+    taskContainer.classList.remove('is-error');
+  }
+  setCurrentTaskIcon('fa-check-circle');
   
   // Detener polling
   stopProgressPolling();
@@ -349,11 +1061,15 @@ function completeProgressBar(message = 'Generación completada') {
 
 // Mostrar error en la barra de progreso
 function showProgressError(error) {
+  const taskContainer = document.querySelector('#progressContainer .current-task');
+  if (taskContainer) {
+    taskContainer.classList.add('is-error');
+  }
   const currentTaskElement = document.getElementById('currentTask');
   if (currentTaskElement) {
-    currentTaskElement.innerHTML = `<i class="fas fa-exclamation-triangle"></i> Error: ${error}`;
-    currentTaskElement.style.color = '#ff4757';
+    currentTaskElement.textContent = `Error: ${error}`;
   }
+  setCurrentTaskIcon('fa-exclamation-triangle');
   
   // Detener polling
   stopProgressPolling();
@@ -700,6 +1416,7 @@ async function runAutoGeneration() {
   const topic = promptInput.value.trim();
   const folderName = document.getElementById("folderName").value.trim();
   const selectedVoice = document.getElementById("voiceSelect").value;
+  const narrationStyle = document.getElementById("narrationStyle")?.value?.trim() || '';
   const selectedSections = document.getElementById("sectionsNumber").value;
   const minWords = parseInt(document.getElementById("minWords").value) || 800;
   const maxWords = parseInt(document.getElementById("maxWords")?.value) || 1100;
@@ -711,17 +1428,12 @@ async function runAutoGeneration() {
   let googleImages = document.getElementById("googleImages")?.checked || false;
   let localAIImages = document.getElementById("localAIImages")?.checked || false;
   
-  // Para imágenes generadas por Gemini: solo generar si el usuario quiere IA (localAIImages checkbox)
-  // o si quiere imágenes de Google (que requiere prompts generados por IA)
-  let geminiGeneratedImages = localAIImages; // Solo si seleccionó "Generar imágenes con IA"
-  
   console.log("🖼️ Configuración de imágenes:");
   console.log("  - Google Images:", googleImages);
   console.log("  - Local AI Images (ComfyUI):", localAIImages);
-  console.log("  - Gemini Generated Images:", geminiGeneratedImages);
   
   // Calcular automáticamente skipImages: true si NO hay opciones de imágenes activas
-  let skipImages = !googleImages && !localAIImages && !geminiGeneratedImages;
+  let skipImages = !googleImages && !localAIImages;
   console.log("  - Skip Images:", skipImages);
   
   const generateAudio = document.getElementById("autoGenerateAudio").checked;
@@ -730,35 +1442,13 @@ async function runAutoGeneration() {
   const selectedApplioModel = document.getElementById("applioModelSelect").value;
   const applioPitch = parseInt(document.getElementById("applioPitch").value) || 0;
   
-  // 🔧 VALIDACIÓN: Solo una opción de imagen puede estar activa
-  if (!isLoadingProject) {
-    let activeImageOptions = [googleImages, localAIImages, geminiGeneratedImages].filter(Boolean).length;
-    if (activeImageOptions > 1) {
-      console.warn('⚠️ Configuración contradictoria detectada: múltiples opciones de imagen activas');
-      // Prioridad: LocalAI > Gemini > GoogleImages
-      if (localAIImages) {
-        googleImages = false;
-        geminiGeneratedImages = false;
-        document.getElementById("googleImages").checked = false;
-        document.getElementById("geminiGeneratedImages").checked = false;
-        console.warn('🔧 Corrigiendo: Desactivando otras opciones porque IA Local tiene prioridad');
-        showNotification('⚠️ Corrección automática: Solo IA Local activa', 'warning');
-      } else if (geminiGeneratedImages) {
-        googleImages = false;
-        document.getElementById("googleImages").checked = false;
-        console.warn('🔧 Corrigiendo: Desactivando Google Images porque Gemini tiene prioridad');
-        showNotification('⚠️ Corrección automática: Solo Gemini Images activa', 'warning');
-      }
-    }
-    // Recalcular skipImages después de la validación
-    skipImages = !googleImages && !localAIImages && !geminiGeneratedImages;
-  }
-  
+  // 🔧 VALIDACIÓN SIMPLIFICADA: Las imágenes se pueden generar con cualquier combinación
+  // Prioridad: Si está activada IA Local, usar ComfyUI; si está Google Images, usar APIs de Google
   console.log(`🔊 Generación de audio Google: ${generateAudio ? 'ACTIVADA' : 'DESACTIVADA'}`);
   console.log(`🎤 Generación de audio Applio: ${generateApplioAudio ? 'ACTIVADA' : 'DESACTIVADA'}`);
+  console.log(`🎭 Estilo de narración solicitado: ${narrationStyle || 'Sin estilo personalizado'}`);
   console.log(`🖼️ Imágenes de Google: ${googleImages ? 'ACTIVADA' : 'DESACTIVADA'}`);
   console.log(`🧠 Imágenes IA Local: ${localAIImages ? 'ACTIVADA' : 'DESACTIVADA'}`);
-  console.log(`✨ Imágenes Gemini/Imagen 4: ${geminiGeneratedImages ? 'ACTIVADA' : 'DESACTIVADA'}`);
   console.log(`🚫 Omitir imágenes (auto): ${skipImages ? 'ACTIVADA' : 'DESACTIVADA'}`);
   
   if (!topic) {
@@ -791,11 +1481,20 @@ async function runAutoGeneration() {
     console.log('\n' + '🚀'.repeat(50));
     console.log('🚀 USANDO NUEVO SISTEMA DE GENERACIÓN POR LOTES');
     console.log('🚀'.repeat(50));
+
+    const averageWordsPerSection = Math.max(150, Math.round((minWords + maxWords) / 2));
+    configureProgressEstimation({
+      averageWordsPerSection,
+      sections: totalSections,
+      audioEnabled: generateAudio || generateApplioAudio,
+      imagesEnabled: !skipImages,
+      estimatedImages: skipImages ? 0 : Math.max(imageCount, totalSections)
+    });
     
     // 📊 INICIALIZAR BARRA DE PROGRESO
+    resetProgressBar();
     showProgressBar();
     startElapsedTimeCounter();
-    resetProgressBar();
     
     updateProgressBar({
       percentage: 0,
@@ -863,7 +1562,6 @@ async function runAutoGeneration() {
         skipImages: skipImages,
         googleImages: googleImages,
         localAIImages: localAIImages,
-        geminiGeneratedImages: geminiGeneratedImages,
         comfyUISettings: comfyUISettings,
         scriptStyle: selectedStyle,
         customStyleInstructions: customStyleInstructions,
@@ -901,6 +1599,83 @@ async function runAutoGeneration() {
         addPromptsToSidebar(sectionData.imagePrompts, i + 1);
       }
     }
+
+    const completedSections = Array.isArray(projectData.sections) && projectData.sections.length > 0
+      ? projectData.sections.map((sectionInfo, index) => {
+          const rawSection = sectionInfo.section ?? sectionInfo.sectionNumber ?? sectionInfo.id ?? (index + 1);
+          const sectionNumber = Number(rawSection) || (index + 1);
+
+          const promptsEntry = Array.isArray(projectData.imagePrompts)
+            ? projectData.imagePrompts.find(entry => {
+                const entrySection = entry.section ?? entry.sectionNumber ?? entry.id ?? entry.sectionIndex;
+                return Number(entrySection) === sectionNumber;
+              })
+            : null;
+
+          const promptsList = Array.isArray(promptsEntry?.prompts) ? promptsEntry.prompts : [];
+          const imageUrls = Array.isArray(sectionInfo.imageUrls)
+            ? sectionInfo.imageUrls
+            : Array.isArray(sectionInfo.images)
+              ? sectionInfo.images
+              : [];
+
+          const hasImages = imageUrls.length > 0 || Boolean(sectionInfo.hasImages);
+          const googleImagesMode = Boolean(
+            sectionInfo.googleImagesMode ||
+            sectionInfo.mode === 'google' ||
+            projectData.googleImages
+          );
+
+          return {
+            section: sectionNumber,
+            sectionNumber,
+            script: sectionInfo.script || '',
+            imagePrompts: promptsList,
+            prompts: promptsList,
+            googleImagesMode,
+            imageUrls,
+            imageCount: imageUrls.length,
+            hasImages,
+            completedAt: sectionInfo.completedAt || null
+          };
+        })
+      : allSections.map((script, index) => ({
+          section: index + 1,
+          sectionNumber: index + 1,
+          script,
+          imagePrompts: [],
+          prompts: [],
+          googleImagesMode: false,
+          imageUrls: [],
+          imageCount: 0,
+          hasImages: false,
+          completedAt: null
+        }));
+
+    window.currentProject = {
+      ...(window.currentProject || {}),
+      ...projectData,
+      topic,
+      projectKey: projectData.projectKey,
+      folderName: projectData.projectKey,
+      completedSections,
+      voice: selectedVoice,
+      narrationStyle: narrationStyle || null,
+      useApplio: generateApplioAudio,
+      useGoogleAudio: generateAudio,
+      applioVoice: selectedApplioVoice,
+      applioModel: selectedApplioModel,
+      applioPitch: applioPitch,
+      googleImages,
+      localAIImages,
+      skipImages,
+      imageCount,
+      totalSections: projectData.totalSections || totalSections
+    };
+
+    updateSectionClipButtons(window.currentProject);
+    updateSectionImageButtons(window.currentProject);
+    updateYouTubeMetadataButtonState();
     
     // ===============================================================
     // FASE 2: GENERAR TODOS LOS ARCHIVOS DE AUDIO
@@ -916,6 +1691,7 @@ async function runAutoGeneration() {
           projectData: projectData,
           useApplio: generateApplioAudio,
           voice: selectedVoice,
+          narrationStyle: narrationStyle,
           applioVoice: selectedApplioVoice,
           applioModel: selectedApplioModel,
           applioPitch: applioPitch,
@@ -935,85 +1711,18 @@ async function runAutoGeneration() {
     }
     
     // ===============================================================
-    // FASE 3: GENERAR TODAS LAS IMÁGENES
+    // FASE 3: GENERAR TODAS LAS IMÁGENES (usando la misma función que el botón)
     // ===============================================================
     if (!skipImages) {
-      console.log('\n🎨 INICIANDO FASE 3: Generación de imágenes...');
-      // updateGenerationProgress(3, 3, 'images', 'Generando todas las imágenes...');
+      console.log('\n🎨 INICIANDO FASE 3: Generación de imágenes usando generateMissingImages()...');
       
-      const phase3Response = await fetch("/generate-batch-images", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          projectData: projectData,
-          skipImages: skipImages,
-          googleImages: googleImages,
-          localAIImages: localAIImages,
-          geminiGeneratedImages: geminiGeneratedImages,
-          imageModel: 'gemini', // Usar Gemini por defecto
-          aspectRatio: aspectRatio,
-          comfyUISettings: comfyUISettings,
-          folderName: projectData.projectKey  // Usar el projectKey del backend que ya está normalizado
-        })
-      });
-
-      const phase3Data = await phase3Response.json();
-      
-      if (!phase3Data.success) {
-        throw new Error(`Fase 3 falló: ${phase3Data.error}`);
-      }
-      
-      console.log('✅ FASE 3 COMPLETADA:', phase3Data.message);
-      
-      // 🎨 PROCESAR LAS IMÁGENES GENERADAS PARA MOSTRAR CARRUSEL
-      if (phase3Data.data && phase3Data.data.imageResults) {
-        console.log('🖼️ Procesando imágenes generadas para mostrar carrusel...');
-        console.log('🖼️ Datos de imágenes:', phase3Data.data.imageResults);
-        
-        // Procesar cada sección y mostrar sus imágenes
-        phase3Data.data.imageResults.forEach((sectionResult, index) => {
-          const sectionNum = sectionResult.section;
-          const images = sectionResult.images;
-          
-          if (images && images.length > 0) {
-            console.log(`🖼️ Mostrando carrusel para sección ${sectionNum} con ${images.length} imágenes`);
-            
-            // Preparar datos de imágenes para el carrusel
-            const imageData = images.map(img => ({
-              path: img.path,
-              filename: img.filename,
-              url: img.url,
-              source: img.source || 'Google Images',
-              keywords: img.keywords,
-              caption: img.caption || img.keywords
-            }));
-            
-            // Guardar en allSections para navegación entre secciones
-            if (allSections[sectionNum - 1]) {
-              allSections[sectionNum - 1].images = imageData;
-              allSections[sectionNum - 1].imageMode = 'bing';
-              allSections[sectionNum - 1].bingImagesMode = true;
-              
-              // Guardar keywords para botones de refrescar
-              const keywords = images.map(img => img.keywords).filter(k => k);
-              allSections[sectionNum - 1].imageKeywords = keywords;
-              
-              console.log(`💾 Datos de imágenes guardados en allSections[${sectionNum - 1}] con ${keywords.length} keywords`);
-            }
-            
-            // Mostrar el carrusel para esta sección
-            try {
-              createCarousel(imageData, sectionNum, []);
-              console.log(`✅ Carrusel creado para sección ${sectionNum}`);
-            } catch (carouselError) {
-              console.error(`❌ Error creando carrusel para sección ${sectionNum}:`, carouselError);
-            }
-          } else {
-            console.log(`⚠️ Sección ${sectionNum} no tiene imágenes para mostrar`);
-          }
-        });
-      } else {
-        console.log('⚠️ No se recibieron datos de imágenes en la respuesta de fase 3');
+      try {
+        // Ejecutar la misma función que el botón "generateMissingImagesBtn"
+        await generateMissingImages();
+        console.log('✅ FASE 3 COMPLETADA: Imágenes generadas correctamente');
+      } catch (error) {
+        console.error('❌ Error en FASE 3:', error);
+        throw new Error(`Fase 3 falló: ${error.message}`);
       }
     } else {
       console.log('⏭️ FASE 3 OMITIDA: Se solicitó omitir imágenes');
@@ -1123,7 +1832,6 @@ async function generateSectionContent(section, params) {
         skipImages: params.skipImages,
         googleImages: params.googleImages,
         localAIImages: params.localAIImages,
-        geminiGeneratedImages: params.geminiGeneratedImages,
         comfyUISettings: comfyUISettings, // Agregar configuración ComfyUI
         applioVoice: params.selectedApplioVoice,
         applioModel: params.selectedApplioModel,
@@ -1153,6 +1861,8 @@ async function generateSectionContent(section, params) {
         imageKeywords: null,
         imageMode: null
       });
+      updateSectionClipButtons();
+      updateSectionImageButtons();
       currentSectionNumber = section;
       return { success: true, data };
     } else {
@@ -1468,36 +2178,41 @@ async function showAutoGenerationComplete() {
       <i class="fas fa-trophy"></i>
       <h3>¡Generación Automática Completada!</h3>
       <p>Se han generado exitosamente ${totalSections} secciones con guión, imágenes y audio.</p>
-      <p>Generando metadata para YouTube...</p>
+      <p>Puedes generar los metadatos de YouTube cuando lo necesites desde el botón "Generar Metadatos".</p>
     </div>
   `;
   
   output.insertBefore(successMessage, output.firstChild);
   
-  // Generar metadata de YouTube
-  await generateYouTubeMetadata();
-  
-  // Mostrar botón de generación de video
-  showVideoGenerationButton();
-  
-  // 🎬 VERIFICAR Y GENERAR VIDEO AUTOMÁTICAMENTE
-  if (shouldGenerateVideoAutomatically()) {
-    const folderName = document.getElementById("folderName").value.trim();
-    if (folderName && !isGeneratingVideo) {
-      console.log('🎬 Generación completa - iniciando video automático...');
-      
-      // Actualizar mensaje de éxito para incluir video
-      successMessage.innerHTML = `
-        <div class="success-content">
-          <i class="fas fa-trophy"></i>
-          <h3>¡Generación Automática Completada!</h3>
-          <p>Se han generado exitosamente ${totalSections} secciones con guión, imágenes y audio.</p>
-          <p>Metadata de YouTube completada.</p>
-          <p><strong>🎬 Iniciando generación automática de video...</strong></p>
-        </div>
-      `;
-      
-      // Delay para que se vea el mensaje actualizado antes de iniciar el video
+  const autoVideoEnabled = shouldGenerateVideoAutomatically();
+  const folderInput = document.getElementById('folderName');
+  const effectiveFolderName = (window.currentProject && window.currentProject.folderName) || (folderInput ? folderInput.value.trim() : '');
+  const shouldAnnounceAutoVideo = autoVideoEnabled && !!effectiveFolderName && !isGeneratingVideo;
+
+  if (shouldAnnounceAutoVideo) {
+    const successContent = successMessage.querySelector('.success-content');
+    if (successContent) {
+      successContent.insertAdjacentHTML('beforeend', '<p><strong>🎬 Iniciando generación automática de video...</strong></p>');
+    }
+  }
+
+  let projectButtonsUpdated = false;
+
+  if (window.currentProject && Array.isArray(window.currentProject.completedSections)) {
+    try {
+      updateProjectButtons(window.currentProject);
+      projectButtonsUpdated = true;
+    } catch (projectButtonsError) {
+      console.error('❌ Error actualizando los botones del proyecto tras la generación automática:', projectButtonsError);
+    }
+  }
+
+  if (!projectButtonsUpdated) {
+    showVideoGenerationButton();
+    updateYouTubeMetadataButtonState();
+
+    if (shouldAnnounceAutoVideo) {
+      console.log('🎬 Generación completa - iniciando video automático (fallback)...');
       setTimeout(() => {
         generateVideoAutomatically();
       }, 2000);
@@ -1517,7 +2232,7 @@ function disableControls(disable) {
   const controls = [
     'prompt', 'folderName', 'voiceSelect', 'sectionsNumber', 
     'styleSelect', 'imagesSelect', 'aspectRatioSelect', 'promptModifier', 'modelSelect', 'llmModelSelect',
-    'autoGenerateAudio', 'autoGenerateApplioAudio', 'googleImages', 'localAIImages', 'geminiGeneratedImages'
+    'autoGenerateAudio', 'autoGenerateApplioAudio', 'googleImages', 'localAIImages'
   ];
   
   controls.forEach(id => {
@@ -1532,11 +2247,6 @@ function disableControls(disable) {
   generateAudioBtn.disabled = disable;
   
   // También deshabilitar los botones de video
-  const generateVideoBtn = document.getElementById("generateVideoBtn");
-  if (generateVideoBtn) {
-    generateVideoBtn.disabled = disable;
-  }
-  
   const generateSimpleVideoBtn = document.getElementById("generateSimpleVideoBtn");
   if (generateSimpleVideoBtn) {
     generateSimpleVideoBtn.disabled = disable;
@@ -1545,6 +2255,24 @@ function disableControls(disable) {
   const generateSeparateVideosBtn = document.getElementById("generateSeparateVideosBtn");
   if (generateSeparateVideosBtn) {
     generateSeparateVideosBtn.disabled = disable;
+  }
+
+  const generateMetadataBtn = document.getElementById('generateYouTubeMetadataBtn');
+  if (generateMetadataBtn) {
+    generateMetadataBtn.disabled = disable;
+  }
+
+  if (!disable) {
+    setGoogleApiCheckboxesDisabled(false);
+
+    const attemptComfyCheckbox = document.getElementById('attemptComfyCheckbox');
+    if (attemptComfyCheckbox) {
+      attemptComfyCheckbox.disabled = false;
+      const attemptComfyToggle = attemptComfyCheckbox.closest('.attempt-comfy-toggle');
+      if (attemptComfyToggle) {
+        attemptComfyToggle.classList.remove('is-disabled');
+      }
+    }
   }
 }
 
@@ -1693,33 +2421,29 @@ function createCarousel(images, sectionNum, receivedPrompts = []) {
     const img = document.createElement('img');
     
     // Verificar si la imagen es local (descargada) o una URL externa
-    if (imageData.path && (imageData.source === 'Google Images' || imageData.source === 'bing')) {
-      // Imagen descargada de Google Images/Bing (usar ruta local del servidor)
-      // Convertir la ruta absoluta a una ruta relativa del servidor web
+    if (imageData.path) {
+      // Imagen almacenada localmente (IA o descargada). Convertir la ruta absoluta a relativa.
       let relativePath = imageData.path.replace(/\\/g, '/');
-      
-      // Buscar la parte que viene después de 'public/'
+
       const publicIndex = relativePath.indexOf('/public/');
       if (publicIndex !== -1) {
-        relativePath = relativePath.substring(publicIndex + 7); // +7 para saltar '/public'
+        relativePath = relativePath.substring(publicIndex + 7);
       } else {
-        // Fallback: buscar 'outputs/'
         const outputsIndex = relativePath.indexOf('outputs/');
         if (outputsIndex !== -1) {
           relativePath = '/' + relativePath.substring(outputsIndex);
         }
       }
-      
-      // Asegurar que empiece con '/'
+
       if (!relativePath.startsWith('/')) {
         relativePath = '/' + relativePath;
       }
-      
+
       img.src = relativePath;
       img.alt = imageData.caption || `Imagen ${index + 1} de la Sección ${sectionNum}`;
       console.log(`🖼️ Cargando imagen local: ${relativePath} (original: ${imageData.path})`);
-    } else if (imageData.url && !imageData.path) {
-      // Imagen externa (URL directa de Bing - para casos sin descarga)
+    } else if (imageData.url) {
+      // Imagen con URL pública (por ejemplo, Bing sin descarga local)
       img.src = imageData.url;
       img.alt = imageData.caption || `Imagen ${index + 1} de la Sección ${sectionNum}`;
       console.log(`🌐 Cargando imagen externa: ${imageData.url}`);
@@ -2567,22 +3291,10 @@ function showCompletionMessage(sectionNum, totalSections, isComplete) {
         </div>
         <h3>¡Guión Completo de "Crónicas del Gaming"!</h3>
         <p>Has generado todas las ${totalSections} secciones del guión. Cada sección incluye su secuencia visual cronológica. Ahora puedes generar el audio de narración.</p>
-        <p style="color: #00ff7f; margin-top: 15px;"><i class="fas fa-youtube"></i> Generando metadatos de YouTube automáticamente...</p>
+        <p style="color: #00ff7f; margin-top: 15px;"><i class="fas fa-youtube"></i> Usa el botón "Generar Metadatos" cuando quieras preparar la metadata de YouTube.</p>
       </div>
     `;
-    
-    // 🎬 GENERAR METADATOS DE YOUTUBE AUTOMÁTICAMENTE CUANDO SE COMPLETA EL PROYECTO
-    console.log('🎬 Proyecto completado! Generando metadatos de YouTube automáticamente...');
-    setTimeout(() => {
-      generateYouTubeMetadata().then(() => {
-        console.log('✅ Metadatos de YouTube generados automáticamente al completar proyecto');
-        showNotification('🎬 Metadatos de YouTube generados automáticamente', 'success');
-      }).catch(error => {
-        console.error('❌ Error generando metadatos automáticos:', error);
-        showNotification('⚠️ Error generando metadatos automáticos', 'warning');
-      });
-    }, 2000); // Delay para que se muestre el mensaje de completación primero
-    
+      updateYouTubeMetadataButtonState();
   } else {
     output.innerHTML = `
       <div class="completion-message">
@@ -2719,7 +3431,6 @@ generateBtn.addEventListener("click", async () => {
         skipImages: skipImages,
         googleImages: googleImages,
         localAIImages: localAIImages,
-        geminiGeneratedImages: geminiGeneratedImages,
         applioVoice: selectedApplioVoice,
         applioModel: selectedApplioModel,
         applioPitch: applioPitch
@@ -2969,7 +3680,6 @@ continueBtn.addEventListener("click", async () => {
         skipImages: skipImages,
         googleImages: googleImages,
         localAIImages: localAIImages,
-        geminiGeneratedImages: geminiGeneratedImages,
         applioVoice: currentApplioVoice
       })
     });
@@ -3170,42 +3880,6 @@ generateAudioBtn.addEventListener("click", async () => {
   }
 });
 
-// Event listener para el botón de generar video
-document.getElementById("generateVideoBtn").addEventListener("click", async () => {
-  // ✅ CORREGIDO: Usar folderName del proyecto actual, no del input original
-  let folderName;
-  
-  if (window.currentProject && window.currentProject.folderName) {
-    // Si hay proyecto cargado, usar su folderName normalizado
-    folderName = window.currentProject.folderName;
-    console.log(`🎯 Usando folderName del proyecto cargado: ${folderName}`);
-  } else {
-    // Fallback: usar el input y normalizarlo
-    const inputFolderName = document.getElementById("folderName").value.trim();
-    if (!inputFolderName) {
-      showError("Por favor, especifica el nombre de la carpeta del proyecto");
-      return;
-    }
-    // Normalizar el nombre como lo hace el backend
-    folderName = inputFolderName.toLowerCase().replace(/[^a-z0-9]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
-    console.log(`🔧 Normalizando folderName: "${inputFolderName}" → "${folderName}"`);
-  }
-  
-  if (!allSections || allSections.length === 0) {
-    showError("No hay secciones generadas para crear el video");
-    return;
-  }
-  
-  console.log(`🎬 Iniciando generación de video para proyecto: ${folderName}`);
-  
-  try {
-    await generateProjectVideo(folderName, false); // false = manual
-  } catch (error) {
-    console.error("❌ Error generando video:", error);
-    showError(`Error generando video: ${error.message}`);
-  }
-});
-
 // Event listener para el botón de generar video simple (sin animaciones)
 document.getElementById("generateSimpleVideoBtn").addEventListener("click", async () => {
   // ✅ CORREGIDO: Usar folderName del proyecto actual, no del input original
@@ -3242,8 +3916,61 @@ document.getElementById("generateSimpleVideoBtn").addEventListener("click", asyn
   }
 });
 
+// Event listener para el botón de generar/metadatos de YouTube
+const generateYouTubeMetadataBtn = document.getElementById('generateYouTubeMetadataBtn');
+if (generateYouTubeMetadataBtn) {
+  generateYouTubeMetadataBtn.addEventListener('click', async () => {
+    if (generateYouTubeMetadataBtn.disabled) {
+      return;
+    }
+
+    const metadataExists = generateYouTubeMetadataBtn.dataset.metadataExists === 'true';
+
+    if (metadataExists) {
+      const promptField = typeof promptInput !== 'undefined' && promptInput ? promptInput : document.getElementById('prompt');
+      const metadataContent = window.currentProject?.youtubeMetadata?.content || window.lastGeneratedYouTubeMetadata?.content;
+      const metadataTopic = window.currentProject?.topic || window.lastGeneratedYouTubeMetadata?.topic || promptField?.value?.trim() || '';
+
+      if (metadataContent) {
+        const existingContainer = document.querySelector('.youtube-metadata-container');
+        if (existingContainer) {
+          existingContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        } else {
+          showYouTubeMetadataResults(metadataContent, metadataTopic);
+        }
+      }
+
+      showNotification('ℹ️ Ya existen metadatos de YouTube para este proyecto.', 'info');
+      return;
+    }
+
+    if ((!Array.isArray(allSections) || allSections.length === 0) && !(window.currentProject?.completedSections?.length)) {
+      showNotification('⚠️ Genera al menos una sección antes de crear metadatos.', 'warning');
+      return;
+    }
+
+    const originalHtml = generateYouTubeMetadataBtn.innerHTML;
+    generateYouTubeMetadataBtn.disabled = true;
+    generateYouTubeMetadataBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Generando Metadatos...</span>';
+
+    try {
+      const metadata = await generateYouTubeMetadata();
+      if (metadata) {
+        showNotification('✅ Metadatos de YouTube generados exitosamente.', 'success');
+      }
+    } catch (error) {
+      console.error('❌ Error generando metadatos desde el botón principal:', error);
+      showNotification(`❌ Error generando metadatos: ${error.message || error}`, 'error');
+    } finally {
+      generateYouTubeMetadataBtn.disabled = false;
+      generateYouTubeMetadataBtn.innerHTML = originalHtml;
+      updateYouTubeMetadataButtonState();
+    }
+  });
+}
+
 // Event listener para el botón de generar clips separados por sección
-document.getElementById("generateSeparateVideosBtn").addEventListener("click", async () => {
+document.getElementById("generateSeparateVideosBtn").addEventListener("click", async (event) => {
   // ✅ CORREGIDO: Usar folderName del proyecto actual, no del input original
   let folderName;
   
@@ -3271,19 +3998,21 @@ document.getElementById("generateSeparateVideosBtn").addEventListener("click", a
   console.log(`🎬 Iniciando generación de clips separados para proyecto: ${folderName}`);
   
   try {
-    await generateSeparateVideos(folderName);
+    await generateSeparateVideos(folderName, {
+      buttonElement: event.currentTarget
+    });
   } catch (error) {
     console.error("❌ Error generando clips separados:", error);
     showError(`Error generando clips separados: ${error.message}`);
   }
 });
 
-// Event listener para el botón de regenerar audios con Applio
+// Event listener para el botón de regenerar audios faltantes
 document.getElementById("regenerateApplioAudiosBtn").addEventListener("click", async () => {
-  console.log('🎤 Click en botón de regenerar audios con Applio');
+  console.log('🎤 Click en botón de regenerar audios faltantes');
   
   try {
-    await regenerateAllApplioAudios();
+    await regenerateAllAudios();
   } catch (error) {
     console.error("❌ Error regenerando audios:", error);
     showError(`Error regenerando audios: ${error.message}`);
@@ -3311,6 +4040,16 @@ document.getElementById("generateMissingImagesBtn").addEventListener("click", as
   } catch (error) {
     console.error("❌ Error generando imágenes:", error);
     showError(`Error generando imágenes: ${error.message}`);
+  }
+});
+
+document.getElementById("cancelMissingImagesBtn").addEventListener("click", async () => {
+  console.log('🛑 Click en botón de cancelar generación de imágenes');
+  try {
+    await cancelMissingImagesGeneration();
+  } catch (error) {
+    console.error('❌ Error cancelando la generación de imágenes:', error);
+    showError(`Error cancelando la generación de imágenes: ${error.message}`);
   }
 });
 
@@ -3343,33 +4082,17 @@ promptInput.addEventListener("input", function() {
 function setupImageCheckboxEvents() {
   const googleImagesCheckbox = document.getElementById("googleImages");
   const localAIImagesCheckbox = document.getElementById("localAIImages");
-  const geminiImagesCheckbox = document.getElementById("geminiGeneratedImages");
   
-  // Event listeners para mantener solo una opción activa
+  // Event listeners simplificados - ahora se pueden activar ambas opciones
   if (googleImagesCheckbox) {
     googleImagesCheckbox.addEventListener("change", function() {
-      if (this.checked) {
-        if (localAIImagesCheckbox) localAIImagesCheckbox.checked = false;
-        if (geminiImagesCheckbox) geminiImagesCheckbox.checked = false;
-      }
+      console.log('🖼️ Google Images:', this.checked);
     });
   }
   
   if (localAIImagesCheckbox) {
     localAIImagesCheckbox.addEventListener("change", function() {
-      if (this.checked) {
-        if (googleImagesCheckbox) googleImagesCheckbox.checked = false;
-        if (geminiImagesCheckbox) geminiImagesCheckbox.checked = false;
-      }
-    });
-  }
-  
-  if (geminiImagesCheckbox) {
-    geminiImagesCheckbox.addEventListener("change", function() {
-      if (this.checked) {
-        if (googleImagesCheckbox) googleImagesCheckbox.checked = false;
-        if (localAIImagesCheckbox) localAIImagesCheckbox.checked = false;
-      }
+      console.log('🧠 Local AI Images:', this.checked);
     });
   }
 }
@@ -6046,7 +6769,8 @@ async function generateYouTubeMetadata() {
   try {
     console.log("🎬 Iniciando generación de metadata de YouTube...");
     
-    const topic = promptInput.value.trim();
+  const topicField = typeof promptInput !== 'undefined' && promptInput ? promptInput : document.getElementById('prompt');
+  const topic = topicField?.value?.trim();
     const folderName = document.getElementById("folderName")?.value?.trim() || '';
     
     if (!topic || allSections.length === 0) {
@@ -6088,9 +6812,28 @@ async function generateYouTubeMetadata() {
     if (data.success) {
       console.log("✅ Metadata de YouTube generada exitosamente");
       showYouTubeMetadataResults(data.metadata, topic);
+
+      const generatedAt = new Date().toISOString();
+      window.lastGeneratedYouTubeMetadata = {
+        content: data.metadata,
+        topic,
+        generatedAt
+      };
+
+      if (window.currentProject) {
+        window.currentProject.youtubeMetadata = window.currentProject.youtubeMetadata || {};
+        window.currentProject.youtubeMetadata.content = data.metadata;
+        window.currentProject.youtubeMetadata.generatedAt = generatedAt;
+      }
+
+      isMetadataShown = true;
+      updateYouTubeMetadataButtonState();
+
+      return data.metadata;
     } else {
       console.error("❌ Error generando metadata:", data.error);
       showError("Error generando metadata de YouTube: " + data.error);
+      throw new Error(data.error || 'Error al generar metadata de YouTube');
     }
 
   } catch (error) {
@@ -6102,6 +6845,8 @@ async function generateYouTubeMetadata() {
     if (loadingIndicator) {
       loadingIndicator.remove();
     }
+
+    throw error;
   }
 }
 
@@ -7351,6 +8096,10 @@ async function loadProject(folderName) {
     
     if (data.success) {
       window.currentProject = data.project;
+      window.lastGeneratedYouTubeMetadata = null;
+      updateSectionClipButtons(window.currentProject);
+      updateSectionImageButtons(window.currentProject);
+      updateYouTubeMetadataButtonState();
       
       // Verificar y llenar formulario con datos del proyecto
       const topicElement = document.getElementById('prompt'); // Cambiado de 'topic' a 'prompt'
@@ -8391,10 +9140,19 @@ function updateProjectButtons(project) {
   const generateBtn = document.getElementById("generateBtn");
   const continueBtn = document.getElementById("continueBtn");
   const generateAudioBtn = document.getElementById("generateAudioBtn");
+  const generateImagesControls = document.getElementById('generateMissingImagesControls');
+  const generateImagesBtn = document.getElementById('generateMissingImagesBtn');
   
   if (!generateBtn || !continueBtn || !generateAudioBtn) {
     console.error('❌ Botones no encontrados en el DOM');
     return;
+  }
+
+  if (generateImagesControls) {
+    generateImagesControls.style.display = 'none';
+  }
+  if (generateImagesBtn) {
+    generateImagesBtn.style.display = 'none';
   }
   
   const completedSections = project.completedSections.length;
@@ -8486,10 +9244,12 @@ function updateProjectButtons(project) {
     }
     
     // Actualizar visibility del botón de generar imágenes faltantes
-    const generateImagesBtn = document.getElementById('generateMissingImagesBtn');
     if (generateImagesBtn) {
       generateImagesBtn.style.display = 'inline-flex';
       console.log('🖼️ Botón de generar imágenes mostrado para proyecto cargado');
+    }
+    if (generateImagesControls) {
+      generateImagesControls.style.display = 'flex';
     }
     
     // Actualizar visibility del botón de generar solo prompts
@@ -8498,6 +9258,10 @@ function updateProjectButtons(project) {
       generatePromptsBtn.style.display = 'inline-flex';
       console.log('📝 Botón de generar prompts mostrado para proyecto cargado');
     }
+
+    updateSectionClipButtons(project);
+    updateSectionImageButtons(project);
+    updateYouTubeMetadataButtonState();
   }
   
   console.log('✅ Botones actualizados correctamente');
@@ -9408,6 +10172,186 @@ function shouldGenerateVideoAutomatically() {
   return generateVideoCheckbox && generateVideoCheckbox.checked;
 }
 
+function getAvailableSectionNumbers(projectOverride = null) {
+  const sectionSet = new Set();
+  const project = projectOverride || window.currentProject || null;
+
+  if (project?.completedSections?.length) {
+    project.completedSections.forEach((section) => {
+      const rawValue = section?.section ?? section?.sectionNumber ?? section?.id;
+      const parsedValue = Number.parseInt(rawValue, 10);
+      if (Number.isInteger(parsedValue) && parsedValue > 0) {
+        sectionSet.add(parsedValue);
+      }
+    });
+  }
+
+  if (!sectionSet.size && Array.isArray(allSections) && allSections.length) {
+    allSections.forEach((sectionScript, index) => {
+      if (sectionScript) {
+        sectionSet.add(index + 1);
+      }
+    });
+  }
+
+  return Array.from(sectionSet).sort((a, b) => a - b);
+}
+
+function updateSectionClipButtons(projectOverride = null) {
+  const container = document.getElementById('sectionClipsContainer');
+  const buttonsWrapper = document.getElementById('sectionClipsButtons');
+
+  if (!container || !buttonsWrapper) {
+    return;
+  }
+
+  const sectionNumbers = getAvailableSectionNumbers(projectOverride);
+
+  if (!sectionNumbers.length) {
+    container.style.display = 'none';
+    buttonsWrapper.innerHTML = '';
+    return;
+  }
+
+  container.style.display = 'block';
+  buttonsWrapper.innerHTML = '';
+
+  sectionNumbers.forEach((sectionNumber) => {
+    const button = document.createElement('button');
+    button.className = 'section-clip-btn';
+    button.dataset.sectionNumber = sectionNumber.toString();
+    button.innerHTML = `
+      <i class="fas fa-film"></i>
+      <span>Sección ${sectionNumber}</span>
+    `;
+    button.disabled = !!isGeneratingVideo;
+    button.addEventListener('click', handleSectionClipButtonClick);
+    buttonsWrapper.appendChild(button);
+  });
+}
+
+function handleSectionClipButtonClick(event) {
+  event.preventDefault();
+  const button = event.currentTarget;
+  const sectionNumber = Number.parseInt(button?.dataset?.sectionNumber, 10);
+
+  if (!Number.isInteger(sectionNumber) || sectionNumber <= 0) {
+    console.warn('⚠️ Número de sección inválido para generar clip:', button?.dataset);
+    return;
+  }
+
+  if (isGeneratingVideo) {
+    showNotification('⚠️ Ya hay una generación en progreso. Espera a que termine antes de generar otro clip.', 'info');
+    return;
+  }
+
+  let folderName;
+
+  if (window.currentProject && window.currentProject.folderName) {
+    folderName = window.currentProject.folderName;
+    console.log(`🎯 Usando folderName del proyecto cargado: ${folderName}`);
+  } else {
+    const folderInput = document.getElementById('folderName');
+    const inputFolderName = folderInput ? folderInput.value.trim() : '';
+
+    if (!inputFolderName) {
+      showError('Por favor, especifica el nombre de la carpeta del proyecto');
+      return;
+    }
+
+    folderName = inputFolderName
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '_')
+      .replace(/_+/g, '_')
+      .replace(/^_|_$/g, '');
+
+    console.log(`🔧 Normalizando folderName: "${inputFolderName}" → "${folderName}"`);
+  }
+
+  generateSeparateVideos(folderName, {
+    sectionNumber,
+    buttonElement: button
+  });
+}
+
+function updateSectionImageButtons(projectOverride = null) {
+  const container = document.getElementById('sectionImagesContainer');
+  const buttonsWrapper = document.getElementById('sectionImagesButtons');
+
+  if (!container || !buttonsWrapper) {
+    return;
+  }
+
+  const sectionNumbers = getAvailableSectionNumbers(projectOverride);
+
+  if (!sectionNumbers.length) {
+    container.style.display = 'none';
+    buttonsWrapper.innerHTML = '';
+    return;
+  }
+
+  container.style.display = 'block';
+  buttonsWrapper.innerHTML = '';
+
+  sectionNumbers.forEach((sectionNumber) => {
+    const button = document.createElement('button');
+    button.className = 'section-image-btn';
+    button.dataset.sectionNumber = sectionNumber.toString();
+    button.innerHTML = `
+      <i class="fas fa-images"></i>
+      <span>Sección ${sectionNumber}</span>
+    `;
+    button.disabled = !!isGeneratingImages;
+    button.addEventListener('click', handleSectionImageButtonClick);
+    buttonsWrapper.appendChild(button);
+  });
+}
+
+function handleSectionImageButtonClick(event) {
+  event.preventDefault();
+  const button = event.currentTarget;
+  const sectionNumber = Number.parseInt(button?.dataset?.sectionNumber, 10);
+
+  if (!Number.isInteger(sectionNumber) || sectionNumber <= 0) {
+    console.warn('⚠️ Número de sección inválido para generar imágenes:', button?.dataset);
+    return;
+  }
+
+  if (isGeneratingImages) {
+    showNotification('⚠️ Ya hay una generación de imágenes en progreso. Espera a que termine antes de iniciar otra.', 'info');
+    return;
+  }
+
+  let folderName;
+
+  if (window.currentProject && window.currentProject.folderName) {
+    folderName = window.currentProject.folderName;
+    console.log(`🎯 Usando folderName del proyecto cargado: ${folderName}`);
+  } else {
+    const folderInput = document.getElementById('folderName');
+    const inputFolderName = folderInput ? folderInput.value.trim() : '';
+
+    if (!inputFolderName) {
+      showError('Por favor, especifica el nombre de la carpeta del proyecto');
+      return;
+    }
+
+    folderName = inputFolderName
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '_')
+      .replace(/_+/g, '_')
+      .replace(/^_|_$/g, '');
+
+    console.log(`🔧 Normalizando folderName: "${inputFolderName}" → "${folderName}"`);
+  }
+
+  generateMissingImages({
+    folderName,
+    sectionNumber,
+    buttonElement: button
+  });
+}
+
 // Función para mostrar el botón de generación manual de video
 function showVideoGenerationButton() {
   // Mostrar el contenedor principal de generación de video
@@ -9416,16 +10360,34 @@ function showVideoGenerationButton() {
     videoContainer.style.display = 'block';
   }
   
-  const videoBtn = document.getElementById('generateVideoBtn');
-  if (videoBtn) {
-    videoBtn.style.display = 'inline-flex';
-  }
-  
   const simpleVideoBtn = document.getElementById('generateSimpleVideoBtn');
   if (simpleVideoBtn) {
     simpleVideoBtn.style.display = 'inline-flex';
   }
   
+  const generateImagesControls = document.getElementById('generateMissingImagesControls');
+  if (generateImagesControls) {
+    generateImagesControls.style.display = 'flex';
+  }
+
+  const generateImagesBtn = document.getElementById('generateMissingImagesBtn');
+  if (generateImagesBtn) {
+    generateImagesBtn.style.display = 'inline-flex';
+  }
+
+  const cancelImagesBtn = document.getElementById('cancelMissingImagesBtn');
+  if (cancelImagesBtn) {
+    cancelImagesBtn.style.display = 'none';
+  }
+
+  const generatePromptsBtn = document.getElementById('generateMissingPromptsBtn');
+  if (generatePromptsBtn) {
+    generatePromptsBtn.style.display = 'inline-flex';
+  }
+
+  initializeGoogleApiSelector();
+  renderGoogleApiSelector();
+
   // Mostrar botón de regenerar audios solo si Applio está activado
   const regenerateAudioBtn = document.getElementById('regenerateApplioAudiosBtn');
   const applioCheckbox = document.getElementById('autoGenerateApplioAudio');
@@ -9451,29 +10413,42 @@ function showVideoGenerationButton() {
     }
   }
   
-  // Mostrar todas las configuraciones por defecto (para video completo)
-  showVideoSettings();
+  updateYouTubeMetadataButtonState();
+  
+  // Actualizar botones de clips por sección cuando haya información disponible
+  updateSectionClipButtons();
+  updateSectionImageButtons();
   
   console.log('📹 Botones de generación de video mostrados');
 }
 
-// Función para mostrar/ocultar configuraciones de video
-function showVideoSettings() {
-  const animationSetting = document.getElementById('videoAnimationSetting');
-  const qualitySetting = document.getElementById('videoQualitySetting');
-  
-  if (animationSetting) animationSetting.style.display = 'block';
-  if (qualitySetting) qualitySetting.style.display = 'block';
-}
+  function updateYouTubeMetadataButtonState() {
+    const metadataBtn = document.getElementById('generateYouTubeMetadataBtn');
+    if (!metadataBtn) {
+      return;
+    }
 
-// Función para ocultar configuraciones que no aplican para video simple
-function hideVideoSettingsForSimple() {
-  const animationSetting = document.getElementById('videoAnimationSetting');
-  const qualitySetting = document.getElementById('videoQualitySetting');
-  
-  if (animationSetting) animationSetting.style.display = 'none';
-  if (qualitySetting) qualitySetting.style.display = 'none';
-}
+    const hasSections = (Array.isArray(allSections) && allSections.length > 0) ||
+      (window.currentProject && Array.isArray(window.currentProject.completedSections) && window.currentProject.completedSections.length > 0);
+
+    if (!hasSections) {
+      metadataBtn.style.display = 'none';
+      metadataBtn.dataset.metadataExists = 'false';
+      metadataBtn.title = 'Genera primero las secciones para crear metadatos.';
+      return;
+    }
+
+    metadataBtn.style.display = 'inline-flex';
+
+    const metadataExists = !!(
+      (window.currentProject && window.currentProject.youtubeMetadata && window.currentProject.youtubeMetadata.content) ||
+      (window.lastGeneratedYouTubeMetadata && window.lastGeneratedYouTubeMetadata.content)
+    );
+    metadataBtn.dataset.metadataExists = metadataExists ? 'true' : 'false';
+    metadataBtn.title = metadataExists
+      ? 'Ya existen metadatos para este proyecto. Haz clic para revisarlos.'
+      : 'Genera metadatos de YouTube para este proyecto.';
+  }
 
 // Función principal para generar video automáticamente
 async function generateVideoAutomatically() {
@@ -9482,19 +10457,38 @@ async function generateVideoAutomatically() {
     return;
   }
   
-  const folderName = document.getElementById("folderName").value.trim();
-  if (!folderName) {
-    console.warn('⚠️ No hay nombre de carpeta para generar video');
+  // ✅ CORREGIDO: Usar folderName del proyecto actual, no del input original
+  let folderName;
+  
+  if (window.currentProject && window.currentProject.folderName) {
+    // Si hay proyecto cargado, usar su folderName normalizado
+    folderName = window.currentProject.folderName;
+    console.log(`🎯 Usando folderName del proyecto cargado: ${folderName}`);
+  } else {
+    // Fallback: usar el input y normalizarlo
+    const inputFolderName = document.getElementById("folderName").value.trim();
+    if (!inputFolderName) {
+      console.warn('⚠️ No hay nombre de carpeta para generar video');
+      return;
+    }
+    // Normalizar el nombre como lo hace el backend
+    folderName = inputFolderName.toLowerCase().replace(/[^a-z0-9]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
+    console.log(`🔧 Normalizando folderName: "${inputFolderName}" → "${folderName}"`);
+  }
+  
+  if (!allSections || allSections.length === 0) {
+    console.log("⚠️ No hay secciones generadas para crear los clips");
     return;
   }
   
-  console.log('🎬 Iniciando generación automática de video...');
+  console.log('🎬 Iniciando generación automática de clips separados...');
   
   try {
-    await generateProjectVideo(folderName, true); // true = automático
+    // ✅ USAR LA MISMA FUNCIÓN QUE EL BOTÓN generateSeparateVideosBtn
+    await generateSeparateVideos(folderName);
   } catch (error) {
-    console.error('❌ Error en generación automática de video:', error);
-    showError(`Error generando video automáticamente: ${error.message}`);
+    console.error('❌ Error en generación automática de clips separados:', error);
+    showError(`Error generando clips separados automáticamente: ${error.message}`);
   }
 }
 
@@ -9515,15 +10509,10 @@ async function generateProjectVideo(folderName, isAutomatic = false) {
     
     console.log(`🎬 Generando video para proyecto: ${folderName}`);
     console.log(`🎬 Configuración: animación=${animationType}, calidad=${quality}`);
-    
-    // Mostrar progreso
-    if (!isAutomatic) {
-      showVideoProgress();
-      updateVideoProgress(0, 'Iniciando generación de video...');
-    } else {
-      // Para automático, mostrar en el output principal
-      showAutomaticVideoProgress();
-    }
+
+    // Mostrar progreso en la parte superior del panel
+    showAutomaticVideoProgress();
+    updateAutomaticVideoProgress(0, 'Iniciando generación de video...');
     
     // Realizar llamada al servidor
     const response = await fetch('/generate-project-video', {
@@ -9547,11 +10536,7 @@ async function generateProjectVideo(folderName, isAutomatic = false) {
         try {
           const progressData = JSON.parse(event.data);
           
-          if (!isAutomatic) {
-            updateVideoProgress(progressData.percent, progressData.message);
-          } else {
-            updateAutomaticVideoProgress(progressData.percent, progressData.message);
-          }
+          updateAutomaticVideoProgress(progressData.percent, progressData.message);
           
           if (progressData.percent >= 100) {
             eventSource.close();
@@ -9586,12 +10571,8 @@ async function generateProjectVideo(folderName, isAutomatic = false) {
         a.click();
         console.log('🎬 Descarga de video iniciada automáticamente');
         
-        if (!isAutomatic) {
-          showSuccess('🎬 ¡Video generado y descargado exitosamente!');
-          hideVideoProgress(); // Restaurar botón después del éxito
-        } else {
-          showAutomaticVideoComplete();
-        }
+        showAutomaticVideoComplete();
+        showSuccess('🎬 ¡Video generado y descargado exitosamente!');
       } catch (clickError) {
         console.log('🎬 Click automático falló, mostrando enlace manual');
         a.style.display = 'block';
@@ -9601,14 +10582,7 @@ async function generateProjectVideo(folderName, isAutomatic = false) {
         a.style.fontSize = '1.1rem';
         a.style.padding = '10px';
         
-        if (!isAutomatic) {
-          const progressInfo = document.getElementById('videoProgressInfo');
-          if (progressInfo) {
-            progressInfo.appendChild(document.createElement('br'));
-            progressInfo.appendChild(a);
-          }
-          hideVideoProgress(); // Restaurar botón incluso si falla el click automático
-        }
+        showAutomaticVideoComplete();
       }
       
       // Limpiar después de un tiempo
@@ -9631,26 +10605,10 @@ async function generateProjectVideo(folderName, isAutomatic = false) {
   } catch (error) {
     console.error('❌ Error generando video:', error);
     
-    if (!isAutomatic) {
-      hideVideoProgress();
-      showError(`Error generando video: ${error.message}`);
-    } else {
-      showError(`Error generando video automáticamente: ${error.message}`);
-    }
+    showError(`Error generando video: ${error.message}`);
   } finally {
     isGeneratingVideo = false;
     currentVideoSession = null;
-    
-    // Asegurarse de que el botón se restaure en todos los casos
-    if (!isAutomatic) {
-      setTimeout(() => {
-        const generateBtn = document.getElementById('generateVideoBtn');
-        if (generateBtn && generateBtn.disabled) {
-          console.log('🔄 Restaurando botón de video desde finally');
-          hideVideoProgress();
-        }
-      }, 1000);
-    }
   }
 }
 
@@ -9713,44 +10671,113 @@ async function generateSimpleProjectVideo(folderName) {
 }
 
 // Función para generar clips separados por sección
-async function generateSeparateVideos(folderName) {
+async function generateSeparateVideos(folderName, options = {}) {
+  const { sectionNumber = null, buttonElement = null } = options;
+
   if (isGeneratingVideo) {
     console.log('⚠️ Ya se está generando un video');
+    showNotification('⚠️ Ya hay una generación de video en curso. Espera a que finalice para iniciar otra.', 'info');
     return;
   }
 
   isGeneratingVideo = true;
-  const button = document.getElementById('generateSeparateVideosBtn');
-  
-  try {
-    // Deshabilitar botón y mostrar estado de carga
+
+  const button = buttonElement || document.getElementById('generateSeparateVideosBtn');
+  const isSectionButton = button?.classList?.contains('section-clip-btn');
+  const originalContent = button ? button.innerHTML : null;
+
+  if (button) {
     button.disabled = true;
-    button.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Generando Clips Separados...</span>';
-    
-    console.log('🎬 Iniciando generación de clips separados para proyecto:', folderName);
-    
+    button.dataset.originalContent = originalContent;
+    if (sectionNumber !== null && Number.isInteger(Number(sectionNumber))) {
+      button.innerHTML = `<i class="fas fa-spinner fa-spin"></i><span>Sección ${sectionNumber}...</span>`;
+    } else {
+      button.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Generando Clips Separados...</span>';
+    }
+    if (isSectionButton) {
+      button.classList.add('section-clip-btn--generating');
+    }
+  }
+
+  try {
+    console.log('🎬 Iniciando generación de clips separados para proyecto:', folderName, sectionNumber ? `→ Sección ${sectionNumber}` : '' );
+
+    const payload = { folderName };
+    if (sectionNumber !== null && Number.isInteger(Number(sectionNumber))) {
+      payload.sectionNumber = Number(sectionNumber);
+    }
+
     const response = await fetch('/generate-separate-videos', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        folderName: folderName
-      }),
+      body: JSON.stringify(payload),
     });
 
-    if (response.ok) {
-      const result = await response.json();
-      
-      if (result.success) {
-        showSuccess(`¡${result.videosGenerated} clips separados generados exitosamente en sus respectivas carpetas de sección!`);
-        console.log('✅ Clips separados generados:', result.videos);
-      } else {
-        throw new Error(result.error || 'Error interno del servidor');
+    if (!response.ok) {
+      let serverError = {};
+      try {
+        serverError = await response.json();
+      } catch (_) {
+        serverError = {};
       }
+      throw new Error(serverError.error || 'Error interno del servidor');
+    }
+
+    const result = await response.json();
+
+    if (!result.success) {
+      throw new Error(result.error || 'Error interno del servidor');
+    }
+
+    const generatedCount = Number(result.videosGenerated) || 0;
+    const skippedCount = Number(result.videosSkipped) || 0;
+    const requestedSections = Array.isArray(result.requestedSections) ? result.requestedSections : [];
+
+    console.log('✅ Clips separados generados:', {
+      total: generatedCount,
+      requestedSections,
+      omitidos: skippedCount,
+      detalle: result.videos,
+      omitidosDetalle: result.skippedVideos
+    });
+
+    if (generatedCount === 0) {
+      const infoMessage = result.message || 'No se generaron clips para la selección solicitada.';
+      showNotification(infoMessage, 'info');
+      if (skippedCount > 0) {
+        showNotification(`Se detectaron ${skippedCount} clip${skippedCount === 1 ? '' : 's'} ya generado${skippedCount === 1 ? '' : 's'} en la carpeta del proyecto.`, 'info');
+      }
+      return;
+    }
+
+    const clipWord = generatedCount === 1 ? 'clip' : 'clips';
+
+    if (sectionNumber !== null && Number.isInteger(Number(sectionNumber))) {
+      let successMessage = `¡${generatedCount} ${clipWord} de la sección ${sectionNumber} generado${generatedCount === 1 ? '' : 's'} exitosamente!`;
+      if (skippedCount > 0) {
+        successMessage += ` (${skippedCount} clip${skippedCount === 1 ? '' : 's'} ya existía${skippedCount === 1 ? '' : 'n'} y se omitieron)`;
+      }
+      showSuccess(successMessage);
+    } else if (requestedSections.length === 1) {
+      let successMessage = `¡${generatedCount} ${clipWord} de la sección ${requestedSections[0]} generado${generatedCount === 1 ? '' : 's'} exitosamente!`;
+      if (skippedCount > 0) {
+        successMessage += ` (${skippedCount} clip${skippedCount === 1 ? '' : 's'} ya existía${skippedCount === 1 ? '' : 'n'} y se omitieron)`;
+      }
+      showSuccess(successMessage);
+    } else if (requestedSections.length > 1) {
+      const baseMessage = result.message || `¡${generatedCount} ${clipWord} generados para las secciones ${requestedSections.join(', ')}!`;
+      const successMessage = skippedCount > 0
+        ? `${baseMessage} (${skippedCount} clip${skippedCount === 1 ? '' : 's'} existente${skippedCount === 1 ? '' : 's'} omitido${skippedCount === 1 ? '' : 's'})`
+        : baseMessage;
+      showSuccess(successMessage);
     } else {
-      const errorData = await response.json();
-      throw new Error(errorData.error || 'Error interno del servidor');
+      const baseMessage = result.message || `¡${generatedCount} ${clipWord} generados exitosamente en sus respectivas carpetas de sección!`;
+      const successMessage = skippedCount > 0
+        ? `${baseMessage} (${skippedCount} clip${skippedCount === 1 ? '' : 's'} existente${skippedCount === 1 ? '' : 's'} omitido${skippedCount === 1 ? '' : 's'})`
+        : baseMessage;
+      showSuccess(successMessage);
     }
 
   } catch (error) {
@@ -9759,69 +10786,23 @@ async function generateSeparateVideos(folderName) {
   } finally {
     // Restaurar botón
     isGeneratingVideo = false;
-    button.disabled = false;
-    button.innerHTML = '<i class="fas fa-video"></i><span>Clips Separados por Sección</span>';
-  }
-}
+    if (button) {
+      button.disabled = false;
+      if (button.dataset.originalContent) {
+        button.innerHTML = button.dataset.originalContent;
+        delete button.dataset.originalContent;
+      } else if (sectionNumber !== null && Number.isInteger(Number(sectionNumber))) {
+        button.innerHTML = `<i class="fas fa-film"></i><span>Sección ${sectionNumber}</span>`;
+      } else {
+        button.innerHTML = '<i class="fas fa-video"></i><span>Clips Separados por Sección</span>';
+      }
+      if (isSectionButton) {
+        button.classList.remove('section-clip-btn--generating');
+      }
+    }
 
-// Función para mostrar progreso de video manual
-function showVideoProgress() {
-  const progressContainer = document.getElementById('videoProgressContainer');
-  const generateBtn = document.getElementById('generateVideoBtn');
-  
-  if (progressContainer && generateBtn) {
-    progressContainer.style.display = 'block';
-    generateBtn.disabled = true;
-    generateBtn.innerHTML = `
-      <i class="fas fa-spinner fa-spin"></i>
-      <span>Generando Video...</span>
-    `;
-  }
-}
-
-// Función para ocultar progreso de video manual
-function hideVideoProgress() {
-  const progressContainer = document.getElementById('videoProgressContainer');
-  const generateBtn = document.getElementById('generateVideoBtn');
-  
-  if (progressContainer && generateBtn) {
-    // Ocultar inmediatamente el progreso y restaurar el botón
-    setTimeout(() => {
-      progressContainer.style.display = 'none';
-    }, 2000); // Reducido a 2 segundos
-    
-    // Restaurar el botón inmediatamente
-    generateBtn.disabled = false;
-    generateBtn.innerHTML = `
-      <i class="fas fa-play-circle"></i>
-      <span>Generar Video Completo</span>
-    `;
-    
-    console.log('🎬 Botón de video restaurado');
-  }
-}
-
-// Función para actualizar progreso de video manual
-function updateVideoProgress(percent, message) {
-  const progressFill = document.getElementById('videoProgressFill');
-  const progressText = document.getElementById('videoProgressText');
-  const progressInfo = document.getElementById('videoProgressInfo');
-  const progressLabel = document.querySelector('.video-progress-label');
-  
-  if (progressFill) {
-    progressFill.style.width = percent + '%';
-  }
-  
-  if (progressText) {
-    progressText.textContent = Math.round(percent) + '%';
-  }
-  
-  if (progressInfo) {
-    progressInfo.textContent = message;
-  }
-  
-  if (progressLabel) {
-    progressLabel.textContent = percent >= 100 ? '¡Video Completado!' : 'Generando video...';
+    updateSectionClipButtons();
+    updateSectionImageButtons();
   }
 }
 
@@ -9886,137 +10867,162 @@ function showAutomaticVideoComplete() {
   }
 }
 
-// Event listener para el botón de generación manual de video
-document.addEventListener('DOMContentLoaded', function() {
-  const generateVideoBtn = document.getElementById('generateVideoBtn');
-  
-  if (generateVideoBtn) {
-    generateVideoBtn.addEventListener('click', async function() {
-      const folderName = document.getElementById("folderName").value.trim();
-      
-      if (!folderName) {
-        showError('Por favor, especifica el nombre de la carpeta del proyecto');
-        return;
-      }
-      
-      await generateProjectVideo(folderName, false); // false = manual
-    });
-    
-    console.log('📹 Event listener para generación manual de video agregado');
+// =====================================
+// FUNCIONALIDAD REGENERAR AUDIOS (GOOGLE/APPLIO)
+// =====================================
+
+async function regenerateAllAudios() {
+  const useGoogleTTS = document.getElementById('autoGenerateAudio')?.checked || false;
+  const useApplio = document.getElementById('autoGenerateApplioAudio')?.checked || false;
+
+  if (!useGoogleTTS && !useApplio) {
+    showError('Activa al menos una opción de audio (Google o Applio) para continuar');
+    return;
   }
-});
 
-// =====================================
-// FUNCIONALIDAD REGENERAR AUDIOS APPLIO
-// =====================================
+  if (!window.currentProject || !window.currentProject.completedSections) {
+    showError('No hay un proyecto cargado con secciones completadas');
+    return;
+  }
 
-// Función principal para generar audios faltantes con Applio
-async function regenerateAllApplioAudios() {
-  try {
-    // Verificar que haya un proyecto cargado
-    if (!window.currentProject || !window.currentProject.completedSections) {
-      showError('No hay un proyecto cargado con secciones completadas');
-      return;
-    }
-    
-    // Verificar que Applio esté activado
-    const applioCheckbox = document.getElementById('autoGenerateApplioAudio');
-    if (!applioCheckbox || !applioCheckbox.checked) {
-      showError('Applio debe estar activado para generar audios');
-      return;
-    }
-    
-    // Obtener configuración actual de Applio
-    const selectedApplioVoice = document.getElementById("applioVoiceSelect").value;
-    const selectedApplioModel = document.getElementById("applioModelSelect").value;
-    const applioPitch = parseInt(document.getElementById("applioPitch").value) || 0;
-    const folderName = document.getElementById("folderName").value.trim();
-    
-    if (!folderName) {
+  // Obtener folderName normalizado del proyecto o del input
+  let folderName = window.currentProject.folderName;
+  if (!folderName) {
+    const inputFolderName = document.getElementById('folderName')?.value?.trim();
+    if (!inputFolderName) {
       showError('No se ha especificado el nombre del proyecto');
       return;
     }
-    
-    // Obtener configuración de estilo actual
-    const styleSelect = document.getElementById('styleSelect');
-    const selectedStyleValue = styleSelect ? styleSelect.value : 'professional';
-    
-    let scriptStyle = 'professional';
-    let customStyleInstructions = '';
-    
-    // Determinar el tipo de estilo y obtener las instrucciones
-    if (selectedStyleValue.startsWith('custom_')) {
-      scriptStyle = 'custom';
-      customStyleInstructions = getCustomStyleInstructions(selectedStyleValue) || '';
-      console.log(`🎨 Estilo personalizado detectado: ${selectedStyleValue}`);
-      console.log(`🎨 Instrucciones: ${customStyleInstructions.substring(0, 100)}...`);
-    } else {
-      scriptStyle = selectedStyleValue;
-    }
-    
-    const wordsMin = parseInt(document.getElementById('wordsMin')?.value) || 800;
-    const wordsMax = parseInt(document.getElementById('wordsMax')?.value) || 1100;
+    folderName = inputFolderName.toLowerCase().replace(/[^a-z0-9]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
+  }
 
-    console.log('🎤 Verificando audios faltantes y generando con Applio...');
-    console.log('🎤 Configuración:', {
-      voz: selectedApplioVoice,
-      modelo: selectedApplioModel,
-      pitch: applioPitch,
-      proyecto: folderName,
-      secciones: window.currentProject.completedSections.length,
-      estilo: scriptStyle
-    });
-    
-    // Deshabilitar botón durante el proceso
-    const regenerateBtn = document.getElementById('regenerateApplioAudiosBtn');
-    if (regenerateBtn) {
-      regenerateBtn.disabled = true;
-      regenerateBtn.innerHTML = `
-        <i class="fas fa-spinner fa-spin"></i>
-        <span>Verificando audios...</span>
-      `;
-    }
-    
-    // Mostrar progreso
-    showNotification('🔍 Verificando qué audios faltan...', 'info');
-    
-    // Llamar al backend para verificar y generar solo los audios faltantes
-    const response = await fetch('/generate-missing-applio-audios', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        folderName: folderName,
-        applioVoice: selectedApplioVoice,
-        applioModel: selectedApplioModel,
-        applioPitch: applioPitch,
-        totalSections: window.currentProject.completedSections.length,
-        scriptStyle: scriptStyle,
-        customStyleInstructions: customStyleInstructions,
-        wordsMin: wordsMin,
-        wordsMax: wordsMax
-      })
-    });
-    
-    const data = await response.json();
-    
-    if (data.success) {
-      console.log('✅ Verificación y generación completada:', data.message);
-      
-      if (data.data.generatedCount > 0) {
-        showNotification(`✅ ${data.data.generatedCount} audios faltantes generados exitosamente`, 'success');
-      } else {
-        showNotification('✅ Todos los audios ya existen, no se generó ninguno nuevo', 'info');
+  // Configuración de estilo y rangos
+  const styleSelect = document.getElementById('styleSelect');
+  const selectedStyleValue = styleSelect ? styleSelect.value : 'professional';
+
+  let scriptStyle = 'professional';
+  let customStyleInstructions = '';
+
+  if (selectedStyleValue.startsWith('custom_')) {
+    scriptStyle = 'custom';
+    customStyleInstructions = getCustomStyleInstructions(selectedStyleValue) || '';
+    console.log(`🎨 Estilo personalizado detectado: ${selectedStyleValue}`);
+    console.log(`🎨 Instrucciones: ${customStyleInstructions.substring(0, 100)}...`);
+  } else {
+    scriptStyle = selectedStyleValue;
+  }
+
+  const wordsMin = parseInt(document.getElementById('wordsMin')?.value) || 800;
+  const wordsMax = parseInt(document.getElementById('wordsMax')?.value) || 1100;
+
+  const regenerateBtn = document.getElementById('regenerateApplioAudiosBtn');
+  if (regenerateBtn) {
+    regenerateBtn.disabled = true;
+    regenerateBtn.innerHTML = `
+      <i class="fas fa-spinner fa-spin"></i>
+      <span>Verificando audios...</span>
+    `;
+  }
+
+  const summary = {
+    google: { generated: 0, pending: 0 },
+    applio: { generated: 0, pending: 0 }
+  };
+
+  try {
+    if (useGoogleTTS) {
+      console.log('🎤 Verificando audios faltantes para Google TTS...');
+      showNotification('🔍 Verificando audios de Google...', 'info');
+
+      const selectedVoice = document.getElementById('voiceSelect')?.value || 'Kore';
+      const narrationStyle = document.getElementById('narrationStyle')?.value?.trim() || '';
+
+      const response = await fetch('/generate-missing-google-audios', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          folderName,
+          voice: selectedVoice,
+          narrationStyle: narrationStyle || null,
+          scriptStyle,
+          customStyleInstructions,
+          wordsMin,
+          wordsMax
+        })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Error verificando/generando audios con Google');
       }
-    } else {
-      throw new Error(data.error || 'Error desconocido verificando/generando audios');
+
+      summary.google.generated = data.data?.generatedCount || 0;
+      summary.google.pending = data.data?.missingAudioSections?.length || 0;
+
+      if (summary.google.generated > 0) {
+        showNotification(`✅ ${summary.google.generated} audios Google generados correctamente`, 'success');
+      } else {
+        showNotification('✅ Todos los audios de Google ya existían', 'info');
+      }
+
+      console.log('✅ Resultado Google TTS:', data.message);
     }
-    
+
+    if (useApplio) {
+      console.log('🎤 Verificando audios faltantes para Applio...');
+      showNotification('🔍 Verificando audios de Applio...', 'info');
+
+      const selectedApplioVoice = document.getElementById('applioVoiceSelect')?.value;
+      const selectedApplioModel = document.getElementById('applioModelSelect')?.value;
+      const applioPitch = parseInt(document.getElementById('applioPitch')?.value) || 0;
+
+      const response = await fetch('/generate-missing-applio-audios', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          folderName,
+          applioVoice: selectedApplioVoice,
+          applioModel: selectedApplioModel,
+          applioPitch,
+          totalSections: window.currentProject.completedSections.length,
+          scriptStyle,
+          customStyleInstructions,
+          wordsMin,
+          wordsMax
+        })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Error verificando/generando audios con Applio');
+      }
+
+      summary.applio.generated = data.data?.generatedCount || 0;
+      summary.applio.pending = data.data?.missingAudioSections?.length || 0;
+
+      if (summary.applio.generated > 0) {
+        showNotification(`✅ ${summary.applio.generated} audios Applio generados correctamente`, 'success');
+      } else {
+        showNotification('✅ Todos los audios de Applio ya existían', 'info');
+      }
+
+      console.log('✅ Resultado Applio:', data.message);
+    }
+
+    const totalGenerated = summary.google.generated + summary.applio.generated;
+    const methodsUsed = [
+      useGoogleTTS ? `Google (${summary.google.generated})` : null,
+      useApplio ? `Applio (${summary.applio.generated})` : null
+    ].filter(Boolean).join(' + ');
+
+    showNotification(`🎉 Regeneración completada (${methodsUsed || 'Sin métodos activos'}). Total generados: ${totalGenerated}`, 'success');
+
   } catch (error) {
     console.error('❌ Error verificando/generando audios:', error);
     showError(`Error verificando/generando audios: ${error.message}`);
   } finally {
-    // Restaurar botón
-    const regenerateBtn = document.getElementById('regenerateApplioAudiosBtn');
     if (regenerateBtn) {
       regenerateBtn.disabled = false;
       regenerateBtn.innerHTML = `
@@ -10142,19 +11148,46 @@ async function regenerateMissingScripts() {
 }
 
 // Función para generar imágenes faltantes
-async function generateMissingImages() {
+async function generateMissingImages(options = {}) {
+  const {
+    folderName: overrideFolderName = null,
+    sectionNumber = null,
+    buttonElement = null,
+    projectOverride = null
+  } = options || {};
+  const originalButtonHtml = buttonElement ? buttonElement.innerHTML : null;
+  let attemptComfyCheckbox = null;
+  let attemptComfyToggle = null;
+
   try {
+    const projectData = projectOverride || window.currentProject;
+
     // Verificar que haya un proyecto cargado
-    if (!window.currentProject || !window.currentProject.completedSections) {
+    if (!projectData || !projectData.completedSections) {
       showError('No hay un proyecto cargado con secciones completadas');
       return;
     }
-    
-    const folderName = document.getElementById("folderName").value.trim();
-    
+
+    let folderName = overrideFolderName;
+
     if (!folderName) {
-      showError('No se ha especificado el nombre del proyecto');
-      return;
+      const folderInput = document.getElementById("folderName");
+      folderName = folderInput ? folderInput.value.trim() : '';
+
+      if (!folderName && projectData.folderName) {
+        folderName = projectData.folderName;
+      }
+
+      if (!folderName) {
+        showError('No se ha especificado el nombre del proyecto');
+        return;
+      }
+
+      folderName = folderName
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, '_')
+        .replace(/_+/g, '_')
+        .replace(/^_|_$/g, '');
     }
     
     // Obtener configuraciones para imágenes
@@ -10162,8 +11195,23 @@ async function generateMissingImages() {
     const imageCount = parseInt(document.getElementById('imagesSelect')?.value) || 5;
     const aspectRatio = document.getElementById('aspectRatioSelect')?.value || '9:16';
     
-    // Verificar si se debe usar IA local (ComfyUI)
-    const useLocalAI = document.getElementById('localAIImages')?.checked || false;
+  // Verificar si se debe usar IA local (ComfyUI)
+  const useLocalAI = document.getElementById('localAIImages')?.checked || false;
+  attemptComfyCheckbox = document.getElementById('attemptComfyCheckbox');
+  attemptComfyToggle = attemptComfyCheckbox ? attemptComfyCheckbox.closest('.attempt-comfy-toggle') : null;
+  const allowComfyFallback = attemptComfyCheckbox ? attemptComfyCheckbox.checked : false;
+
+    const selectionReady = await ensureGoogleApiSelectionReady();
+    if (!selectionReady) {
+      showError('No se pudieron cargar las APIs de Google. Intenta recargar la página.');
+      return;
+    }
+
+    const selectedGoogleApis = getSelectedGoogleApis();
+    if (!selectedGoogleApis.length) {
+      showError('Selecciona al menos una API de Google disponible antes de generar imágenes.');
+      return;
+    }
     
     // Obtener configuraciones de ComfyUI si está habilitado
     let comfyUIConfig = {};
@@ -10186,11 +11234,19 @@ async function generateMissingImages() {
       cantidadImagenes: imageCount,
       cantidadImagenesElemento: document.getElementById('imagesSelect')?.value,
       usarIALocal: useLocalAI,
-      configComfyUI: useLocalAI ? comfyUIConfig : 'No aplicable'
+      intentarConComfy: allowComfyFallback,
+      apisSeleccionadas: selectedGoogleApis,
+      configComfyUI: useLocalAI ? comfyUIConfig : 'No aplicable',
+      sectionNumber
     });
+
+    if (!allowComfyFallback) {
+      showNotification('🔁 Se intentará generar imágenes solo con las APIs. Si fallan, habrá un reintento automático en 60 segundos.', 'info');
+    }
     
     // Deshabilitar botón y mostrar progreso
     const generateBtn = document.getElementById('generateMissingImagesBtn');
+    const cancelBtn = document.getElementById('cancelMissingImagesBtn');
     if (generateBtn) {
       generateBtn.disabled = true;
       generateBtn.innerHTML = `
@@ -10198,6 +11254,32 @@ async function generateMissingImages() {
         <span>Generando Imágenes...</span>
       `;
     }
+    if (cancelBtn) {
+      cancelBtn.style.display = 'inline-flex';
+      cancelBtn.disabled = false;
+      cancelBtn.innerHTML = `
+        <i class="fas fa-stop-circle"></i>
+        <span>Detener Generación</span>
+      `;
+    }
+    if (buttonElement) {
+      buttonElement.disabled = true;
+      buttonElement.innerHTML = `
+        <i class="fas fa-spinner fa-spin"></i>
+        <span>Generando...</span>
+      `;
+    }
+    setGoogleApiCheckboxesDisabled(true);
+    if (attemptComfyCheckbox) {
+      attemptComfyCheckbox.disabled = true;
+      if (attemptComfyToggle) {
+        attemptComfyToggle.classList.add('is-disabled');
+      }
+    }
+
+    isGeneratingImages = true;
+    isCancellingImages = false;
+    updateSectionImageButtons(projectData);
     
     console.log('📤 ENVIANDO AL SERVIDOR:', {
       folderName: folderName,
@@ -10205,7 +11287,9 @@ async function generateMissingImages() {
       imageCount: imageCount,
       aspectRatio: aspectRatio,
       useLocalAI: useLocalAI,
-      comfyUIConfig: comfyUIConfig
+      comfyUIConfig: comfyUIConfig,
+      sectionNumber: sectionNumber,
+      selectedApis: selectedGoogleApis
     });
 
     // Hacer solicitud al servidor
@@ -10220,14 +11304,29 @@ async function generateMissingImages() {
         imageCount: imageCount,
         aspectRatio: aspectRatio,
         useLocalAI: useLocalAI,
-        comfyUIConfig: comfyUIConfig
+        comfyUIConfig: comfyUIConfig,
+        allowComfyFallback: allowComfyFallback,
+        sectionNumber: sectionNumber,
+        selectedApis: selectedGoogleApis
       })
     });
     
     const data = await response.json();
-    
+
+    if (!response.ok) {
+      throw new Error(data?.error || data?.message || 'Error generando imágenes');
+    }
+
+    if (data.cancelled) {
+      const cancelPrefix = sectionNumber ? `Sección ${sectionNumber}` : 'Proceso completo';
+      showNotification(`⛔️ ${cancelPrefix}: ${data.message || 'La generación de imágenes fue cancelada.'}`, 'info');
+      console.log('🛑 Generación cancelada por el usuario:', data);
+      return;
+    }
+
     if (data.success) {
-      showSuccess(`✅ Proceso completado: ${data.message}`);
+      const successPrefix = sectionNumber ? `Sección ${sectionNumber}` : 'Proceso completo';
+      showSuccess(`✅ ${successPrefix}: ${data.message}`);
       console.log('🖼️ Resultados:', data.data);
       
       // Mostrar detalles si hay información adicional
@@ -10245,8 +11344,16 @@ async function generateMissingImages() {
     
   } catch (error) {
     console.error('❌ Error generando imágenes:', error);
-    showError(`Error generando imágenes: ${error.message}`);
+    if (error?.code === 'CANCELLED_BY_USER' || error?.message?.toLowerCase().includes('cancelado')) {
+      showNotification(`⛔️ ${error.message}`, 'info');
+    } else {
+      showError(`Error generando imágenes: ${error.message}`);
+    }
   } finally {
+    isGeneratingImages = false;
+    isCancellingImages = false;
+    updateSectionImageButtons(projectOverride || window.currentProject);
+
     // Restaurar botón
     const generateBtn = document.getElementById('generateMissingImagesBtn');
     if (generateBtn) {
@@ -10254,6 +11361,86 @@ async function generateMissingImages() {
       generateBtn.innerHTML = `
         <i class="fas fa-image"></i>
         <span>Generar Imágenes Faltantes</span>
+      `;
+    }
+    const cancelBtn = document.getElementById('cancelMissingImagesBtn');
+    if (cancelBtn) {
+      cancelBtn.style.display = 'none';
+      cancelBtn.disabled = false;
+      cancelBtn.innerHTML = `
+        <i class="fas fa-stop-circle"></i>
+        <span>Detener Generación</span>
+      `;
+    }
+    if (buttonElement) {
+      buttonElement.disabled = false;
+      if (originalButtonHtml !== null) {
+        buttonElement.innerHTML = originalButtonHtml;
+      } else {
+        buttonElement.innerHTML = `
+          <i class="fas fa-images"></i>
+          <span>Sección ${sectionNumber || ''}</span>
+        `;
+      }
+    }
+    if (attemptComfyCheckbox) {
+      attemptComfyCheckbox.disabled = false;
+      if (attemptComfyToggle) {
+        attemptComfyToggle.classList.remove('is-disabled');
+      }
+    }
+    setGoogleApiCheckboxesDisabled(false);
+  }
+}
+
+async function cancelMissingImagesGeneration() {
+  if (!isGeneratingImages) {
+    showNotification('ℹ️ No hay una generación de imágenes en curso.', 'info');
+    return;
+  }
+
+  if (isCancellingImages) {
+    showNotification('⏳ Ya se solicitó la cancelación. Espera un momento.', 'info');
+    return;
+  }
+
+  const cancelBtn = document.getElementById('cancelMissingImagesBtn');
+  if (cancelBtn) {
+    cancelBtn.disabled = true;
+    cancelBtn.innerHTML = `
+      <i class="fas fa-spinner fa-spin"></i>
+      <span>Cancelando...</span>
+    `;
+  }
+
+  isCancellingImages = true;
+
+  try {
+    const response = await fetch('/api/cancel-missing-images', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+
+    const data = await response.json();
+
+    if (response.ok && data.success) {
+      showNotification(data.message || 'Cancelación solicitada. El proceso se detendrá en breve.', 'info');
+    } else {
+      const errorMessage = data?.message || data?.error || 'No se pudo cancelar la generación de imágenes.';
+      showError(errorMessage);
+    }
+  } catch (error) {
+    console.error('❌ Error cancelando la generación de imágenes:', error);
+    showError(`Error cancelando la generación de imágenes: ${error.message}`);
+  } finally {
+    isCancellingImages = false;
+    if (cancelBtn) {
+      cancelBtn.disabled = false;
+      cancelBtn.innerHTML = `
+        <i class="fas fa-stop-circle"></i>
+        <span>Detener Generación</span>
       `;
     }
   }
@@ -10586,14 +11773,15 @@ async function checkComfyUIStatus() {
 }
 
 function getComfyUISettings() {
+  // Valores fijos: 15 pasos y resolución 1280x720 (o 720x1280 para vertical)
   return {
-    steps: document.getElementById('comfyUISteps')?.value || 25,
-    guidance: document.getElementById('comfyUIGuidance')?.value || 3.5,
-    width: document.getElementById('comfyUIWidth')?.value || 1280,
-    height: document.getElementById('comfyUIHeight')?.value || 720,
-    sampler: document.getElementById('comfyUISampler')?.value || 'euler',
-    scheduler: document.getElementById('comfyUIScheduler')?.value || 'simple',
-    negativePrompt: document.getElementById('comfyUINegativePrompt')?.value || 'low quality, blurry, distorted'
+    steps: 15,
+    guidance: 3.5,
+    width: 1280,
+    height: 720,
+    sampler: 'euler',
+    scheduler: 'simple',
+    negativePrompt: 'low quality, blurry, distorted'
   };
 }
 
@@ -10601,7 +11789,8 @@ function getComfyUISettings() {
 window.generateProjectVideo = generateProjectVideo;
 window.generateVideoAutomatically = generateVideoAutomatically;
 window.showVideoGenerationButton = showVideoGenerationButton;
-window.regenerateAllApplioAudios = regenerateAllApplioAudios;
+window.regenerateAllAudios = regenerateAllAudios;
+window.regenerateAllApplioAudios = regenerateAllAudios;
 window.applyComfyUIPreset = applyComfyUIPreset;
 window.checkComfyUIStatus = checkComfyUIStatus;
 window.getComfyUISettings = getComfyUISettings;
