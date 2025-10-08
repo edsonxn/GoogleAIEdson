@@ -135,12 +135,12 @@ export class ComfyUIClient {
     // Función principal para generar imagen con timeout y reinicio automático
     async generateImage(prompt, options = {}) {
         const startTime = Date.now();
-        const timeout = 150000; // 150 segundos timeout
+    const timeout = 300000; // 300 segundos timeout
 
         try {
             console.log(`🎨 [COMFYUI CLIENT] Generando imagen: "${prompt}"`);
             console.log(`📊 [COMFYUI CLIENT] Opciones recibidas:`, options);
-            console.log(`⏱️ [COMFYUI CLIENT] Timeout configurado: 150 segundos`);
+            console.log(`⏱️ [COMFYUI CLIENT] Timeout configurado: 300 segundos`);
 
             // Generar workflow
             const workflow = this.generateWorkflow(prompt, options);
@@ -172,7 +172,7 @@ export class ComfyUIClient {
 
             // Esperar a que se complete la generación con timeout estricto
             const result = await Promise.race([
-                this.waitForCompletion(promptId, 150), // 150 segundos máximo
+                this.waitForCompletion(promptId, 300), // 300 segundos máximo
                 new Promise((_, reject) => 
                     setTimeout(() => reject(new Error('TIMEOUT_GENERATION')), timeout)
                 )
@@ -209,7 +209,7 @@ export class ComfyUIClient {
     }
 
     // Función para esperar a que se complete la generación con timeout más estricto
-    async waitForCompletion(promptId, timeoutSeconds = 150) {
+    async waitForCompletion(promptId, timeoutSeconds = 300) {
         let completed = false;
         let attempts = 0;
         const maxAttempts = timeoutSeconds; // 1 segundo por intento

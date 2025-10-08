@@ -26,6 +26,7 @@ Un generador automático de guiones que utiliza inteligencia artificial para cre
 - **Generación automática**: Genera todas las secciones de una vez
 - **Audio automático**: Incluye generación de audio en el proceso automático
 - **Organización de archivos**: Estructura automática de carpetas por proyecto
+- **Gestión multiproyecto**: Lanza varios temas en paralelo reutilizando la misma configuración
 
 ## 🛠️ Instalación
 
@@ -60,6 +61,27 @@ Edita el archivo `.env` y reemplaza:
 ```env
 GOOGLE_API_KEY=tu_google_api_key_aqui
 ```
+
+#### Parámetros opcionales para ComfyUI
+
+Puedes personalizar la resolución predeterminada, los pasos de muestreo y el valor de CFG directamente desde tu archivo `.env` sin tocar el código. Los valores aceptan los siguientes formatos:
+
+```env
+# Resoluciones base (ancho x alto)
+COMFY_RESOLUTION_16_9=800x400
+COMFY_RESOLUTION_9_16=400x800
+COMFY_RESOLUTION_1_1=800x800
+
+# Parámetros numéricos
+COMFY_DEFAULT_STEPS=20
+COMFY_DEFAULT_CFG=2.0
+# (Opcional) ajustar guidance si lo necesitas
+COMFY_DEFAULT_GUIDANCE=3.5
+```
+
+- Las resoluciones deben expresarse como `ANCHOxALTO`.
+- Si omites alguna variable, el sistema utilizará los valores recomendados (`800x400`, `400x800`, `800x800`, `15` pasos y `1.8` de CFG).
+- Los valores definidos en el `.env` se reflejan automáticamente en el backend y en los controles del frontend cada vez que recargas la página.
 
 ### Obtener API Key de Google AI
 
@@ -100,6 +122,15 @@ El servidor estará disponible en `http://localhost:3000`
 - ✅ **Incluir audio Google**: Genera audio con voces de Google
 - ✅ **Incluir audio Applio**: Usa voces personalizadas de Applio
 
+### 🧵 Generación Multiproyecto
+
+- Agrega proyectos adicionales desde el panel "Proyectos adicionales" en la parte superior del formulario.
+- Cada entrada puede definir su propia carpeta de salida y tema del guion.
+- Al iniciar la generación automática, el proyecto principal se muestra en la UI, mientras que los adicionales se procesan en paralelo en segundo plano.
+- Todos los proyectos comparten la configuración actual (secciones, estilos, imágenes, audio) y generan sus archivos en `public/outputs/<carpeta>`.
+- Recibirás notificaciones cuando la cola multiproyecto inicie y si alguna ejecución adicional falla.
+- Si marcas **Incluir audio Applio**, los audios se generan uno por uno siguiendo el orden de los temas: primero el proyecto principal y luego cada tema adicional.
+
 ## 🎤 Configuración de Applio (Opcional)
 
 Para usar voces personalizadas, necesitas tener Applio instalado:
@@ -132,6 +163,7 @@ GoogleAIEdson/
 - `POST /generate-audio` - Genera audio con Google TTS
 - `POST /generate-section-audio` - Genera audio con Applio
 - `POST /regenerate-image` - Regenera una imagen específica
+- `POST /generate-batch-automatic/multi` - Inicia la generación automática para múltiples proyectos en paralelo
 
 ## 🎮 Casos de Uso
 

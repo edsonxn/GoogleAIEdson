@@ -7,6 +7,55 @@ let globalChapterStructure = [];
 // Variable global para almacenar las keywords de cada imagen para el botón de refresh
 let currentImageKeywords = [];
 
+const IMAGE_MODEL_DEFAULT = 'gemini2';
+const IMAGE_MODEL_LABELS = {
+  gemini2: 'Gemini 2.0 Flash',
+  gemini25: 'Gemini 2.5 Flash (Nuevo)'
+};
+
+function normalizeImageModel(model) {
+  if (!model) {
+    return IMAGE_MODEL_DEFAULT;
+  }
+
+  const value = String(model).trim().toLowerCase();
+
+  if (value === 'gemini' || value === 'gemini2' || value === 'gemini-2' || value === 'gemini-2.0-flash' || value === 'gemini-2.0') {
+    return 'gemini2';
+  }
+
+  if (
+    value === 'gemini25' ||
+    value === 'gemini-2.5' ||
+    value === 'gemini-2.5-flash' ||
+    value === 'gemini-2.5-flash-image'
+  ) {
+    return 'gemini25';
+  }
+
+  return model;
+}
+
+function getSelectedImageModel() {
+  const select = document.getElementById('imageModelSelect');
+  const selectedValue = select?.value;
+  const normalized = normalizeImageModel(selectedValue);
+
+  if (select && normalized && normalized !== selectedValue) {
+    const hasOption = Array.from(select.options || []).some(option => option.value === normalized);
+    if (hasOption) {
+      select.value = normalized;
+    }
+  }
+
+  return normalized || IMAGE_MODEL_DEFAULT;
+}
+
+function getImageModelLabel(model) {
+  const normalized = normalizeImageModel(model);
+  return IMAGE_MODEL_LABELS[normalized] || normalized || IMAGE_MODEL_DEFAULT;
+}
+
 // ================================
 // VARIABLES GLOBALES PARA GENERACIÓN DE VIDEO
 // ================================
@@ -18,6 +67,306 @@ let currentVideoSession = null;
 // ================================
 let isGeneratingImages = false;
 let isCancellingImages = false;
+
+// ================================
+// GESTOR DE PROYECTOS MÚLTIPLES
+// ================================
+const multiProjectState = {
+  container: null,
+  addButton: null,
+  counter: 1,
+  entries: []
+};
+
+function getAdditionalProjectsContainer() {
+  if (!multiProjectState.container) {
+    multiProjectState.container = document.getElementById('additionalProjectsContainer');
+  }
+  return multiProjectState.container;
+}
+
+function getAddProjectButton() {
+  if (!multiProjectState.addButton) {
+    multiProjectState.addButton = document.getElementById('addProjectEntryBtn');
+  }
+  return multiProjectState.addButton;
+}
+
+function createProjectEntryElement({ index, folderName = '', topic = '' }) {
+  const entry = document.createElement('div');
+  entry.className = 'project-entry';
+  entry.dataset.projectIndex = String(index);
+
+  const folderId = `projectFolder_${index}`;
+  const topicId = `projectTopic_${index}`;
+
+  entry.innerHTML = `
+    <div class="field-group">
+      <label for="${folderId}" class="field-label">
+        <i class="fas fa-folder"></i>
+        Carpeta:
+      </label>
+      <input type="text" id="${folderId}" class="field-input project-folder-input" data-project-role="folder" placeholder="Ej: proyecto_secundario" />
+    </div>
+    <div class="field-group topic-group">
+      <label for="${topicId}" class="field-label">
+        <i class="fas fa-edit"></i>
+        Tema del Guión:
+      </label>
+      <textarea id="${topicId}" class="topic-textarea project-topic-input" data-project-role="topic" rows="3" placeholder="Describe el guión para este proyecto"></textarea>
+    </div>
+    <button type="button" class="project-remove-btn" aria-label="Eliminar proyecto">
+      <i class="fas fa-times"></i>
+    </button>
+  `;
+
+  const folderInput = entry.querySelector('.project-folder-input');
+  const topicInput = entry.querySelector('.project-topic-input');
+  if (folderInput) {
+    folderInput.value = folderName;
+  }
+  if (topicInput) {
+    topicInput.value = topic;
+  }
+
+  const removeBtn = entry.querySelector('.project-remove-btn');
+  if (removeBtn) {
+    removeBtn.addEventListener('click', () => removeAdditionalProjectEntry(index));
+  }
+
+  return entry;
+}
+
+function addAdditionalProjectEntry(defaults = {}) {
+  const container = getAdditionalProjectsContainer();
+  if (!container) {
+    console.warn('⚠️ No se encontró el contenedor para proyectos adicionales');
+    return;
+  }
+
+  const projectIndex = multiProjectState.counter += 1;
+  const entryElement = createProjectEntryElement({
+    index: projectIndex,
+    folderName: defaults.folderName || '',
+    topic: defaults.topic || ''
+  });
+
+  container.appendChild(entryElement);
+  multiProjectState.entries.push({ index: projectIndex, element: entryElement });
+
+  setTimeout(() => {
+    const topicInput = entryElement.querySelector('.project-topic-input');
+    if (topicInput) {
+      topicInput.focus();
+    }
+  }, 50);
+}
+
+function removeAdditionalProjectEntry(index) {
+  const container = getAdditionalProjectsContainer();
+  if (!container) {
+    return;
+  }
+
+  const entryRecordIndex = multiProjectState.entries.findIndex(entry => entry.index === index);
+  if (entryRecordIndex === -1) {
+    return;
+  }
+
+  const [{ element }] = multiProjectState.entries.splice(entryRecordIndex, 1);
+  if (element && element.parentElement === container) {
+    container.removeChild(element);
+  }
+}
+
+function collectProjectEntries() {
+  const projects = [];
+
+  const baseFolderInput = document.getElementById('folderName');
+  const baseTopicInput = document.getElementById('prompt');
+
+  if (baseTopicInput) {
+    projects.push({
+      folderName: baseFolderInput ? baseFolderInput.value.trim() : '',
+      topic: baseTopicInput.value.trim(),
+      isPrimary: true
+    });
+  }
+
+  const container = getAdditionalProjectsContainer();
+  if (container) {
+    container.querySelectorAll('.project-entry').forEach((entryElement) => {
+      const folderInput = entryElement.querySelector('[data-project-role="folder"]');
+      const topicInput = entryElement.querySelector('[data-project-role="topic"]');
+      const folderName = folderInput ? folderInput.value.trim() : '';
+      const topic = topicInput ? topicInput.value.trim() : '';
+
+      if (topic.length > 0) {
+        projects.push({
+          folderName,
+          topic,
+          isPrimary: false
+        });
+      }
+    });
+  }
+
+  return projects;
+}
+
+function createSafeFolderName(input) {
+  const normalized = (input || '')
+    .toString()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+
+  const cleaned = normalized
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_|_$/g, '')
+    .substring(0, 60);
+
+  if (cleaned.length > 0) {
+    return cleaned;
+  }
+
+  return `project_${Date.now()}`;
+}
+
+function normalizeProjectEntries(rawEntries = []) {
+  const seenNames = new Set();
+  const normalizedProjects = [];
+
+  rawEntries.forEach((entry, index) => {
+    if (!entry || !entry.topic || !entry.topic.trim()) {
+      return;
+    }
+
+    const originalFolderName = entry.folderName ? entry.folderName.trim() : '';
+    const baseNameSource = originalFolderName || entry.topic;
+    let safeFolderName = createSafeFolderName(baseNameSource);
+
+    if (!safeFolderName) {
+      safeFolderName = `project_${index + 1}`;
+    }
+
+    let uniqueName = safeFolderName;
+    let counter = 2;
+    while (seenNames.has(uniqueName)) {
+      uniqueName = `${safeFolderName}_${counter}`;
+      counter += 1;
+    }
+
+    seenNames.add(uniqueName);
+
+    normalizedProjects.push({
+      ...entry,
+      topic: entry.topic.trim(),
+      folderName: uniqueName,
+      safeFolderName: uniqueName,
+      originalFolderName,
+      index
+    });
+  });
+
+  return normalizedProjects;
+}
+
+function triggerParallelProjectGeneration(projects, sharedConfig) {
+  if (!Array.isArray(projects) || !projects.length) {
+    return;
+  }
+
+  (async () => {
+    try {
+      console.log('🚀 Lanzando generación paralela para proyectos adicionales:', {
+        proyectos: projects,
+        configuracion: sharedConfig
+      });
+
+      showNotification(`🚀 Iniciando ${projects.length} proyecto(s) adicional(es) en paralelo...`, 'info');
+
+      const response = await fetch('/generate-batch-automatic/multi', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          projects: projects.map((project, projectIndex) => ({
+            topic: project.topic,
+            folderName: project.folderName,
+            originalFolderName: project.originalFolderName,
+            isPrimary: Boolean(project.isPrimary),
+            projectKey: project.folderName,
+            index: projectIndex,
+            voice: project.voice || sharedConfig?.voice || sharedConfig?.selectedVoice || null
+          })),
+          sharedConfig
+        })
+      });
+
+      const result = await response.json();
+
+      if (!response.ok || !result?.success) {
+        throw new Error(result?.error || 'Error iniciando proyectos adicionales');
+      }
+
+      const folderSummary = projects.map(project => {
+        const topicSnippet = project.topic.length > 60 ? `${project.topic.slice(0, 57)}...` : project.topic;
+        return `${topicSnippet} → ${project.folderName}`;
+      }).join('; ');
+      showNotification(`✅ Proyectos adicionales en proceso: ${folderSummary}`, 'success');
+    } catch (error) {
+      console.error('❌ Error lanzando generación paralela:', error);
+      showError(`No se pudieron iniciar los proyectos adicionales: ${error.message}`);
+    }
+  })();
+}
+
+function getGoogleVoiceOptions() {
+  const selectElement = document.getElementById('voiceSelect');
+  if (!selectElement || !selectElement.options) {
+    return [];
+  }
+
+  const values = Array.from(selectElement.options)
+    .map(option => option?.value?.trim())
+    .filter(value => Boolean(value));
+
+  return Array.from(new Set(values));
+}
+
+function createRandomVoicePicker(voices = [], fallbackVoice = 'Orus') {
+  const sanitizedVoices = Array.isArray(voices) ? voices.filter(Boolean) : [];
+
+  if (!sanitizedVoices.length) {
+    return () => fallbackVoice;
+  }
+
+  let pool = Array.from(new Set(sanitizedVoices));
+
+  return () => {
+    if (!pool.length) {
+      pool = Array.from(new Set(sanitizedVoices));
+    }
+
+    const index = Math.floor(Math.random() * pool.length);
+    const [selected] = pool.splice(index, 1);
+    return selected || fallbackVoice;
+  };
+}
+
+function initializeMultiProjectManager() {
+  const addButton = getAddProjectButton();
+  if (addButton) {
+    addButton.addEventListener('click', () => addAdditionalProjectEntry());
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  initializeMultiProjectManager();
+});
 
 const GOOGLE_IMAGE_API_DEFINITIONS = [
   { id: 'GRATIS', label: 'API Gratis 1', type: 'free', badge: 'Gratis' },
@@ -343,8 +692,9 @@ function updateGenerateImagesButtonState() {
   }
 
   const hasSelectableApis = googleApiSelectorState.available.some((api) => api.available);
+  const comfyOnlyMode = document.getElementById('attemptComfyCheckbox')?.checked || false;
 
-  if (!hasSelectableApis) {
+  if (!hasSelectableApis && !comfyOnlyMode) {
     generateBtn.disabled = true;
     generateBtn.dataset.disabledNoApis = 'true';
     generateBtn.title = 'Configura al menos una API de Google disponible para generar imágenes.';
@@ -353,7 +703,9 @@ function updateGenerateImagesButtonState() {
       generateBtn.disabled = false;
     }
     generateBtn.dataset.disabledNoApis = 'false';
-    if (generateBtn.title === 'Configura al menos una API de Google disponible para generar imágenes.') {
+    if (!hasSelectableApis && comfyOnlyMode) {
+      generateBtn.title = 'Modo Comfy directo activo: se omiten las APIs de Google.';
+    } else if (generateBtn.title === 'Configura al menos una API de Google disponible para generar imágenes.' || generateBtn.title === 'Modo Comfy directo activo: se omiten las APIs de Google.') {
       generateBtn.title = '';
     }
   }
@@ -1166,6 +1518,35 @@ function toggleApplioVoiceDropdown() {
   }
 }
 
+function updateRandomVoiceSelectionUI() {
+  const voiceSelect = document.getElementById('voiceSelect');
+  const randomCheckbox = document.getElementById('randomGoogleVoice');
+
+  if (!voiceSelect || !randomCheckbox) {
+    return;
+  }
+
+  const isRandomEnabled = Boolean(randomCheckbox.checked);
+
+  if (isRandomEnabled) {
+    if (!voiceSelect.dataset.manualVoice) {
+      voiceSelect.dataset.manualVoice = voiceSelect.value;
+    }
+    voiceSelect.disabled = true;
+    voiceSelect.classList.add('is-disabled');
+    voiceSelect.title = 'La voz se elegirá automáticamente para cada proyecto.';
+  } else {
+    voiceSelect.disabled = false;
+    voiceSelect.classList.remove('is-disabled');
+    voiceSelect.title = '';
+
+    if (voiceSelect.dataset.manualVoice) {
+      voiceSelect.value = voiceSelect.dataset.manualVoice;
+      delete voiceSelect.dataset.manualVoice;
+    }
+  }
+}
+
 // Función para mostrar/ocultar las configuraciones de voz Google según la casilla correspondiente
 function toggleGoogleVoiceDropdown() {
   const checkbox = document.getElementById('autoGenerateAudio');
@@ -1183,6 +1564,8 @@ function toggleGoogleVoiceDropdown() {
     console.log('🔇 Ocultando configuraciones de voz Google...');
     voiceGroup.style.display = 'none';
   }
+
+  updateRandomVoiceSelectionUI();
 }
 
 // Inicializar eventos para Applio cuando se carga la página
@@ -1231,6 +1614,12 @@ document.addEventListener('DOMContentLoaded', function() {
     console.log('✅ Controles de Google Voice inicializados');
   } else {
     console.error('❌ No se encontró la casilla de Google Audio');
+  }
+
+  const randomCheckbox = document.getElementById('randomGoogleVoice');
+  if (randomCheckbox) {
+    randomCheckbox.addEventListener('change', updateRandomVoiceSelectionUI);
+    updateRandomVoiceSelectionUI();
   }
 });
 
@@ -1413,9 +1802,33 @@ async function runAutoGeneration() {
   
   isAutoGenerating = true;
   
-  const topic = promptInput.value.trim();
-  const folderName = document.getElementById("folderName").value.trim();
-  const selectedVoice = document.getElementById("voiceSelect").value;
+  const normalizedProjects = normalizeProjectEntries(collectProjectEntries());
+  if (!normalizedProjects.length) {
+    showError('Agrega al menos un tema antes de iniciar la generación automática.');
+    isAutoGenerating = false;
+    return;
+  }
+
+  const primaryIndex = normalizedProjects.findIndex(project => project.isPrimary);
+  const resolvedPrimaryIndex = primaryIndex >= 0 ? primaryIndex : 0;
+  const primaryProject = normalizedProjects[resolvedPrimaryIndex];
+  const parallelProjects = normalizedProjects.filter((project, index) => index !== resolvedPrimaryIndex);
+
+  const folderInputElement = document.getElementById("folderName");
+  if (folderInputElement) {
+    const displayFolderName = primaryProject.originalFolderName || primaryProject.folderName;
+    folderInputElement.value = displayFolderName;
+    folderInputElement.dataset.safeFolderName = primaryProject.folderName;
+  }
+
+  if (promptInput) {
+    promptInput.value = primaryProject.topic;
+  }
+
+  const topic = primaryProject.topic;
+  const folderName = primaryProject.folderName;
+  const voiceSelectElement = document.getElementById("voiceSelect");
+  const manualSelectedVoice = voiceSelectElement?.value || 'Orus';
   const narrationStyle = document.getElementById("narrationStyle")?.value?.trim() || '';
   const selectedSections = document.getElementById("sectionsNumber").value;
   const minWords = parseInt(document.getElementById("minWords").value) || 800;
@@ -1424,13 +1837,20 @@ async function runAutoGeneration() {
   const imageCount = parseInt(document.getElementById("imagesSelect")?.value) || 5;
   const aspectRatio = document.getElementById("aspectRatioSelect")?.value || '16:9';
   const promptModifier = document.getElementById("promptModifier")?.value?.trim() || '';
+  const selectedImageModel = getSelectedImageModel();
   const selectedLlmModel = document.getElementById("llmModelSelect")?.value || 'gemini';
   let googleImages = document.getElementById("googleImages")?.checked || false;
   let localAIImages = document.getElementById("localAIImages")?.checked || false;
+  const comfyOnlyMode = document.getElementById('attemptComfyCheckbox')?.checked || false;
+
+  if (comfyOnlyMode && !localAIImages) {
+    localAIImages = true;
+  }
   
   console.log("🖼️ Configuración de imágenes:");
   console.log("  - Google Images:", googleImages);
   console.log("  - Local AI Images (ComfyUI):", localAIImages);
+  console.log("  - Modelo seleccionado:", getImageModelLabel(selectedImageModel));
   
   // Calcular automáticamente skipImages: true si NO hay opciones de imágenes activas
   let skipImages = !googleImages && !localAIImages;
@@ -1441,6 +1861,54 @@ async function runAutoGeneration() {
   const selectedApplioVoice = document.getElementById("applioVoiceSelect").value;
   const selectedApplioModel = document.getElementById("applioModelSelect").value;
   const applioPitch = parseInt(document.getElementById("applioPitch").value) || 0;
+
+  const applioQueueRunId = generateApplioAudio
+    ? `applio-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`
+    : null;
+
+  const randomVoiceCheckbox = document.getElementById("randomGoogleVoice");
+  const randomVoiceEnabled = Boolean(generateAudio && randomVoiceCheckbox?.checked);
+  const availableGoogleVoices = getGoogleVoiceOptions();
+  const useRandomVoices = randomVoiceEnabled && availableGoogleVoices.length > 0;
+  const randomVoicePicker = useRandomVoices
+    ? createRandomVoicePicker(availableGoogleVoices, manualSelectedVoice)
+    : null;
+  const voiceAssignmentsMap = new Map();
+
+  if (randomVoiceEnabled && !availableGoogleVoices.length) {
+    console.warn('⚠️ Se solicitó voz aleatoria pero no hay opciones disponibles en el selector. Se usará la voz seleccionada manualmente.');
+  }
+
+  const pickVoiceForProject = () => {
+    if (useRandomVoices && randomVoicePicker) {
+      return randomVoicePicker();
+    }
+    return manualSelectedVoice;
+  };
+
+  const effectivePrimaryVoice = pickVoiceForProject();
+  voiceAssignmentsMap.set(primaryProject.folderName, effectivePrimaryVoice);
+
+  parallelProjects.forEach(project => {
+    const assignedVoice = pickVoiceForProject();
+    voiceAssignmentsMap.set(project.folderName, assignedVoice);
+  });
+
+  const voiceAssignments = Object.fromEntries(voiceAssignmentsMap);
+
+  if (voiceSelectElement) {
+    voiceSelectElement.value = effectivePrimaryVoice;
+  }
+  currentVoice = effectivePrimaryVoice;
+
+  if (useRandomVoices) {
+    console.log('🎲 Voces aleatorias asignadas por proyecto:', voiceAssignments);
+  }
+
+  const parallelProjectsWithVoices = parallelProjects.map(project => ({
+    ...project,
+    voice: voiceAssignmentsMap.get(project.folderName) || effectivePrimaryVoice
+  }));
   
   // 🔧 VALIDACIÓN SIMPLIFICADA: Las imágenes se pueden generar con cualquier combinación
   // Prioridad: Si está activada IA Local, usar ComfyUI; si está Google Images, usar APIs de Google
@@ -1450,7 +1918,23 @@ async function runAutoGeneration() {
   console.log(`🖼️ Imágenes de Google: ${googleImages ? 'ACTIVADA' : 'DESACTIVADA'}`);
   console.log(`🧠 Imágenes IA Local: ${localAIImages ? 'ACTIVADA' : 'DESACTIVADA'}`);
   console.log(`🚫 Omitir imágenes (auto): ${skipImages ? 'ACTIVADA' : 'DESACTIVADA'}`);
+  console.log(`🎛️ Modo Comfy directo: ${comfyOnlyMode ? 'ACTIVADO' : 'DESACTIVADO'}`);
+  if (parallelProjects.length) {
+    console.log('🔀 Proyectos adicionales detectados para ejecución paralela:', parallelProjectsWithVoices);
+  }
   
+  let selectedGoogleApiIds = [];
+  if (!skipImages && googleImages && typeof ensureGoogleApiSelectionReady === 'function') {
+    try {
+      const selectionReady = await ensureGoogleApiSelectionReady();
+      if (selectionReady && typeof getSelectedGoogleApis === 'function') {
+        selectedGoogleApiIds = getSelectedGoogleApis();
+      }
+    } catch (selectionError) {
+      console.warn('⚠️ No se pudieron preparar las APIs de Google para proyectos paralelos:', selectionError);
+    }
+  }
+
   if (!topic) {
     promptInput.focus();
     promptInput.style.border = "2px solid #e53e3e";
@@ -1513,6 +1997,45 @@ async function runAutoGeneration() {
     }
     
     const customStyleInstructions = getCustomStyleInstructions(selectedStyle);
+
+    if (parallelProjects.length) {
+      const sharedParallelConfig = {
+        totalSections,
+        minWords,
+        maxWords,
+        imageCount,
+        aspectRatio,
+        promptModifier,
+  imageModel: selectedImageModel,
+        llmModel: selectedLlmModel,
+        skipImages,
+        googleImages,
+        localAIImages,
+        comfyOnlyMode,
+        allowComfyFallback: comfyOnlyMode,
+        selectedGoogleApis: selectedGoogleApiIds,
+        comfyUISettings,
+        scriptStyle: selectedStyle,
+        customStyleInstructions,
+        imageInstructions: promptModifier,
+        voice: effectivePrimaryVoice,
+        selectedVoice: manualSelectedVoice,
+        randomGoogleVoice: useRandomVoices,
+        randomVoiceRequested: randomVoiceEnabled,
+        voiceAssignments,
+        availableVoices: availableGoogleVoices,
+        narrationStyle,
+        generateAudio,
+        generateApplioAudio,
+        applioVoice: selectedApplioVoice,
+        applioModel: selectedApplioModel,
+        applioPitch,
+        applioQueueRunId,
+        applioQueueOffset: generateApplioAudio ? 1 : 0
+      };
+
+      triggerParallelProjectGeneration(parallelProjectsWithVoices, sharedParallelConfig);
+    }
     
     // ===============================================================
     // FASE 1: GENERAR TODOS LOS GUIONES Y PROMPTS DE IMÁGENES
@@ -1530,16 +2053,8 @@ async function runAutoGeneration() {
     });
 
     // 📊 INICIAR POLLING DEL PROGRESO EN TIEMPO REAL ANTES DE LA GENERACIÓN
-    function createSafeFolderName(topic) {
-      return topic
-        .toLowerCase()
-        .replace(/[^a-z0-9\s]/g, '') // Remover caracteres especiales
-        .replace(/\s+/g, '_') // Reemplazar espacios con guiones bajos
-        .substring(0, 50); // Limitar longitud
-    }
-    
     // Usar folderName si está disponible, si no usar topic (igual que en backend)
-    const projectKey = folderName ? createSafeFolderName(folderName) : createSafeFolderName(topic);
+    const projectKey = folderName || createSafeFolderName(topic);
     console.log('📊 Iniciando seguimiento de progreso ANTES de la generación para proyecto:', projectKey);
     console.log('🔑 Generando projectKey desde:', folderName ? `folderName: "${folderName}"` : `topic: "${topic}"`);
     startProgressPolling(projectKey);
@@ -1550,14 +2065,14 @@ async function runAutoGeneration() {
       body: JSON.stringify({
         topic: topic,
         folderName: folderName,
-        voice: selectedVoice,
+        voice: effectivePrimaryVoice,
         totalSections: totalSections,
         minWords: minWords,
         maxWords: maxWords,
         imageCount: imageCount,
         aspectRatio: aspectRatio,
         promptModifier: promptModifier,
-        imageModel: 'gemini', // Usar Gemini por defecto
+  imageModel: selectedImageModel,
         llmModel: selectedLlmModel,
         skipImages: skipImages,
         googleImages: googleImages,
@@ -1580,6 +2095,8 @@ async function runAutoGeneration() {
     
     console.log('✅ FASE 1 COMPLETADA:', phase1Data.message);
     const projectData = phase1Data.data;
+  const resolvedImageModel = normalizeImageModel(projectData?.imageModel || selectedImageModel);
+  projectData.imageModel = resolvedImageModel;
     
     // El polling ya se inició antes de la generación
     console.log('📊 Polling ya activo para proyecto:', projectData.projectKey);
@@ -1652,25 +2169,39 @@ async function runAutoGeneration() {
           completedAt: null
         }));
 
+    projectData.scriptStyle = projectData.scriptStyle || selectedStyle;
+    projectData.customStyleInstructions = projectData.customStyleInstructions || customStyleInstructions;
+    projectData.wordsMin = projectData.wordsMin || minWords;
+    projectData.wordsMax = projectData.wordsMax || maxWords;
+
     window.currentProject = {
       ...(window.currentProject || {}),
       ...projectData,
       topic,
       projectKey: projectData.projectKey,
       folderName: projectData.projectKey,
+  additionalProjects: parallelProjectsWithVoices,
       completedSections,
-      voice: selectedVoice,
+      voice: effectivePrimaryVoice,
       narrationStyle: narrationStyle || null,
       useApplio: generateApplioAudio,
       useGoogleAudio: generateAudio,
+  voiceAssignments,
+  randomGoogleVoice: useRandomVoices,
       applioVoice: selectedApplioVoice,
       applioModel: selectedApplioModel,
       applioPitch: applioPitch,
+      applioQueueRunId,
       googleImages,
       localAIImages,
       skipImages,
       imageCount,
-      totalSections: projectData.totalSections || totalSections
+  imageModel: resolvedImageModel,
+      totalSections: projectData.totalSections || totalSections,
+      minWords,
+      maxWords,
+      scriptStyle: projectData.scriptStyle,
+      customStyleInstructions: projectData.customStyleInstructions
     };
 
     updateSectionClipButtons(window.currentProject);
@@ -1690,12 +2221,19 @@ async function runAutoGeneration() {
         body: JSON.stringify({
           projectData: projectData,
           useApplio: generateApplioAudio,
-          voice: selectedVoice,
+          voice: effectivePrimaryVoice,
           narrationStyle: narrationStyle,
           applioVoice: selectedApplioVoice,
           applioModel: selectedApplioModel,
           applioPitch: applioPitch,
-          folderName: projectData.projectKey  // Usar el projectKey del backend que ya está normalizado
+          folderName: projectData.projectKey,
+          applioQueueRunId: generateApplioAudio ? applioQueueRunId : null,
+          applioQueueOrder: generateApplioAudio ? 0 : null,
+          applioQueueLabel: `Tema principal: ${topic}`,
+          scriptStyle: projectData.scriptStyle,
+          customStyleInstructions: projectData.customStyleInstructions,
+          wordsMin: projectData.wordsMin,
+          wordsMax: projectData.wordsMax
         })
       });
 
@@ -2231,7 +2769,7 @@ async function showAutoGenerationComplete() {
 function disableControls(disable) {
   const controls = [
     'prompt', 'folderName', 'voiceSelect', 'sectionsNumber', 
-    'styleSelect', 'imagesSelect', 'aspectRatioSelect', 'promptModifier', 'modelSelect', 'llmModelSelect',
+    'styleSelect', 'imagesSelect', 'aspectRatioSelect', 'promptModifier', 'imageModelSelect', 'llmModelSelect',
     'autoGenerateAudio', 'autoGenerateApplioAudio', 'googleImages', 'localAIImages'
   ];
   
@@ -2743,7 +3281,7 @@ async function regenerateImage(imageIndex, newPrompt) {
   regenerationStatus.style.display = "block";
   
   try {
-    const selectedImageModel = 'gemini'; // Usar Gemini por defecto
+  const selectedImageModel = getSelectedImageModel();
     const response = await fetch("/regenerate-image", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -3338,7 +3876,7 @@ generateBtn.addEventListener("click", async () => {
   const imageCount = parseInt(document.getElementById("imagesSelect").value);
   const aspectRatio = document.getElementById("aspectRatioSelect").value;
   const promptModifier = document.getElementById("promptModifier").value.trim();
-  const selectedImageModel = 'gemini'; // Usar Gemini por defecto
+  const selectedImageModel = getSelectedImageModel();
   const selectedLlmModel = document.getElementById("llmModelSelect").value;
   const skipImages = document.getElementById("skipImages").checked;
   const googleImages = document.getElementById("googleImages").checked;
@@ -3624,7 +4162,7 @@ continueBtn.addEventListener("click", async () => {
   console.log('📁 Usando folderName:', folderName, 'desde proyecto cargado:', !!window.currentProject);
   const selectedStyle = document.getElementById("styleSelect").value;
   const promptModifier = document.getElementById("promptModifier").value.trim();
-  const selectedImageModel = 'gemini'; // Usar Gemini por defecto
+  const selectedImageModel = getSelectedImageModel();
   const selectedLlmModel = document.getElementById("llmModelSelect").value;
   let skipImages = document.getElementById("skipImages").checked;
   let googleImages = document.getElementById("googleImages").checked;
@@ -4052,6 +4590,13 @@ document.getElementById("cancelMissingImagesBtn").addEventListener("click", asyn
     showError(`Error cancelando la generación de imágenes: ${error.message}`);
   }
 });
+
+const attemptComfyCheckboxElement = document.getElementById('attemptComfyCheckbox');
+if (attemptComfyCheckboxElement) {
+  attemptComfyCheckboxElement.addEventListener('change', () => {
+    updateGenerateImagesButtonState();
+  });
+}
 
 // Event listener para el botón de generar solo prompts de imágenes
 document.getElementById("generateMissingPromptsBtn").addEventListener("click", async () => {
@@ -6764,6 +7309,93 @@ function downloadAsText(text, filename) {
   showNotification('✅ Archivo descargado exitosamente');
 }
 
+// Helpers para detección de idioma del guión
+function getSectionsForLanguageDetection() {
+  if (Array.isArray(allSections) && allSections.length > 0) {
+    return allSections.filter(section => typeof section === 'string' && section.trim().length > 0);
+  }
+
+  if (window.currentProject && Array.isArray(window.currentProject.completedSections)) {
+    const scripts = window.currentProject.completedSections
+      .map(section => section?.script || section?.cleanedScript || section?.content || '')
+      .filter(text => typeof text === 'string' && text.trim().length > 0);
+
+    if (scripts.length > 0) {
+      return scripts;
+    }
+  }
+
+  return [];
+}
+
+function normalizeForLanguageDetection(text) {
+  return text
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ');
+}
+
+function countIndicatorHits(tokens, indicators) {
+  if (!Array.isArray(tokens) || tokens.length === 0) return 0;
+  const indicatorSet = new Set(indicators);
+  let hits = 0;
+
+  for (const token of tokens) {
+    if (indicatorSet.has(token)) {
+      hits += 1;
+    }
+  }
+
+  return hits;
+}
+
+function detectLanguageFromSections(sections) {
+  if (!Array.isArray(sections) || sections.length === 0) {
+    console.log('🌐 Detección de idioma: sin secciones, se asume español');
+    return 'es';
+  }
+
+  const combinedText = sections.join(' ');
+  const normalizedText = normalizeForLanguageDetection(combinedText);
+  const tokens = normalizedText.split(/\s+/).filter(Boolean);
+
+  const spanishIndicators = [
+    'el', 'la', 'que', 'de', 'y', 'en', 'los', 'del', 'por', 'para', 'una', 'con', 'como', 'este', 'esta',
+    'pero', 'porque', 'cuando', 'sobre', 'video', 'ahora', 'mas', 'solo', 'tambien'
+  ];
+
+  const englishIndicators = [
+    'the', 'and', 'with', 'from', 'you', 'this', 'that', 'for', 'your', 'about', 'video', 'people', 'just',
+    'they', 'have', 'will', 'what', 'when', 'why', 'how', 'into', 'over', 'after', 'before'
+  ];
+
+  const spanishScore = countIndicatorHits(tokens, spanishIndicators);
+  const englishScore = countIndicatorHits(tokens, englishIndicators);
+
+  const asciiOnlyRatio = normalizedText.replace(/[^\x00-\x7f]/g, '').length / Math.max(normalizedText.length, 1);
+
+  const isConfidentlyEnglish = (
+    englishScore >= spanishScore * 1.3 && englishScore >= 5
+  ) || (
+    englishScore - spanishScore >= 4
+  ) || (
+    asciiOnlyRatio > 0.98 && englishScore >= spanishScore && englishScore >= 4
+  );
+
+  const detectedLanguage = isConfidentlyEnglish ? 'en' : 'es';
+  console.log('🌐 Detección de idioma del guión:', {
+    detectedLanguage,
+    spanishScore,
+    englishScore,
+    asciiOnlyRatio: Number(asciiOnlyRatio.toFixed(3)),
+    sectionsAnalizadas: sections.length
+  });
+
+  window.lastDetectedScriptLanguage = detectedLanguage;
+  return detectedLanguage;
+}
+
 // Función para generar metadata de YouTube
 async function generateYouTubeMetadata() {
   try {
@@ -6772,11 +7404,15 @@ async function generateYouTubeMetadata() {
   const topicField = typeof promptInput !== 'undefined' && promptInput ? promptInput : document.getElementById('prompt');
   const topic = topicField?.value?.trim();
     const folderName = document.getElementById("folderName")?.value?.trim() || '';
-    
-    if (!topic || allSections.length === 0) {
+
+    const sectionsForMetadata = getSectionsForLanguageDetection();
+
+    if (!topic || sectionsForMetadata.length === 0) {
       console.error("❌ No hay tema o secciones para generar metadata");
       return;
     }
+
+    const detectedLanguage = detectLanguageFromSections(sectionsForMetadata);
 
     // Mostrar indicador de carga
     const loadingIndicator = document.createElement('div');
@@ -6798,9 +7434,10 @@ async function generateYouTubeMetadata() {
       },
       body: JSON.stringify({
         topic: topic,
-        allSections: allSections,
+        allSections: sectionsForMetadata,
         folderName: folderName,
-        thumbnailStyle: getThumbnailStyleData()
+        thumbnailStyle: getThumbnailStyleData(),
+        language: detectedLanguage
       })
     });
 
@@ -6817,13 +7454,15 @@ async function generateYouTubeMetadata() {
       window.lastGeneratedYouTubeMetadata = {
         content: data.metadata,
         topic,
-        generatedAt
+        generatedAt,
+        language: detectedLanguage
       };
 
       if (window.currentProject) {
         window.currentProject.youtubeMetadata = window.currentProject.youtubeMetadata || {};
         window.currentProject.youtubeMetadata.content = data.metadata;
         window.currentProject.youtubeMetadata.generatedAt = generatedAt;
+        window.currentProject.youtubeMetadata.language = detectedLanguage;
       }
 
       isMetadataShown = true;
@@ -7013,17 +7652,34 @@ function parseMetadata(metadata) {
   
   for (let line of lines) {
     line = line.trim();
+    const upperLine = line.toUpperCase();
     
-    if (line.includes('TÍTULOS CLICKBAIT') || line.includes('TITULOS CLICKBAIT')) {
+    if (
+      upperLine.includes('TÍTULOS CLICKBAIT') ||
+      upperLine.includes('TITULOS CLICKBAIT') ||
+      upperLine.includes('CLICKBAIT TITLES')
+    ) {
       currentSection = 'titles';
       continue;
-    } else if (line.includes('DESCRIPCIÓN')) {
+    } else if (
+      upperLine.includes('DESCRIPCIÓN') ||
+      upperLine.includes('DESCRIPCION') ||
+      upperLine.includes('DESCRIPTION')
+    ) {
       currentSection = 'description';
       continue;
-    } else if (line.includes('ETIQUETAS')) {
+    } else if (
+      upperLine.includes('ETIQUETAS') ||
+      upperLine.includes('TAGS')
+    ) {
       currentSection = 'tags';
       continue;
-    } else if (line.includes('PROMPTS PARA MINIATURAS') || line.includes('MINIATURA')) {
+    } else if (
+      upperLine.includes('PROMPTS PARA MINIATURAS') ||
+      upperLine.includes('MINIATURA') ||
+      upperLine.includes('THUMBNAIL PROMPTS') ||
+      upperLine.includes('PROMPTS FOR YOUTUBE THUMBNAILS')
+    ) {
       currentSection = 'thumbnails';
       continue;
     }
@@ -8106,7 +8762,7 @@ async function loadProject(folderName) {
       const folderNameElement = document.getElementById('folderName');
       const sectionsNumberElement = document.getElementById('sectionsNumber');
       const voiceSelectElement = document.getElementById('voiceSelect');
-      const modelSelectElement = document.getElementById('modelSelect');
+  const imageModelSelectElement = document.getElementById('imageModelSelect');
       const llmModelSelectElement = document.getElementById('llmModelSelect');
       
       console.log('🔍 Elementos del formulario encontrados:', {
@@ -8114,7 +8770,7 @@ async function loadProject(folderName) {
         folderName: !!folderNameElement,
         sectionsNumber: !!sectionsNumberElement,
         voiceSelect: !!voiceSelectElement,
-        modelSelect: !!modelSelectElement,
+        imageModelSelect: !!imageModelSelectElement,
         llmModelSelect: !!llmModelSelectElement
       });
       
@@ -8144,8 +8800,11 @@ async function loadProject(folderName) {
         console.warn('⚠️ Elemento voiceSelect no encontrado');
       }
       
-      if (modelSelectElement && window.currentProject.imageModel) {
-        modelSelectElement.value = window.currentProject.imageModel;
+      if (imageModelSelectElement) {
+        const normalizedImageModel = normalizeImageModel(window.currentProject.imageModel);
+        const hasOption = Array.from(imageModelSelectElement.options || []).some(option => option.value === normalizedImageModel);
+        imageModelSelectElement.value = hasOption ? normalizedImageModel : IMAGE_MODEL_DEFAULT;
+        window.currentProject.imageModel = imageModelSelectElement.value;
       }
       
       // Cargar modelo LLM
@@ -8585,7 +9244,7 @@ function showProjectDetails(project) {
           ${project.imageModel ? `
           <div class="overview-item">
             <div class="overview-label">Modelo de IA</div>
-            <div class="overview-value">${project.imageModel}</div>
+            <div class="overview-value">${getImageModelLabel(project.imageModel)}</div>
           </div>
           ` : ''}
           <div class="overview-item">
@@ -11147,6 +11806,97 @@ async function regenerateMissingScripts() {
   }
 }
 
+const comfyUIDefaults = {
+  steps: 15,
+  cfg: 1.8,
+  guidance: 3.5,
+  resolutions: {
+    '16:9': { width: 800, height: 400 },
+    '9:16': { width: 400, height: 800 },
+    '1:1': { width: 800, height: 800 }
+  }
+};
+
+let comfyDefaultsPromise = null;
+
+async function loadComfyDefaultsFromServer() {
+  if (comfyDefaultsPromise) {
+    return comfyDefaultsPromise;
+  }
+
+  comfyDefaultsPromise = (async () => {
+    try {
+      const response = await fetch('/api/comfy-defaults');
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const data = await response.json();
+      if (data?.success) {
+        if (data.resolutions && typeof data.resolutions === 'object') {
+          comfyUIDefaults.resolutions = {
+            ...comfyUIDefaults.resolutions,
+            ...Object.entries(data.resolutions).reduce((acc, [ratio, value]) => {
+              if (value && typeof value === 'object') {
+                const width = Number.parseInt(value.width, 10);
+                const height = Number.parseInt(value.height, 10);
+                if (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) {
+                  acc[ratio] = { width, height };
+                }
+              }
+              return acc;
+            }, {})
+          };
+        }
+
+        if (Number.isFinite(Number.parseInt(data.steps, 10))) {
+          comfyUIDefaults.steps = Math.max(1, Number.parseInt(data.steps, 10));
+        }
+
+        if (Number.isFinite(Number.parseFloat(data.cfg))) {
+          comfyUIDefaults.cfg = Number.parseFloat(data.cfg);
+        }
+
+        if (Number.isFinite(Number.parseFloat(data.guidance))) {
+          comfyUIDefaults.guidance = Number.parseFloat(data.guidance);
+        }
+
+        console.log('⚙️ Defaults ComfyUI actualizados desde el servidor:', comfyUIDefaults);
+      } else {
+        console.warn('⚠️ No se pudo cargar defaults de ComfyUI desde el servidor:', data?.error || data);
+      }
+    } catch (error) {
+      console.warn('⚠️ Error cargando defaults de ComfyUI, usando valores locales:', error);
+    }
+
+    return comfyUIDefaults;
+  })();
+
+  return comfyDefaultsPromise;
+}
+
+function resolveComfyUIResolution(aspectRatio = '16:9') {
+  const resolved = comfyUIDefaults.resolutions?.[aspectRatio];
+  if (resolved && Number.isFinite(resolved.width) && Number.isFinite(resolved.height)) {
+    return { width: resolved.width, height: resolved.height };
+  }
+
+  const fallback = comfyUIDefaults.resolutions?.['16:9'] || { width: 800, height: 400 };
+  return { width: fallback.width, height: fallback.height };
+}
+
+function getComfyDefaultSteps() {
+  return comfyUIDefaults.steps;
+}
+
+function getComfyDefaultCfg() {
+  return comfyUIDefaults.cfg;
+}
+
+function getComfyDefaultGuidance() {
+  return comfyUIDefaults.guidance;
+}
+
 // Función para generar imágenes faltantes
 async function generateMissingImages(options = {}) {
   const {
@@ -11166,6 +11916,17 @@ async function generateMissingImages(options = {}) {
     if (!projectData || !projectData.completedSections) {
       showError('No hay un proyecto cargado con secciones completadas');
       return;
+    }
+
+    const uiSelectedImageModel = getSelectedImageModel();
+    const projectImageModel = projectData?.imageModel ? normalizeImageModel(projectData.imageModel) : null;
+    const selectedImageModel = normalizeImageModel(uiSelectedImageModel || projectImageModel);
+
+    if (projectData && selectedImageModel && selectedImageModel !== projectImageModel) {
+      projectData.imageModel = selectedImageModel;
+      if (window.currentProject === projectData) {
+        window.currentProject.imageModel = selectedImageModel;
+      }
     }
 
     let folderName = overrideFolderName;
@@ -11191,36 +11952,53 @@ async function generateMissingImages(options = {}) {
     }
     
     // Obtener configuraciones para imágenes
-    const imageInstructions = document.getElementById('promptModifier')?.value || '';
-    const imageCount = parseInt(document.getElementById('imagesSelect')?.value) || 5;
-    const aspectRatio = document.getElementById('aspectRatioSelect')?.value || '9:16';
-    
-  // Verificar si se debe usar IA local (ComfyUI)
-  const useLocalAI = document.getElementById('localAIImages')?.checked || false;
-  attemptComfyCheckbox = document.getElementById('attemptComfyCheckbox');
-  attemptComfyToggle = attemptComfyCheckbox ? attemptComfyCheckbox.closest('.attempt-comfy-toggle') : null;
-  const allowComfyFallback = attemptComfyCheckbox ? attemptComfyCheckbox.checked : false;
+  await loadComfyDefaultsFromServer();
 
-    const selectionReady = await ensureGoogleApiSelectionReady();
-    if (!selectionReady) {
-      showError('No se pudieron cargar las APIs de Google. Intenta recargar la página.');
-      return;
+  const imageInstructions = document.getElementById('promptModifier')?.value || '';
+  const imageCount = parseInt(document.getElementById('imagesSelect')?.value) || 5;
+    const aspectRatio = document.getElementById('aspectRatioSelect')?.value || '9:16';
+    const { width: defaultWidth, height: defaultHeight } = resolveComfyUIResolution(aspectRatio);
+    const defaultSteps = getComfyDefaultSteps();
+    const defaultGuidance = getComfyDefaultGuidance();
+    const defaultCfg = getComfyDefaultCfg();
+    
+    // Verificar si se debe usar IA local (ComfyUI)
+    let useLocalAI = document.getElementById('localAIImages')?.checked || false;
+    attemptComfyCheckbox = document.getElementById('attemptComfyCheckbox');
+    attemptComfyToggle = attemptComfyCheckbox ? attemptComfyCheckbox.closest('.attempt-comfy-toggle') : null;
+    const comfyOnlyMode = attemptComfyCheckbox ? attemptComfyCheckbox.checked : false;
+    const allowComfyFallback = comfyOnlyMode;
+
+    if (comfyOnlyMode && !useLocalAI) {
+      useLocalAI = true;
     }
 
-    const selectedGoogleApis = getSelectedGoogleApis();
-    if (!selectedGoogleApis.length) {
-      showError('Selecciona al menos una API de Google disponible antes de generar imágenes.');
-      return;
+    let selectedGoogleApis = [];
+    if (!comfyOnlyMode) {
+      const selectionReady = await ensureGoogleApiSelectionReady();
+      if (!selectionReady) {
+        showError('No se pudieron cargar las APIs de Google. Intenta recargar la página.');
+        return;
+      }
+
+      selectedGoogleApis = getSelectedGoogleApis();
+      if (!selectedGoogleApis.length) {
+        showError('Selecciona al menos una API de Google disponible antes de generar imágenes.');
+        return;
+      }
+    } else {
+      console.log('🎯 Modo Comfy directo activado: se omitirán las APIs de Google para esta ejecución.');
     }
     
     // Obtener configuraciones de ComfyUI si está habilitado
     let comfyUIConfig = {};
     if (useLocalAI) {
       comfyUIConfig = {
-        steps: parseInt(document.getElementById('comfyUISteps')?.value) || 15,
-        guidance: parseFloat(document.getElementById('comfyUIGuidance')?.value) || 3.5,
-        width: parseInt(document.getElementById('comfyUIWidth')?.value) || 1280,
-        height: parseInt(document.getElementById('comfyUIHeight')?.value) || 720,
+        steps: parseInt(document.getElementById('comfyUISteps')?.value, 10) || defaultSteps,
+        guidance: parseFloat(document.getElementById('comfyUIGuidance')?.value) || defaultGuidance,
+        cfg: defaultCfg,
+        width: parseInt(document.getElementById('comfyUIWidth')?.value, 10) || defaultWidth,
+        height: parseInt(document.getElementById('comfyUIHeight')?.value, 10) || defaultHeight,
         model: document.getElementById('comfyUIModel')?.value || 'flux1-dev-fp8.safetensors',
         sampler: document.getElementById('comfyUISampler')?.value || 'euler',
         scheduler: document.getElementById('comfyUIScheduler')?.value || 'simple'
@@ -11235,12 +12013,16 @@ async function generateMissingImages(options = {}) {
       cantidadImagenesElemento: document.getElementById('imagesSelect')?.value,
       usarIALocal: useLocalAI,
       intentarConComfy: allowComfyFallback,
+      modoComfyDirecto: comfyOnlyMode,
       apisSeleccionadas: selectedGoogleApis,
       configComfyUI: useLocalAI ? comfyUIConfig : 'No aplicable',
+      modeloImagen: getImageModelLabel(selectedImageModel),
       sectionNumber
     });
 
-    if (!allowComfyFallback) {
+    if (comfyOnlyMode) {
+      showNotification('🎨 Modo Comfy directo: las imágenes se generarán de una en una usando ComfyUI.', 'info');
+    } else if (!allowComfyFallback) {
       showNotification('🔁 Se intentará generar imágenes solo con las APIs. Si fallan, habrá un reintento automático en 60 segundos.', 'info');
     }
     
@@ -11289,7 +12071,9 @@ async function generateMissingImages(options = {}) {
       useLocalAI: useLocalAI,
       comfyUIConfig: comfyUIConfig,
       sectionNumber: sectionNumber,
-      selectedApis: selectedGoogleApis
+      comfyOnlyMode: comfyOnlyMode,
+      selectedApis: selectedGoogleApis,
+      imageModel: selectedImageModel
     });
 
     // Hacer solicitud al servidor
@@ -11306,8 +12090,10 @@ async function generateMissingImages(options = {}) {
         useLocalAI: useLocalAI,
         comfyUIConfig: comfyUIConfig,
         allowComfyFallback: allowComfyFallback,
+        comfyOnlyMode: comfyOnlyMode,
         sectionNumber: sectionNumber,
-        selectedApis: selectedGoogleApis
+        selectedApis: selectedGoogleApis,
+        imageModel: selectedImageModel
       })
     });
     
@@ -11541,7 +12327,8 @@ document.addEventListener('DOMContentLoaded', function() {
   console.log('🎯 DOM cargado - Inicializando controles ComfyUI...');
   
   // Esperar un poco para asegurar que todo esté cargado
-  setTimeout(() => {
+  setTimeout(async () => {
+    await loadComfyDefaultsFromServer();
     initializeComfyUIControls();
     checkComfyUIStatus();
   }, 500);
@@ -11551,7 +12338,9 @@ document.addEventListener('DOMContentLoaded', function() {
 window.addEventListener('load', function() {
   console.log('🎯 Window cargado - Verificando controles ComfyUI...');
   if (!document.getElementById('comfyUIConfig')?.hasAttribute('data-initialized')) {
-    initializeComfyUIControls();
+    loadComfyDefaultsFromServer().finally(() => {
+      initializeComfyUIControls();
+    });
   }
 });
 
@@ -11598,12 +12387,17 @@ function initializeComfyUIControls() {
   const widthValue = document.getElementById('widthValue');
   const heightSlider = document.getElementById('comfyUIHeight');
   const heightValue = document.getElementById('heightValue');
+  const aspectRatioSelect = document.getElementById('aspectRatioSelect');
+  const currentAspectRatio = aspectRatioSelect?.value || '9:16';
 
   if (stepsSlider && stepsValue) {
     stepsSlider.addEventListener('input', function() {
       stepsValue.textContent = this.value;
       console.log(`🔧 Pasos actualizados: ${this.value}`);
     });
+    const defaultSteps = getComfyDefaultSteps();
+    stepsSlider.value = defaultSteps;
+    stepsValue.textContent = String(defaultSteps);
   }
 
   if (guidanceSlider && guidanceValue) {
@@ -11611,6 +12405,9 @@ function initializeComfyUIControls() {
       guidanceValue.textContent = this.value;
       console.log(`🧭 Guidance actualizados: ${this.value}`);
     });
+    const defaultGuidance = getComfyDefaultGuidance();
+    guidanceSlider.value = defaultGuidance;
+    guidanceValue.textContent = String(defaultGuidance);
   }
 
   if (widthSlider && widthValue) {
@@ -11618,6 +12415,9 @@ function initializeComfyUIControls() {
       widthValue.textContent = this.value + 'px';
       console.log(`📐 Ancho actualizado: ${this.value}px`);
     });
+    const { width: defaultWidth } = resolveComfyUIResolution(currentAspectRatio);
+    widthSlider.value = defaultWidth;
+    widthValue.textContent = defaultWidth + 'px';
   }
 
   if (heightSlider && heightValue) {
@@ -11625,6 +12425,9 @@ function initializeComfyUIControls() {
       heightValue.textContent = this.value + 'px';
       console.log(`📏 Alto actualizado: ${this.value}px`);
     });
+    const { height: defaultHeight } = resolveComfyUIResolution(currentAspectRatio);
+    heightSlider.value = defaultHeight;
+    heightValue.textContent = defaultHeight + 'px';
   }
 
   // Presets rápidos para diferentes calidades
@@ -11632,30 +12435,40 @@ function initializeComfyUIControls() {
 }
 
 // Función separada para el toggle
-function toggleComfyUIConfig() {
+async function toggleComfyUIConfig() {
   const comfyUIConfig = document.getElementById('comfyUIConfig');
   console.log('🎛️ Toggle ComfyUI ejecutado - checkbox checked:', this.checked);
   
   if (this.checked) {
+    await loadComfyDefaultsFromServer();
     comfyUIConfig.style.display = 'block';
     console.log('✅ Controles ComfyUI mostrados');
-    
-    // Establecer valores por defecto: 15 pasos y 800px ancho (16:9)
+
+    // Establecer valores por defecto según el aspect ratio seleccionado
     const stepsSlider = document.getElementById('comfyUISteps');
     const stepsValue = document.getElementById('stepsValue');
     const widthSlider = document.getElementById('comfyUIWidth');
     const widthValue = document.getElementById('widthValue');
     const heightSlider = document.getElementById('comfyUIHeight');
     const heightValue = document.getElementById('heightValue');
-    
+    const aspectRatio = document.getElementById('aspectRatioSelect')?.value || '9:16';
+    const guidanceSlider = document.getElementById('comfyUIGuidance');
+    const guidanceValue = document.getElementById('guidanceValue');
+
+    const defaultSteps = getComfyDefaultSteps();
+    const defaultGuidance = getComfyDefaultGuidance();
+
     if (stepsSlider && stepsValue) {
-      stepsSlider.value = 15;
-      stepsValue.textContent = '15';
+      stepsSlider.value = defaultSteps;
+      stepsValue.textContent = String(defaultSteps);
+    }
+    if (guidanceSlider && guidanceValue) {
+      guidanceSlider.value = defaultGuidance;
+      guidanceValue.textContent = String(defaultGuidance);
     }
     
     if (widthSlider && widthValue) {
-      const defaultWidth = 800;
-      const defaultHeight = Math.round(defaultWidth / 16 * 9); // 450px
+      const { width: defaultWidth, height: defaultHeight } = resolveComfyUIResolution(aspectRatio);
       
       widthSlider.value = defaultWidth;
       widthValue.textContent = defaultWidth + 'px';
@@ -11665,7 +12478,7 @@ function toggleComfyUIConfig() {
         heightValue.textContent = defaultHeight + 'px';
       }
       
-      console.log('🎯 Valores por defecto establecidos: 15 pasos, ' + defaultWidth + 'x' + defaultHeight + ' (16:9)');
+      console.log('🎯 Valores por defecto establecidos: ' + defaultSteps + ' pasos, ' + defaultWidth + 'x' + defaultHeight + ' (' + aspectRatio + ')');
     }
   } else {
     comfyUIConfig.style.display = 'none';
@@ -11773,12 +12586,15 @@ async function checkComfyUIStatus() {
 }
 
 function getComfyUISettings() {
-  // Valores fijos: 15 pasos y resolución 1280x720 (o 720x1280 para vertical)
+  const aspectRatio = document.getElementById('aspectRatioSelect')?.value || '9:16';
+  const { width, height } = resolveComfyUIResolution(aspectRatio);
+
   return {
-    steps: 15,
-    guidance: 3.5,
-    width: 1280,
-    height: 720,
+    steps: getComfyDefaultSteps(),
+    guidance: getComfyDefaultGuidance(),
+    cfg: getComfyDefaultCfg(),
+    width,
+    height,
     sampler: 'euler',
     scheduler: 'simple',
     negativePrompt: 'low quality, blurry, distorted'

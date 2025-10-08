@@ -15,125 +15,73 @@ import { transcribeAudio, getAudioTracks } from "./transcriber.js";
 import multer from 'multer';
 import axios from 'axios';
 
-// Función para obtener una instancia de GoogleGenerativeAI con fallback automático
-async function getGoogleAI(model = "gemini-2.0-flash-exp") {
-  // Verificar que tenemos al menos una API key
-  if (
-    !process.env.GOOGLE_API_KEY_GRATIS &&
-    !process.env.GOOGLE_API_KEY_GRATIS2 &&
-    !process.env.GOOGLE_API_KEY_GRATIS3 &&
-  !process.env.GOOGLE_API_KEY_GRATIS4 &&
-  !process.env.GOOGLE_API_KEY_GRATIS5 &&
-    !process.env.GOOGLE_API_KEY
-  ) {
+// Función para obtener una instancia de GoogleGenerativeAI con fallback controlado
+async function getGoogleAI(model = "gemini-2.0-flash-exp", options = {}) {
+  const { context = 'general', forcePrimary = false } = options;
+  const usageState = getTrackedUsageState(context);
+  const skipFreeApis = forcePrimary || usageState?.preferPrimary;
+
+  const freeApiEntries = skipFreeApis ? [] : getFreeGoogleAPIKeys();
+  const primaryApiEntry = process.env.GOOGLE_API_KEY
+    ? { key: process.env.GOOGLE_API_KEY, name: GOOGLE_PRIMARY_API_NAME }
+    : null;
+
+  if (!freeApiEntries.length && !primaryApiEntry) {
     throw new Error('No hay API keys de Google configuradas en las variables de entorno');
   }
 
   let lastError = null;
 
-  // Intentar primero con la API key gratuita 1
-  if (process.env.GOOGLE_API_KEY_GRATIS) {
-    try {
-      console.log('🆓 Intentando con API key gratuita 1 de Google...');
-      const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY_GRATIS);
-      const aiModel = genAI.getGenerativeModel({ model });
-      
-      // Hacer una prueba rápida para verificar que funciona
-      await aiModel.generateContent("test");
-      console.log('✅ API key gratuita 1 funcionando correctamente');
-      return { genAI, model: aiModel };
-    } catch (error) {
-      lastError = error;
-      console.log(`⚠️ API key gratuita 1 falló: ${error.message}`);
+  const attemptWithEntry = async (entry, keyType) => {
+    if (!entry?.key) {
+      throw new Error('API key de Google no configurada');
+    }
+
+    const isPrimary = keyType === 'primary';
+    const emoji = isPrimary ? '💰' : '🆓';
+    const contextLabel = context || 'general';
+    const apiName = entry.name || (isPrimary ? GOOGLE_PRIMARY_API_NAME : 'API gratuita');
+
+    console.log(`${emoji} Intentando con API ${apiName} (${contextLabel})...`);
+
+    const genAI = new GoogleGenerativeAI(entry.key);
+    const aiModel = genAI.getGenerativeModel({ model });
+
+    await aiModel.generateContent("test");
+
+    console.log(`✅ API ${apiName} lista para usarse (${contextLabel})`);
+
+    return { genAI, model: aiModel, apiKeyName: apiName, keyType };
+  };
+
+  if (freeApiEntries.length) {
+    for (const entry of freeApiEntries) {
+      try {
+        return await attemptWithEntry(entry, 'free');
+      } catch (error) {
+        lastError = error;
+        markFreeApiFailure(context, error);
+        console.warn(`⚠️ API gratuita ${entry.name} falló. Cambiando a la API principal. Motivo: ${error.message}`);
+        break; // Cambiar inmediatamente a la API principal tras el primer fallo
+      }
     }
   }
 
-  // Intentar con la API key gratuita 2
-  if (process.env.GOOGLE_API_KEY_GRATIS2) {
-    try {
-      console.log('🆓 Intentando con API key gratuita 2 de Google...');
-      const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY_GRATIS2);
-      const aiModel = genAI.getGenerativeModel({ model });
-      
-      // Hacer una prueba rápida para verificar que funciona
-      await aiModel.generateContent("test");
-      console.log('✅ API key gratuita 2 funcionando correctamente');
-      return { genAI, model: aiModel };
-    } catch (error) {
-      lastError = error;
-      console.log(`⚠️ API key gratuita 2 falló: ${error.message}`);
-    }
+  if (!primaryApiEntry) {
+    throw new Error(`Las APIs gratuitas fallaron y no hay API principal disponible. Último error: ${lastError?.message || 'desconocido'}`);
   }
 
-  // Intentar con la API key gratuita 3
-  if (process.env.GOOGLE_API_KEY_GRATIS3) {
+  try {
+    return await attemptWithEntry(primaryApiEntry, 'primary');
+  } catch (error) {
+    lastError = error;
     try {
-      console.log('🆓 Intentando con API key gratuita 3 de Google...');
-      const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY_GRATIS3);
-      const aiModel = genAI.getGenerativeModel({ model });
-      
-      // Hacer una prueba rápida para verificar que funciona
-      await aiModel.generateContent("test");
-      console.log('✅ API key gratuita 3 funcionando correctamente');
-      return { genAI, model: aiModel };
-    } catch (error) {
-      lastError = error;
-      console.log(`⚠️ API key gratuita 3 falló: ${error.message}`);
+      markPrimaryFailure(context, error);
+    } catch (criticalError) {
+      throw criticalError;
     }
+    throw error;
   }
-
-  // Intentar con la API key gratuita 4
-  if (process.env.GOOGLE_API_KEY_GRATIS4) {
-    try {
-      console.log('🆓 Intentando con API key gratuita 4 de Google...');
-      const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY_GRATIS4);
-      const aiModel = genAI.getGenerativeModel({ model });
-
-      // Hacer una prueba rápida para verificar que funciona
-      await aiModel.generateContent("test");
-      console.log('✅ API key gratuita 4 funcionando correctamente');
-      return { genAI, model: aiModel };
-    } catch (error) {
-      lastError = error;
-      console.log(`⚠️ API key gratuita 4 falló: ${error.message}`);
-    }
-  }
-
-  // Intentar con la API key gratuita 5
-  if (process.env.GOOGLE_API_KEY_GRATIS5) {
-    try {
-      console.log('🆓 Intentando con API key gratuita 5 de Google...');
-      const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY_GRATIS5);
-      const aiModel = genAI.getGenerativeModel({ model });
-
-      // Hacer una prueba rápida para verificar que funciona
-      await aiModel.generateContent("test");
-      console.log('✅ API key gratuita 5 funcionando correctamente');
-      return { genAI, model: aiModel };
-    } catch (error) {
-      lastError = error;
-      console.log(`⚠️ API key gratuita 5 falló: ${error.message}`);
-    }
-  }
-
-  // Si fallan todas las gratuitas, usar la API key normal
-  if (process.env.GOOGLE_API_KEY) {
-    try {
-      console.log('💰 Usando API key normal de Google como fallback final...');
-      const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
-      const aiModel = genAI.getGenerativeModel({ model });
-      
-      // Hacer una prueba rápida para verificar que funciona
-      await aiModel.generateContent("test");
-      console.log('✅ API key normal funcionando correctamente');
-      return { genAI, model: aiModel };
-    } catch (error) {
-      console.error(`❌ API key normal también falló: ${error.message}`);
-      throw new Error(`Todas las API keys de Google fallaron. Último error: ${error.message}`);
-    }
-  }
-
-  throw new Error(`No se pudo inicializar Google AI. Último error: ${lastError?.message || 'API keys no disponibles'}`);
 }
 
 // Función auxiliar para obtener todas las API keys de Google en orden de prioridad
@@ -157,6 +105,281 @@ function getFreeGoogleAPIKeys() {
     { key: process.env.GOOGLE_API_KEY_GRATIS4, name: 'GRATIS4' },
     { key: process.env.GOOGLE_API_KEY_GRATIS5, name: 'GRATIS5' }
   ].filter(apiKey => apiKey.key); // Solo retornar las que estén configuradas
+}
+
+const GOOGLE_PRIMARY_API_NAME = 'PRINCIPAL';
+const MAX_CONSECUTIVE_PRIMARY_FAILURES = 5;
+
+const googleServiceUsageState = {
+  llm: {
+    preferPrimary: false,
+    consecutivePrimaryFailures: 0,
+    lastFailureReason: null,
+    lastFailureTimestamp: null
+  },
+  tts: {
+    preferPrimary: false,
+    consecutivePrimaryFailures: 0,
+    lastFailureReason: null,
+    lastFailureTimestamp: null
+  }
+};
+
+const IMAGE_MODEL_DEFAULT = 'gemini2';
+const VALID_IMAGE_MODELS = new Set(['gemini2', 'gemini25', 'imagen40']);
+const IMAGE_MODEL_LABELS = {
+  gemini2: 'Gemini 2.0 Flash',
+  gemini25: 'Gemini 2.5 Flash',
+  imagen40: 'Imagen 4.0'
+};
+
+const VALID_ASPECT_RATIOS = new Set(['9:16', '16:9', '1:1']);
+const ASPECT_RATIO_ALIASES = {
+  portrait: '9:16',
+  vertical: '9:16',
+  reels: '9:16',
+  tiktok: '9:16',
+  shorts: '9:16',
+  landscape: '16:9',
+  horizontal: '16:9',
+  widescreen: '16:9',
+  square: '1:1',
+  instagram: '1:1',
+  '9x16': '9:16',
+  '16x9': '16:9',
+  '1x1': '1:1'
+};
+
+function normalizeAspectRatio(value, fallback = '9:16') {
+  if (typeof fallback !== 'string' || !fallback.trim()) {
+    fallback = '9:16';
+  }
+
+  if (value === undefined || value === null) {
+    return fallback;
+  }
+
+  if (typeof value === 'number') {
+    return fallback;
+  }
+
+  const raw = String(value).trim();
+  if (!raw) {
+    return fallback;
+  }
+
+  const lower = raw.toLowerCase();
+  if (ASPECT_RATIO_ALIASES[lower]) {
+    return ASPECT_RATIO_ALIASES[lower];
+  }
+
+  const colonForm = lower
+    .replace(/[x×]/g, ':')
+    .replace(/\s+/g, '');
+
+  const sanitized = colonForm.replace(/[^0-9:]/g, '');
+  if (VALID_ASPECT_RATIOS.has(sanitized)) {
+    return sanitized;
+  }
+
+  return fallback;
+}
+
+function describeAspectRatio(value, fallback = '9:16') {
+  const ratio = normalizeAspectRatio(value, fallback);
+
+  switch (ratio) {
+    case '16:9':
+      return {
+        ratio,
+        label: 'Aspecto 16:9 (widescreen)',
+        promptLine: 'Formato: Aspecto 16:9 (widescreen)',
+        googleFormatDescription: '16:9 aspect ratio image (widescreen format, landscape orientation, 1920x1080 or similar proportions)',
+        googleOrientation: 'landscape orientation with 16:9 aspect ratio'
+      };
+    case '1:1':
+      return {
+        ratio,
+        label: 'Aspecto 1:1 (cuadrado)',
+        promptLine: 'Formato: Aspecto 1:1 (cuadrado)',
+        googleFormatDescription: '1:1 aspect ratio image (square format, 1024x1024 or similar proportions)',
+        googleOrientation: 'square format with 1:1 aspect ratio'
+      };
+    case '9:16':
+    default:
+      return {
+        ratio: '9:16',
+        label: 'Aspecto 9:16 (vertical)',
+        promptLine: 'Formato: Aspecto 9:16 (vertical)',
+        googleFormatDescription: '9:16 aspect ratio image (vertical format, portrait orientation, 720x1280 or similar proportions)',
+        googleOrientation: 'portrait orientation with 9:16 aspect ratio'
+      };
+  }
+}
+
+function geminiModelSupportsAspectRatio(modelId) {
+  return typeof modelId === 'string' && modelId.includes('2.5');
+}
+
+async function collectGeminiStreamData(streamSource) {
+  const inlineImages = [];
+  const textSegments = [];
+
+  const asyncIterable = (() => {
+    if (streamSource && typeof streamSource[Symbol.asyncIterator] === 'function') {
+      return streamSource;
+    }
+
+    const nestedStream = streamSource?.stream;
+    if (nestedStream && typeof nestedStream[Symbol.asyncIterator] === 'function') {
+      return nestedStream;
+    }
+
+    return null;
+  })();
+
+  if (!asyncIterable) {
+    throw new Error('Gemini stream source is not async iterable');
+  }
+
+  for await (const chunk of asyncIterable) {
+    const candidates = chunk?.candidates || [];
+    for (const candidate of candidates) {
+      const parts = candidate?.content?.parts || [];
+      for (const part of parts) {
+        if (part?.inlineData?.data) {
+          inlineImages.push(part.inlineData);
+        } else if (typeof part?.text === 'string' && part.text.trim()) {
+          textSegments.push(part.text.trim());
+        }
+      }
+    }
+  }
+
+  return {
+    inlineImages,
+    supplementalText: textSegments.join('\n').trim() || null
+  };
+}
+
+function normalizeImageModel(model) {
+  if (!model) {
+    return IMAGE_MODEL_DEFAULT;
+  }
+
+  const value = String(model).trim().toLowerCase();
+
+  if (
+    value === 'gemini' ||
+    value === 'gemini2' ||
+    value === 'gemini-2' ||
+    value === 'gemini-2.0' ||
+    value === 'gemini-2.0-flash' ||
+    value === 'gemini-2.0-flash-preview-image-generation'
+  ) {
+    return 'gemini2';
+  }
+
+  if (
+    value === 'gemini25' ||
+    value === 'gemini-2.5' ||
+    value === 'gemini-2.5-flash' ||
+    value === 'gemini-2.5-flash-image'
+  ) {
+    return 'gemini25';
+  }
+
+  if (
+    value === 'imagen' ||
+    value === 'imagen40' ||
+    value === 'imagen-4' ||
+    value === 'imagen-4.0' ||
+    value === 'imagen-4.0-generate-preview-06-06'
+  ) {
+    return 'imagen40';
+  }
+
+  if (VALID_IMAGE_MODELS.has(value)) {
+    return value;
+  }
+
+  return IMAGE_MODEL_DEFAULT;
+}
+
+function getImageModelLabel(model) {
+  const normalized = normalizeImageModel(model);
+  return IMAGE_MODEL_LABELS[normalized] || IMAGE_MODEL_LABELS[IMAGE_MODEL_DEFAULT];
+}
+
+function isGeminiImageModel(model) {
+  const normalized = normalizeImageModel(model);
+  return normalized === 'gemini2' || normalized === 'gemini25';
+}
+
+function resolveGoogleImageModelId(model) {
+  const normalized = normalizeImageModel(model);
+
+  switch (normalized) {
+    case 'gemini25':
+      return 'gemini-2.5-flash-image';
+    case 'imagen40':
+      return 'imagen-4.0-generate-preview-06-06';
+    case 'gemini2':
+    default:
+      return 'gemini-2.0-flash-preview-image-generation';
+  }
+}
+
+function getTrackedUsageState(context) {
+  return googleServiceUsageState[context] || null;
+}
+
+function markFreeApiFailure(context, error) {
+  const state = getTrackedUsageState(context);
+  if (!state) {
+    return;
+  }
+
+  state.preferPrimary = true;
+  state.lastFailureReason = error?.message || String(error || 'Error desconocido');
+  state.lastFailureTimestamp = Date.now();
+  state.consecutivePrimaryFailures = 0;
+
+  console.warn(`⚠️ [${context}] API gratuita falló. Se usará la API principal en adelante. Motivo: ${state.lastFailureReason}`);
+}
+
+function markPrimarySuccess(context) {
+  const state = getTrackedUsageState(context);
+  if (!state) {
+    return;
+  }
+
+  if (state.consecutivePrimaryFailures > 0) {
+    console.log(`✅ [${context}] API principal respondió correctamente. Reiniciando contador de fallos consecutivos.`);
+  }
+
+  state.consecutivePrimaryFailures = 0;
+  state.lastFailureReason = null;
+  state.lastFailureTimestamp = null;
+}
+
+function markPrimaryFailure(context, error) {
+  const state = getTrackedUsageState(context);
+  if (!state) {
+    return;
+  }
+
+  state.consecutivePrimaryFailures += 1;
+  state.lastFailureReason = error?.message || String(error || 'Error desconocido');
+  state.lastFailureTimestamp = Date.now();
+
+  console.warn(`❌ [${context}] API principal falló (${state.consecutivePrimaryFailures}/${MAX_CONSECUTIVE_PRIMARY_FAILURES}). Motivo: ${state.lastFailureReason}`);
+
+  if (state.consecutivePrimaryFailures >= MAX_CONSECUTIVE_PRIMARY_FAILURES) {
+    const failureError = new Error(`API principal falló ${state.consecutivePrimaryFailures} veces seguidas: ${state.lastFailureReason}`);
+    failureError.code = 'PRIMARY_API_FAILURE';
+    throw failureError;
+  }
 }
 
 const GOOGLE_IMAGE_API_DEFINITIONS = [
@@ -310,6 +533,152 @@ const APPLIO_START_BAT = path.join(APPLIO_PATH, 'run-applio.bat');
 
 // Variable para rastrear progreso de proyectos
 const projectProgressTracker = {};
+
+const applioAudioQueueState = {
+  currentRunId: null,
+  nextOrder: 0,
+  pending: new Map(),
+  processing: false
+};
+
+function resetApplioAudioQueue(runId = null) {
+  applioAudioQueueState.currentRunId = runId;
+  applioAudioQueueState.nextOrder = 0;
+  applioAudioQueueState.pending.clear();
+  applioAudioQueueState.processing = false;
+}
+
+function enqueueApplioAudioTask({ runId, order, label, task }) {
+  return new Promise((resolve, reject) => {
+    if (runId === undefined || runId === null) {
+      reject(new Error('applioQueueRunId requerido para la cola de Applio'));
+      return;
+    }
+
+    const normalizedOrder = Number.parseInt(order, 10);
+    if (!Number.isFinite(normalizedOrder) || normalizedOrder < 0) {
+      reject(new Error('applioQueueOrder inválido para la cola de Applio'));
+      return;
+    }
+
+    if (typeof task !== 'function') {
+      reject(new Error('La tarea de audio de Applio debe ser una función'));
+      return;
+    }
+
+    if (applioAudioQueueState.currentRunId && applioAudioQueueState.currentRunId !== runId) {
+      if (applioAudioQueueState.processing || applioAudioQueueState.pending.size > 0) {
+        const warning = '⚠️ Cola de Applio ocupada con otra ejecución. Espera a que termine antes de iniciar una nueva.';
+        console.warn(warning);
+        reject(new Error('COLA_APPLIO_OCUPADA'));
+        return;
+      }
+      resetApplioAudioQueue(runId);
+    }
+
+    if (!applioAudioQueueState.currentRunId) {
+      resetApplioAudioQueue(runId);
+    }
+
+    if (applioAudioQueueState.pending.has(normalizedOrder)) {
+      reject(new Error(`Ya existe una tarea en la cola de Applio con el orden ${normalizedOrder}`));
+      return;
+    }
+
+    applioAudioQueueState.pending.set(normalizedOrder, {
+      label: label || `orden_${normalizedOrder}`,
+      task,
+      resolve,
+      reject
+    });
+
+    console.log(`🎧 Tarea de Applio encolada (runId=${runId}, orden=${normalizedOrder}, label=${label || 'sin etiqueta'})`);
+    processApplioAudioQueue();
+  });
+}
+
+async function processApplioAudioQueue() {
+  if (applioAudioQueueState.processing) {
+    return;
+  }
+
+  const nextTask = applioAudioQueueState.pending.get(applioAudioQueueState.nextOrder);
+  if (!nextTask) {
+    return;
+  }
+
+  applioAudioQueueState.processing = true;
+  const currentOrder = applioAudioQueueState.nextOrder;
+  console.log(`🎧 Procesando cola de Applio -> orden ${currentOrder} (${nextTask.label})`);
+
+  try {
+    const result = await nextTask.task();
+    nextTask.resolve(result);
+  } catch (error) {
+    console.error(`❌ Error en cola de Applio (orden ${currentOrder}):`, error);
+    nextTask.reject(error);
+  } finally {
+    applioAudioQueueState.pending.delete(currentOrder);
+    applioAudioQueueState.nextOrder += 1;
+    applioAudioQueueState.processing = false;
+    setTimeout(processApplioAudioQueue, 0);
+  }
+}
+
+const comfyDefaultConfig = (() => {
+  const parseResolution = (envVar, fallbackWidth, fallbackHeight) => {
+    const rawValue = process.env[envVar];
+    if (typeof rawValue !== 'string' || rawValue.trim() === '') {
+      return { width: fallbackWidth, height: fallbackHeight };
+    }
+
+    const cleaned = rawValue.toLowerCase().replace(/[^0-9x]/g, '');
+    const [widthStr, heightStr] = cleaned.split('x');
+    const width = Number.parseInt(widthStr, 10);
+    const height = Number.parseInt(heightStr, 10);
+
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+      console.warn(`⚠️ Valor de resolución inválido en ${envVar}: ${rawValue}. Usando fallback ${fallbackWidth}x${fallbackHeight}.`);
+      return { width: fallbackWidth, height: fallbackHeight };
+    }
+
+    return { width, height };
+  };
+
+  const parseNumber = (envVar, fallback, { float = false, min } = {}) => {
+    const rawValue = process.env[envVar];
+    if (rawValue === undefined) {
+      return fallback;
+    }
+
+    const parsed = float ? Number.parseFloat(rawValue) : Number.parseInt(rawValue, 10);
+    if (!Number.isFinite(parsed) || (min !== undefined && parsed < min)) {
+      console.warn(`⚠️ Valor inválido para ${envVar}: ${rawValue}. Usando fallback ${fallback}.`);
+      return fallback;
+    }
+
+    return parsed;
+  };
+
+  return {
+    steps: parseNumber('COMFY_DEFAULT_STEPS', 15, { min: 1 }),
+    cfg: parseNumber('COMFY_DEFAULT_CFG', 1.8, { float: true, min: 0.1 }),
+    guidance: parseNumber('COMFY_DEFAULT_GUIDANCE', 3.5, { float: true, min: 0 }),
+    resolutions: {
+      '16:9': parseResolution('COMFY_RESOLUTION_16_9', 800, 400),
+      '9:16': parseResolution('COMFY_RESOLUTION_9_16', 400, 800),
+      '1:1': parseResolution('COMFY_RESOLUTION_1_1', 800, 800)
+    }
+  };
+})();
+
+function resolveComfyDefaultResolution(aspectRatio = '16:9') {
+  return (
+    comfyDefaultConfig.resolutions[aspectRatio] ||
+    comfyDefaultConfig.resolutions['16:9'] ||
+    { width: 800, height: 400 }
+  );
+}
 
 /**
  * Extrae solo el contenido del guión de un archivo TXT completo
@@ -471,7 +840,7 @@ async function generateMissingScript(topic, sectionNumber, totalSections, chapte
     }
 
     // Usar el cliente de IA con fallback automático
-    const { model } = await getGoogleAI("gemini-2.0-flash-exp");
+  const { model } = await getGoogleAI("gemini-2.0-flash-exp", { context: 'llm' });
     
     console.log('🤖 Enviando prompt al modelo de IA...');
     const result = await model.generateContent(prompt);
@@ -951,6 +1320,8 @@ async function generateUniversalContent(model, promptOrHistory, systemInstructio
   console.log(`🔍 Proveedor detectado: ${isOpenAI ? 'OpenAI' : 'Google AI'} para modelo "${model}"`);
   
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
+  let currentApiKeyType = null;
+
     try {
       console.log(`🔄 Intento ${attempt}/${maxRetries} con ${isOpenAI ? 'OpenAI' : 'Google AI'}...`);
       
@@ -1018,8 +1389,9 @@ async function generateUniversalContent(model, promptOrHistory, systemInstructio
         
       } else {
         // Usar Google AI con sistema de fallback
-        const { model: model_instance } = await getGoogleAI(model);
-        
+  const { model: model_instance, keyType } = await getGoogleAI(model, { context: 'llm' });
+  currentApiKeyType = keyType || null;
+
         // Si promptOrHistory es un array (historial de conversación)
         if (Array.isArray(promptOrHistory)) {
           const result = await model_instance.generateContent({
@@ -1028,23 +1400,46 @@ async function generateUniversalContent(model, promptOrHistory, systemInstructio
           });
           const response = await result.response;
           console.log(`✅ Contenido generado exitosamente con Google AI en intento ${attempt}`);
+          if (currentApiKeyType === 'primary') {
+            markPrimarySuccess('llm');
+          }
           return await response.text();
         } else {
           const result = await model_instance.generateContent(promptOrHistory);
           const response = await result.response;
           console.log(`✅ Contenido generado exitosamente con Google AI en intento ${attempt}`);
+          if (currentApiKeyType === 'primary') {
+            markPrimarySuccess('llm');
+          }
           return await response.text();
         }
       }
       
     } catch (error) {
       console.error(`❌ Error en intento ${attempt}/${maxRetries}:`, error.message);
+
+      if (isGoogle) {
+        if (currentApiKeyType === 'free') {
+          markFreeApiFailure('llm', error);
+        } else if (currentApiKeyType === 'primary') {
+          try {
+            markPrimaryFailure('llm', error);
+          } catch (criticalError) {
+            throw criticalError;
+          }
+        }
+      }
       
-      const isRetryableError = (isOpenAI && error.status >= 500) || 
-                              (!isOpenAI && error.status === 503);
+      let isRetryableError = (isOpenAI && error.status >= 500) || 
+                             (!isOpenAI && error.status === 503);
+
+      if (isGoogle && currentApiKeyType === 'free') {
+        isRetryableError = true;
+      }
       
       if (isRetryableError && attempt < maxRetries) {
-        const delay = 2000 * Math.pow(1.5, attempt - 1);
+        const baseDelay = 2000 * Math.pow(1.5, attempt - 1);
+        const delay = (isGoogle && currentApiKeyType === 'free') ? 250 : baseDelay;
         console.log(`⏳ Esperando ${delay}ms antes del siguiente intento...`);
         await new Promise(resolve => setTimeout(resolve, delay));
       } else {
@@ -1391,7 +1786,7 @@ REGLAS ESTRICTAS:
 `;
 
     // Llamar a la IA para generar metadatos
-    const { model } = await getGoogleAI('gemini-2.0-flash-exp');
+  const { model } = await getGoogleAI('gemini-2.0-flash-exp', { context: 'llm' });
     
     console.log(`🤖 Enviando request a Gemini para generar metadatos...`);
     const result = await model.generateContent([{ text: prompt }]);
@@ -2260,26 +2655,42 @@ async function generateStoryAudio(script, voiceName = DEFAULT_TTS_VOICE, section
 
     console.log(`🎙️ Voces a intentar para TTS: ${voiceCandidates.join(', ')}`);
 
-    const apiKeys = getGoogleAPIKeys();
-    if (!apiKeys.length) {
+    const ttsState = getTrackedUsageState('tts');
+    const shouldUsePrimaryOnly = ttsState?.preferPrimary;
+    const freeApiEntries = shouldUsePrimaryOnly ? [] : getFreeGoogleAPIKeys();
+    const primaryApiEntry = process.env.GOOGLE_API_KEY
+      ? { key: process.env.GOOGLE_API_KEY, name: GOOGLE_PRIMARY_API_NAME }
+      : null;
+
+    if (!freeApiEntries.length && !primaryApiEntry) {
       throw new Error('No hay API keys de Google configuradas para Text-to-Speech');
     }
 
     let lastError = null;
 
-    for (const { key, name } of apiKeys) {
+    const attemptWithEntry = async (entry, keyType) => {
+      if (!entry?.key) {
+        throw new Error('API key de Google TTS no configurada');
+      }
+
+      const isPrimary = keyType === 'primary';
+      const emoji = isPrimary ? '💰' : '🆓';
+      const apiName = entry.name || (isPrimary ? GOOGLE_PRIMARY_API_NAME : 'API gratuita');
+
+      console.log(`${emoji} Solicitando audio TTS con ${apiName} (${voiceCandidates.join(', ')})...`);
+
       let client;
       try {
-        client = getGoogleTTSClient(key);
+        client = getGoogleTTSClient(entry.key);
       } catch (clientError) {
-        console.error(`⚠️ No se pudo inicializar cliente TTS con API key ${name}: ${clientError.message}`);
-        lastError = clientError;
-        continue;
+        throw clientError;
       }
+
+      let lastVoiceError = null;
 
       for (const candidateVoice of voiceCandidates) {
         try {
-          console.log(`🔊 Solicitando audio a Gemini TTS con voz ${candidateVoice} usando API key ${name}...`);
+          console.log(`🔊 Generando audio con voz ${candidateVoice} usando ${apiName}...`);
           const response = await client.models.generateContent({
             model: 'gemini-2.5-flash-preview-tts',
             contents: [
@@ -2327,16 +2738,50 @@ async function generateStoryAudio(script, voiceName = DEFAULT_TTS_VOICE, section
             await writeFile(filePath, audioBuffer);
           }
 
-          console.log(`✅ Audio generado exitosamente con voz ${candidateVoice} (API key ${name}) en: ${filePath}`);
+          console.log(`✅ Audio generado exitosamente con voz ${candidateVoice} (${apiName}) en: ${filePath}`);
+
+          if (isPrimary) {
+            markPrimarySuccess('tts');
+          }
+
           return path.relative('./public', filePath).replace(/\\/g, '/');
         } catch (voiceError) {
-          console.error(`⚠️ Error generando audio con voz ${candidateVoice} usando API key ${name}: ${voiceError.message}`);
-          lastError = voiceError;
+          console.error(`⚠️ Error generando audio con voz ${candidateVoice} usando ${apiName}: ${voiceError.message}`);
+          lastVoiceError = voiceError;
+        }
+      }
+
+      throw lastVoiceError || new Error(`No se pudo generar audio con ${apiName}`);
+    };
+
+    if (freeApiEntries.length) {
+      for (const entry of freeApiEntries) {
+        try {
+          return await attemptWithEntry(entry, 'free');
+        } catch (freeError) {
+          lastError = freeError;
+          markFreeApiFailure('tts', freeError);
+          console.warn(`⚠️ API TTS gratuita ${entry.name} falló. Cambiando a la API principal. Motivo: ${freeError.message}`);
+          break;
         }
       }
     }
 
-    throw lastError || new Error('No se pudo generar audio con Google TTS');
+    if (!primaryApiEntry) {
+      throw lastError || new Error('Las APIs gratuitas fallaron y no hay API principal configurada para TTS');
+    }
+
+    try {
+      return await attemptWithEntry(primaryApiEntry, 'primary');
+    } catch (primaryError) {
+      lastError = primaryError;
+      try {
+        markPrimaryFailure('tts', primaryError);
+      } catch (criticalError) {
+        throw criticalError;
+      }
+      throw primaryError;
+    }
   } catch (error) {
     console.error('❌ Error generando audio:', error.message);
     console.error('❌ Detalle del error:', error);
@@ -2378,44 +2823,65 @@ guardado para referencia futura.
 
 // Función para generar imágenes con diferentes modelos
 async function generateImageWithModel(ai, prompt, modelType, aspectRatio = '9:16') {
-  if (modelType === 'gemini2') {
-    console.log(`🤖 Usando Gemini 2.0 Flash nativo...`);
-    // Usar Gemini 2.0 nativo con responseModalities
-    const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash-preview-image-generation",
-      contents: prompt,
-      config: {
-        responseModalities: ["TEXT", "IMAGE"],
-        aspectRatio: aspectRatio,
-      },
+  const normalizedModel = normalizeImageModel(modelType);
+  const modelLabel = getImageModelLabel(normalizedModel);
+  const aspectInfo = describeAspectRatio(aspectRatio);
+  const safeAspectRatio = aspectInfo.ratio;
+
+  if (normalizedModel === 'gemini2' || normalizedModel === 'gemini25') {
+    const modelId = normalizedModel === 'gemini25'
+      ? 'gemini-2.5-flash-image'
+      : 'gemini-2.0-flash-preview-image-generation';
+
+    const supportsAspectRatio = geminiModelSupportsAspectRatio(modelId);
+    if (!supportsAspectRatio && aspectInfo.ratio !== '9:16') {
+      console.log(`ℹ️ ${modelLabel} (${modelId}) no admite aspect ratios personalizados. Se usará el formato predeterminado del modelo.`);
+    } else {
+      console.log(`🤖 Usando ${modelLabel} (${modelId}) con ${aspectInfo.label}...`);
+    }
+
+    const config = {
+      responseModalities: ["IMAGE", "TEXT"]
+    };
+
+    if (supportsAspectRatio) {
+      config.imageConfig = {
+        aspectRatio: safeAspectRatio
+      };
+    }
+
+    const contents = Array.isArray(prompt)
+      ? prompt
+      : [{ role: 'user', parts: [{ text: String(prompt) }] }];
+
+    const stream = await ai.models.generateContentStream({
+      model: modelId,
+      contents,
+      config
     });
 
-    const images = [];
-    for (const part of response.candidates[0].content.parts) {
-      if (part.inlineData && part.inlineData.mimeType?.includes('image')) {
-        images.push({
-          image: {
-            imageBytes: part.inlineData.data
-          }
-        });
+    const { inlineImages } = await collectGeminiStreamData(stream);
+
+    const images = inlineImages.map((inlineData) => ({
+      image: {
+        imageBytes: inlineData.data
       }
-    }
-    
+    }));
+
     return {
       generatedImages: images
     };
-  } else {
-    console.log(`🤖 Usando Imagen 4.0 tradicional...`);
-    // Usar Imagen 4.0 (método tradicional)
-    return await ai.models.generateImages({
-      model: 'imagen-4.0-generate-preview-06-06',
-      prompt: prompt,
-      config: {
-        numberOfImages: 1,
-        aspectRatio: aspectRatio,
-      },
-    });
   }
+
+  console.log(`🤖 Usando Imagen 4.0 tradicional (${getImageModelLabel('imagen40')}) con ${aspectInfo.label}...`);
+  return await ai.models.generateImages({
+    model: 'imagen-4.0-generate-preview-06-06',
+    prompt: prompt,
+    config: {
+      numberOfImages: 1,
+      aspectRatio: safeAspectRatio,
+    },
+  });
 }
 
 // =====================================
@@ -2428,9 +2894,11 @@ const comfyUIClient = new ComfyUIClient('http://127.0.0.1:8188');
 // Función para generar imágenes usando IA Local (ComfyUI + Flux)
 async function generateLocalAIImages(imagePrompts, additionalInstructions, sectionDir, sectionNumber, customSettings = null, keepAlive = false, aspectRatio = '9:16') {
   const generatedImages = [];
+  const aspectInfo = describeAspectRatio(aspectRatio);
+  const safeAspectRatio = aspectInfo.ratio;
   
   try {
-    console.log(`🤖 Iniciando generación de ${imagePrompts.length} imágenes con ComfyUI + Flux...`);
+    console.log(`🤖 Iniciando generación de ${imagePrompts.length} imágenes con ComfyUI + Flux (${aspectInfo.label})...`);
     
     // 1. Iniciar ComfyUI automáticamente
     console.log('🚀 Iniciando ComfyUI para la sección...');
@@ -2459,33 +2927,35 @@ async function generateLocalAIImages(imagePrompts, additionalInstructions, secti
       
       try {
         // Configurar opciones (usar configuración personalizada si está disponible)
+    const resolvedDefaults = resolveComfyDefaultResolution(safeAspectRatio);
         const options = customSettings ? {
-          width: parseInt(customSettings.width) || 800,
-          height: parseInt(customSettings.height) || 400,
-          steps: parseInt(customSettings.steps) || 15,
-          cfg: 1.8,
-          guidance: parseFloat(customSettings.guidance) || 3.5,
+          width: parseInt(customSettings.width) || resolvedDefaults.width,
+          height: parseInt(customSettings.height) || resolvedDefaults.height,
+          steps: Number.parseInt(customSettings.steps, 10) || comfyDefaultConfig.steps,
+          cfg: Number.isFinite(Number.parseFloat(customSettings.cfg)) ? Number.parseFloat(customSettings.cfg) : comfyDefaultConfig.cfg,
+          guidance: Number.isFinite(Number.parseFloat(customSettings.guidance)) ? Number.parseFloat(customSettings.guidance) : comfyDefaultConfig.guidance,
           sampler: customSettings.sampler || "euler",
           scheduler: customSettings.scheduler || "simple",
           model: "flux1-dev-fp8.safetensors", // Modelo Flux optimizado
           negativePrompt: customSettings.negativePrompt || "low quality, blurry, distorted",
-          timeout: Math.max(180, parseInt(customSettings.steps) * 6) // Timeout dinámico basado en pasos
+          timeout: Math.max(180, (Number.parseInt(customSettings.steps, 10) || comfyDefaultConfig.steps) * 6)
         } : {
-          width: 800,  // Resolución 16:9 Full HD por defecto
-          height: 400,
-          steps: 15, // Valor por defecto
-          cfg: 1.8,
-          guidance: 3.5,
+          width: resolvedDefaults.width,
+          height: resolvedDefaults.height,
+          steps: comfyDefaultConfig.steps,
+          cfg: comfyDefaultConfig.cfg,
+          guidance: comfyDefaultConfig.guidance,
           sampler: "euler",
           scheduler: "simple",
           model: "flux1-dev-fp8.safetensors", // Modelo Flux optimizado
           negativePrompt: "low quality, blurry, distorted",
-          timeout: 360 // 3 minutos timeout por defecto
+          timeout: Math.max(180, comfyDefaultConfig.steps * 6)
         };
         
         console.log(`⚙️ Usando configuración ComfyUI:`, {
           resolution: `${options.width}x${options.height}`,
           steps: options.steps,
+          cfg: options.cfg,
           guidance: options.guidance,
           sampler: options.sampler,
           scheduler: options.scheduler
@@ -2603,7 +3073,7 @@ function generateProjectStateFile(projectData, requestData) {
       totalSections: sections.length,
       currentSection: sections.length,
       voice: voice || 'Orus',
-      imageModel: imageModel || 'gemini2',
+  imageModel: normalizeImageModel(imageModel),
       scriptStyle: scriptStyle || 'professional',
       customStyleInstructions: customStyleInstructions || null,
       promptModifier: promptModifier || '',
@@ -3732,6 +4202,672 @@ RECUERDA: ESTE ES UN CAPÍTULO INTERMEDIO DE UN VIDEO YA INICIADO - CONTINÚA LA
   }
 }
 
+function normalizeMultiProjectEntries(projects = []) {
+  const seenFolders = new Set();
+  const normalized = [];
+
+  projects.forEach((project, index) => {
+    if (!project || typeof project.topic !== 'string') {
+      return;
+    }
+
+    const topic = project.topic.trim();
+    if (!topic) {
+      return;
+    }
+
+    const requestedFolder = typeof project.folderName === 'string' ? project.folderName.trim() : '';
+    const baseFolderName = requestedFolder || topic;
+    let safeFolderName = createSafeFolderName(baseFolderName) || `proyecto_${index + 1}`;
+
+    let uniqueFolderName = safeFolderName;
+    let suffix = 2;
+    while (seenFolders.has(uniqueFolderName)) {
+      uniqueFolderName = `${safeFolderName}_${suffix}`;
+      suffix += 1;
+    }
+
+    seenFolders.add(uniqueFolderName);
+
+    const requestedVoice = typeof project.voice === 'string' ? project.voice.trim() : '';
+
+    normalized.push({
+      topic,
+      folderName: uniqueFolderName,
+      originalFolderName: requestedFolder || null,
+      index,
+      projectKey: project.projectKey || uniqueFolderName,
+      voice: requestedVoice || null
+    });
+  });
+
+  return normalized;
+}
+
+function findMostRecentScriptFile(sectionDir) {
+  try {
+    if (!fs.existsSync(sectionDir)) {
+      return null;
+    }
+
+    const candidates = fs.readdirSync(sectionDir)
+      .filter((file) => file.toLowerCase().includes('guion') && file.toLowerCase().endsWith('.txt'))
+      .map((file) => ({
+        file,
+        stats: fs.statSync(path.join(sectionDir, file))
+      }))
+      .sort((a, b) => b.stats.mtimeMs - a.stats.mtimeMs);
+
+    return candidates.length ? path.join(sectionDir, candidates[0].file) : null;
+  } catch (error) {
+    console.warn('⚠️ No se pudo determinar el archivo de guión más reciente:', error.message);
+    return null;
+  }
+}
+
+function buildScriptFileContent({
+  topic,
+  totalSections,
+  sectionNumber,
+  chapterTitle,
+  projectKey,
+  scriptText
+}) {
+  const headerLines = [
+    `GUIÓN DE SECCIÓN ${sectionNumber}`,
+    '===============================',
+    `Tema: ${topic}`,
+    `Sección: ${sectionNumber} de ${totalSections}`,
+    `Capítulo: ${chapterTitle || `Sección ${sectionNumber}`}`,
+    `Proyecto: ${projectKey}`,
+    `Longitud: ${scriptText.length} caracteres`,
+    `Fecha de actualización: ${new Date().toLocaleString()}`,
+    '',
+    'CONTENIDO DEL GUIÓN:'
+  ];
+
+  const footerLines = [
+    '',
+    '===============================',
+    'Guión verificado automáticamente por el sistema'
+  ];
+
+  return `${headerLines.join('\n')}\n${scriptText}\n${footerLines.join('\n')}`;
+}
+
+function isScriptContentValid(scriptText) {
+  if (!scriptText || typeof scriptText !== 'string') {
+    return false;
+  }
+
+  const normalized = scriptText.trim();
+  if (!normalized) {
+    return false;
+  }
+
+  const errorIndicators = [
+    'error generando contenido',
+    '[googlegenerativeai error]',
+    'you exceeded your current quota',
+    'quota exceeded',
+    'please retry in',
+    'error fetching from',
+    'http 4',
+    'http 5',
+    'rate limit',
+    'request blocked',
+    'error code',
+    'api key invalid'
+  ];
+
+  const lower = normalized.toLowerCase();
+  return !errorIndicators.some((indicator) => lower.includes(indicator));
+}
+
+async function ensureProjectScriptsReady({
+  projectData,
+  scriptStyle = 'professional',
+  customStyleInstructions = '',
+  wordsMin = 800,
+  wordsMax = 1100
+}) {
+  if (!projectData || !Array.isArray(projectData.sections) || !projectData.sections.length) {
+    throw new Error('projectData inválido para verificar guiones');
+  }
+
+  const topic = projectData.topic || projectData.sections[0]?.title?.split(':')[0] || 'Proyecto';
+  const projectKey = projectData.projectKey || createSafeFolderName(topic);
+  const totalSections = projectData.totalSections || projectData.sections.length;
+  const chapterStructure = Array.isArray(projectData.chapterStructure)
+    ? projectData.chapterStructure
+    : projectData.sections.map((section) => section.title || `Sección ${section.section}`);
+
+  const normalizedStyle = scriptStyle === 'default' ? 'professional' : scriptStyle;
+
+  const stats = {
+    checked: 0,
+    regenerated: [],
+    restoredFromMemory: [],
+    reusedExisting: []
+  };
+
+  const verifiedSections = [];
+
+  for (let index = 0; index < projectData.sections.length; index += 1) {
+    const sectionData = projectData.sections[index];
+    const sectionNumber = Number.parseInt(sectionData.section, 10) || index + 1;
+
+    const { sectionDir } = createProjectStructure(topic, sectionNumber, projectKey);
+    const existingScriptPath = findMostRecentScriptFile(sectionDir);
+    const defaultScriptPath = path.join(sectionDir, `${projectKey}_seccion_${sectionNumber}_guion.txt`);
+    let targetScriptPath = existingScriptPath || defaultScriptPath;
+
+    let scriptText = typeof sectionData.cleanScript === 'string' && sectionData.cleanScript.trim()
+      ? sectionData.cleanScript.trim()
+      : typeof sectionData.script === 'string' && sectionData.script.trim()
+        ? cleanScriptText(sectionData.script)
+        : '';
+
+    if (scriptText && !isScriptContentValid(scriptText)) {
+      console.log(`⚠️ Script en memoria inválido para sección ${sectionNumber}, será regenerado.`);
+      scriptText = '';
+    }
+
+    let needsGeneration = false;
+
+    if (existingScriptPath && fs.existsSync(existingScriptPath)) {
+      try {
+        const rawContent = fs.readFileSync(existingScriptPath, 'utf8');
+        const extracted = extractScriptContent(rawContent);
+
+        if (extracted && !extracted.isEmpty && isScriptContentValid(extracted.content)) {
+          scriptText = extracted.content.trim();
+          stats.reusedExisting.push(sectionNumber);
+        } else if (scriptText.length > 0) {
+          console.log(`🛠️ Reescribiendo guión vacío para sección ${sectionNumber} usando contenido en memoria.`);
+          const newContent = buildScriptFileContent({
+            topic,
+            totalSections,
+            sectionNumber,
+            chapterTitle: chapterStructure[sectionNumber - 1],
+            projectKey,
+            scriptText
+          });
+          fs.writeFileSync(existingScriptPath, newContent, 'utf8');
+          stats.restoredFromMemory.push(sectionNumber);
+        } else {
+          needsGeneration = true;
+        }
+      } catch (error) {
+        console.warn(`⚠️ No se pudo leer guión existente de la sección ${sectionNumber}: ${error.message}`);
+        needsGeneration = scriptText.length === 0;
+      }
+    } else if (scriptText.length > 0) {
+      const newContent = buildScriptFileContent({
+        topic,
+        totalSections,
+        sectionNumber,
+        chapterTitle: chapterStructure[sectionNumber - 1],
+        projectKey,
+        scriptText
+      });
+      fs.writeFileSync(targetScriptPath, newContent, 'utf8');
+      stats.restoredFromMemory.push(sectionNumber);
+    } else {
+      needsGeneration = true;
+    }
+
+    if (needsGeneration) {
+      console.log(`📝 Guión faltante para sección ${sectionNumber}. Generando con IA...`);
+
+      const previousSections = verifiedSections
+        .filter((item) => item.section < sectionNumber)
+        .map((item) => ({
+          section: item.section,
+          script: item.script
+        }));
+
+      const generation = await generateMissingScript(
+        topic,
+        sectionNumber,
+        totalSections,
+        chapterStructure[sectionNumber - 1] || null,
+        previousSections,
+        normalizedStyle,
+        customStyleInstructions,
+        wordsMin,
+        wordsMax
+      );
+
+      if (!generation?.success || !generation.script) {
+        throw new Error(`No se pudo generar el guión faltante de la sección ${sectionNumber}: ${generation?.error || 'Error desconocido'}`);
+      }
+
+      scriptText = generation.script.trim();
+      if (!isScriptContentValid(scriptText)) {
+        throw new Error(`El guión generado para la sección ${sectionNumber} no es válido (contiene mensaje de error)`);
+      }
+      const fileContent = buildScriptFileContent({
+        topic,
+        totalSections,
+        sectionNumber,
+        chapterTitle: chapterStructure[sectionNumber - 1],
+        projectKey,
+        scriptText
+      });
+
+      fs.writeFileSync(targetScriptPath, fileContent, 'utf8');
+      stats.regenerated.push(sectionNumber);
+    }
+
+    const cleanedScript = cleanScriptText(scriptText);
+    sectionData.script = scriptText;
+    sectionData.cleanScript = cleanedScript;
+    sectionData.scriptFile = path.relative('./public', targetScriptPath).replace(/\\/g, '/');
+
+    verifiedSections.push({ section: sectionNumber, script: scriptText });
+    stats.checked += 1;
+  }
+
+  console.log(`🔍 Verificación de guiones completada para ${projectKey}: ${stats.checked} secciones revisadas, ${stats.regenerated.length} regeneradas, ${stats.restoredFromMemory.length} restauradas.`);
+
+  projectData.totalSections = totalSections;
+  projectData.scriptStyle = normalizedStyle;
+  projectData.customStyleInstructions = customStyleInstructions;
+  projectData.wordsMin = wordsMin;
+  projectData.wordsMax = wordsMax;
+
+  return stats;
+}
+
+async function performBatchAudioGeneration(params = {}) {
+  const {
+    projectData,
+    useApplio,
+    voice,
+    applioVoice,
+    applioModel,
+    applioPitch,
+    folderName,
+    narrationStyle,
+    scriptStyle,
+    customStyleInstructions,
+    wordsMin,
+    wordsMax
+  } = params;
+
+  if (!projectData || !Array.isArray(projectData.sections) || !projectData.sections.length) {
+    throw new Error('projectData inválido: se requieren secciones para generar audio');
+  }
+
+  const { sections, projectKey } = projectData;
+  const audioMethod = useApplio ? 'Applio' : 'Google TTS';
+  const requestedNarrationStyle = narrationStyle || projectData?.audioConfig?.narrationStyle || null;
+  const baseTopic = projectData.sections[0]?.title?.split(':')[0] || projectData.topic || 'Proyecto';
+
+  console.log(`🎤 Preparando generación de audio (${audioMethod}) para ${sections.length} secciones del proyecto ${projectKey}`);
+
+  const normalizedWordsMin = Number.isFinite(Number(wordsMin)) ? Number(wordsMin) : Number.isFinite(Number(projectData?.wordsMin)) ? Number(projectData.wordsMin) : 800;
+  const normalizedWordsMax = Number.isFinite(Number(wordsMax)) ? Number(wordsMax) : Number.isFinite(Number(projectData?.wordsMax)) ? Number(projectData.wordsMax) : 1100;
+  const effectiveScriptStyle = scriptStyle || projectData?.scriptStyle || 'professional';
+  const effectiveCustomStyleInstructions = typeof customStyleInstructions === 'string'
+    ? customStyleInstructions
+    : projectData?.customStyleInstructions || '';
+
+  await ensureProjectScriptsReady({
+    projectData,
+    scriptStyle: effectiveScriptStyle,
+    customStyleInstructions: effectiveCustomStyleInstructions,
+    wordsMin: normalizedWordsMin,
+    wordsMax: normalizedWordsMax
+  });
+
+  if (useApplio) {
+    console.log('🔄 Verificando disponibilidad de Applio para la cola actual...');
+    const applioStarted = await startApplio();
+    if (!applioStarted) {
+      throw new Error('No se pudo iniciar Applio');
+    }
+  }
+
+  const audioResults = [];
+
+  for (let i = 0; i < sections.length; i += 1) {
+    const section = sections[i];
+    console.log(`🎵 [${projectKey}] Generando audio ${i + 1}/${sections.length}: ${section.title}`);
+
+    const sectionFolderStructure = createProjectStructure(baseTopic, section.section, folderName || projectData.projectKey || projectKey);
+
+    try {
+      let audioPath;
+
+      if (useApplio) {
+        const selectedApplioVoice = applioVoice || 'es-ES-ElviraNeural.pth';
+        const selectedApplioModel = applioModel || 'rmvpe';
+        const selectedPitch = applioPitch || 0;
+
+        const fileName = `${createSafeFolderName(section.title)}_seccion_${section.section}_${Date.now()}.wav`;
+        const filePath = path.join(sectionFolderStructure.sectionDir, fileName);
+
+        console.log(`📁 [${projectKey}] Guardando audio Applio en: ${filePath}`);
+
+        const result = await applioClient.textToSpeech(section.cleanScript, filePath, {
+          model: selectedApplioModel,
+          speed: 0,
+          pitch: selectedPitch,
+          voicePath: selectedApplioVoice
+        });
+
+        if (!result.success) {
+          throw new Error('Applio no generó el audio correctamente');
+        }
+
+        audioPath = path.relative('./public', filePath).replace(/\\/g, '/');
+        console.log(`✅ [${projectKey}] Audio Applio generado: ${audioPath}`);
+      } else {
+        try {
+          audioPath = await generateStoryAudio(
+            section.cleanScript,
+            voice || DEFAULT_TTS_VOICE,
+            sectionFolderStructure.sectionDir,
+            section.title,
+            section.section,
+            requestedNarrationStyle
+          );
+          console.log(`✅ [${projectKey}] Audio Google TTS generado: ${audioPath}`);
+        } catch (ttsError) {
+          console.log(`⚠️ [${projectKey}] Google TTS falló, usando Applio como fallback: ${ttsError.message}`);
+
+          await applioClient.ensureConnection();
+          const audioResponse = await applioClient.generateTTS(
+            section.cleanScript,
+            applioVoice || 'RemyOriginal',
+            applioModel || 'fr-FR-RemyMultilingualNeural',
+            applioPitch || 0
+          );
+
+          if (!audioResponse.success || !audioResponse.audioPath) {
+            throw new Error('Tanto Google TTS como Applio fallaron');
+          }
+
+          const sourceFile = audioResponse.audioPath;
+          const safeTitle = createSafeFolderName(section.title);
+          const fileName = `${safeTitle}_seccion_${section.section}_${Date.now()}.wav`;
+          const filePath = path.join(sectionFolderStructure.sectionDir, fileName);
+
+          fs.copyFileSync(sourceFile, filePath);
+          audioPath = path.relative('./public', filePath).replace(/\\/g, '/');
+          console.log(`✅ [${projectKey}] Audio Applio (fallback) generado: ${audioPath}`);
+        }
+      }
+
+      audioResults.push({
+        section: section.section,
+        title: section.title,
+        audioPath,
+        success: true
+      });
+
+      try {
+        const progressData = updateProjectProgress(projectKey, 'audio', i + 1, sections.length);
+        const updatedProjectData = {
+          ...projectData,
+          audioResults,
+          audioMethod,
+          audioConfig: useApplio
+            ? { voice: applioVoice, model: applioModel, pitch: applioPitch }
+            : { voice, narrationStyle: requestedNarrationStyle },
+          phase: 'audio',
+          lastUpdate: new Date().toISOString()
+        };
+
+        await saveProgressiveProjectState(projectKey, updatedProjectData, progressData);
+      } catch (progressError) {
+        console.error('⚠️ Error guardando progreso de audio:', progressError.message);
+      }
+    } catch (error) {
+      console.error(`❌ [${projectKey}] Error generando audio para sección ${section.section}:`, error);
+      audioResults.push({
+        section: section.section,
+        title: section.title,
+        audioPath: null,
+        success: false,
+        error: error.message
+      });
+
+      try {
+        const progressData = updateProjectProgress(projectKey, 'audio', i + 1, sections.length);
+        const updatedProjectData = {
+          ...projectData,
+          audioResults,
+          audioMethod,
+          audioConfig: useApplio
+            ? { voice: applioVoice, model: applioModel, pitch: applioPitch }
+            : { voice, narrationStyle: requestedNarrationStyle },
+          phase: 'audio',
+          lastUpdate: new Date().toISOString()
+        };
+
+        await saveProgressiveProjectState(projectKey, updatedProjectData, progressData);
+      } catch (progressError) {
+        console.error('⚠️ Error guardando progreso de audio (con error):', progressError.message);
+      }
+    }
+  }
+
+  const successfulAudio = audioResults.filter((r) => r.success).length;
+
+  console.log(`🎵 [${projectKey}] Generación de audio completada (${successfulAudio}/${sections.length} con ${audioMethod})`);
+
+  return {
+    message: `Fase 2 completada: ${successfulAudio}/${sections.length} audios generados con ${audioMethod}`,
+    audioResults,
+    projectKey,
+    audioMethod,
+    successfulAudio,
+    totalAudios: sections.length,
+    phase: 'audio_completed'
+  };
+}
+
+async function scheduleBatchAudioGeneration(params = {}) {
+  const { useApplio, applioQueueRunId, applioQueueOrder, applioQueueLabel } = params;
+
+  const shouldQueueApplio = Boolean(useApplio) && applioQueueRunId !== undefined && applioQueueRunId !== null && applioQueueOrder !== undefined && applioQueueOrder !== null;
+
+  const task = () => performBatchAudioGeneration(params);
+
+  if (shouldQueueApplio) {
+    return enqueueApplioAudioTask({
+      runId: applioQueueRunId,
+      order: Number.parseInt(applioQueueOrder, 10),
+      label: applioQueueLabel || params?.projectData?.projectKey || `orden_${applioQueueOrder}`,
+      task
+    });
+  }
+
+  return task();
+}
+
+function launchParallelBatchGenerationTask(entry, sharedConfig = {}) {
+  const baseUrl = `http://127.0.0.1:${PORT}`;
+  const totalSections = Number.parseInt(sharedConfig.totalSections, 10) || 3;
+  const minWords = Number.parseInt(sharedConfig.minWords, 10) || 800;
+  const maxWords = Number.parseInt(sharedConfig.maxWords, 10) || 1100;
+  const imageCount = Number.parseInt(sharedConfig.imageCount, 10) || 5;
+  const aspectRatio = typeof sharedConfig.aspectRatio === 'string' && sharedConfig.aspectRatio.trim()
+    ? sharedConfig.aspectRatio.trim()
+    : '16:9';
+  const promptModifier = typeof sharedConfig.promptModifier === 'string' ? sharedConfig.promptModifier : '';
+  const imageModel = normalizeImageModel(sharedConfig.imageModel);
+  const imageModelLabel = getImageModelLabel(imageModel);
+  const llmModel = sharedConfig.llmModel || 'gemini';
+  const googleImages = Boolean(sharedConfig.googleImages);
+  const localAIImages = Boolean(sharedConfig.localAIImages);
+  const comfyOnlyMode = Boolean(sharedConfig.comfyOnlyMode);
+  const allowComfyFallback = sharedConfig.allowComfyFallback !== undefined
+    ? Boolean(sharedConfig.allowComfyFallback)
+    : comfyOnlyMode;
+  const skipImagesFlag = sharedConfig.skipImages === true;
+  const effectiveSkipImages = skipImagesFlag || (!googleImages && !localAIImages);
+  const selectedGoogleApis = Array.isArray(sharedConfig.selectedGoogleApis)
+    ? sharedConfig.selectedGoogleApis
+    : [];
+  const applioQueueRunId = sharedConfig.applioQueueRunId || null;
+  const applioQueueOffset = Number.parseInt(sharedConfig.applioQueueOffset ?? 0, 10);
+  const queueOrder = Number.isFinite(applioQueueOffset) ? applioQueueOffset + entry.index : entry.index;
+
+  const entryVoice = typeof entry.voice === 'string' ? entry.voice.trim() : '';
+  const assignedVoice = sharedConfig?.voiceAssignments?.[entry.folderName];
+  const fallbackVoice = sharedConfig.voice || sharedConfig.selectedVoice || 'Orus';
+  const effectiveVoice = entryVoice || assignedVoice || fallbackVoice;
+
+  const payload = {
+    topic: entry.topic,
+    folderName: entry.folderName,
+    voice: effectiveVoice,
+    totalSections,
+    minWords,
+    maxWords,
+    imageCount,
+    aspectRatio,
+    promptModifier,
+    imageModel,
+    llmModel,
+    skipImages: effectiveSkipImages,
+    googleImages,
+    localAIImages,
+    comfyUISettings: sharedConfig.comfyUISettings || {},
+    scriptStyle: sharedConfig.scriptStyle || 'default',
+    customStyleInstructions: sharedConfig.customStyleInstructions || null,
+    applioVoice: sharedConfig.applioVoice,
+    applioModel: sharedConfig.applioModel,
+    applioPitch: sharedConfig.applioPitch,
+    useApplio: Boolean(sharedConfig.generateApplioAudio || sharedConfig.useApplio)
+  };
+
+  const shouldGenerateGoogleAudio = Boolean(sharedConfig.generateAudio);
+  const shouldGenerateApplioAudio = Boolean(sharedConfig.generateApplioAudio || sharedConfig.useApplio);
+  const shouldGenerateAudio = shouldGenerateGoogleAudio || shouldGenerateApplioAudio;
+
+  console.log(`🎙️ [${entry.folderName}] Voz seleccionada para proyecto paralelo: ${payload.voice}`);
+  console.log(`🖼️ [${entry.folderName}] Modelo de imágenes seleccionado: ${imageModelLabel} (${imageModel})`);
+
+  (async () => {
+    try {
+      console.log(`\n${'⚡'.repeat(20)}`);
+      console.log(`⚡ Iniciando proyecto paralelo "${entry.topic}" (carpeta: ${entry.folderName})`);
+      console.log(`${'⚡'.repeat(20)}\n`);
+
+      const phase1Response = await fetch(`${baseUrl}/generate-batch-automatic`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      const phase1Data = await phase1Response.json();
+      if (!phase1Response.ok || !phase1Data?.success) {
+        throw new Error(phase1Data?.error || 'Fase 1 falló');
+      }
+
+      const projectData = phase1Data.data;
+
+      if (shouldGenerateAudio) {
+        const audioPayload = {
+          projectData,
+          useApplio: shouldGenerateApplioAudio,
+          voice: payload.voice,
+          narrationStyle: sharedConfig.narrationStyle || null,
+          applioVoice: sharedConfig.applioVoice,
+          applioModel: sharedConfig.applioModel,
+          applioPitch: sharedConfig.applioPitch,
+          folderName: projectData.projectKey,
+          applioQueueRunId: shouldGenerateApplioAudio ? applioQueueRunId : null,
+          applioQueueOrder: shouldGenerateApplioAudio ? queueOrder : null,
+          applioQueueLabel: `${entry.topic} (${entry.folderName})`,
+          scriptStyle: sharedConfig.scriptStyle || projectData.scriptStyle || 'professional',
+          customStyleInstructions: sharedConfig.customStyleInstructions || projectData.customStyleInstructions || '',
+          wordsMin: minWords,
+          wordsMax: maxWords
+        };
+
+        try {
+          const audioResult = await scheduleBatchAudioGeneration(audioPayload);
+          console.log(`🎵 Proyecto paralelo ${entry.folderName}: ${audioResult.message}`);
+        } catch (audioError) {
+          throw new Error(audioError?.message || 'Fase 2 falló');
+        }
+      }
+
+      if (!effectiveSkipImages) {
+        const imagePayload = {
+          folderName: projectData.projectKey,
+          imageInstructions: sharedConfig.imageInstructions || sharedConfig.promptModifier || '',
+          imageCount,
+          aspectRatio,
+          useLocalAI: localAIImages,
+          comfyUIConfig: sharedConfig.comfyUISettings || {},
+          allowComfyFallback,
+          comfyOnlyMode,
+          selectedApis: comfyOnlyMode ? [] : selectedGoogleApis,
+          imageModel
+        };
+
+        const imageResponse = await fetch(`${baseUrl}/api/generate-missing-images`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(imagePayload)
+        });
+
+        const imageData = await imageResponse.json();
+        if (!imageResponse.ok || !imageData?.success) {
+          throw new Error(imageData?.error || 'Fase 3 falló');
+        }
+      }
+
+      console.log(`✅ Proyecto paralelo completado: ${entry.folderName}`);
+    } catch (error) {
+      console.error(`❌ Error en proyecto paralelo "${entry.folderName}":`, error);
+    }
+  })();
+}
+
+app.post('/generate-batch-automatic/multi', async (req, res) => {
+  try {
+    const { projects, sharedConfig = {} } = req.body || {};
+
+    if (!Array.isArray(projects) || !projects.length) {
+      return res.status(400).json({ success: false, error: 'Debes enviar al menos un proyecto para procesar.' });
+    }
+
+    const normalizedProjects = normalizeMultiProjectEntries(projects);
+
+    if (!normalizedProjects.length) {
+      return res.status(400).json({ success: false, error: 'No se encontraron proyectos válidos para procesar.' });
+    }
+
+    normalizedProjects.forEach((entry) => {
+      launchParallelBatchGenerationTask(entry, sharedConfig);
+    });
+
+    const responseProjects = normalizedProjects.map((entry) => ({
+      folderName: entry.folderName,
+      topic: entry.topic,
+      index: entry.index,
+      voice: entry.voice || sharedConfig?.voiceAssignments?.[entry.folderName] || sharedConfig?.voice || null
+    }));
+
+    res.json({
+      success: true,
+      message: `Se iniciaron ${responseProjects.length} proyecto(s) en paralelo.`,
+      projects: responseProjects
+    });
+  } catch (error) {
+    console.error('❌ Error iniciando generación paralela:', error);
+    res.status(500).json({ success: false, error: error.message || 'Error iniciando generación paralela' });
+  }
+});
+
 // NUEVO ENDPOINT PARA GENERACIÓN AUTOMÁTICA POR LOTES
 app.post('/generate-batch-automatic', async (req, res) => {
   try {
@@ -3743,7 +4879,9 @@ app.post('/generate-batch-automatic', async (req, res) => {
     console.log(`🎯 Tema: "${topic}"`);
     console.log(`📊 Total de secciones: ${totalSections}`);
     console.log(`🎤 Sistema de audio: ${useApplio ? 'Applio' : 'Google TTS'}`);
-    console.log(`🖼️ Sistema de imágenes: ${localAIImages ? 'IA Local (ComfyUI)' : googleImages ? 'Google Images' : geminiGeneratedImages ? 'Gemini/Imagen 4' : skipImages ? 'Sin imágenes' : 'IA en la nube'}`);
+    const selectedImageModel = normalizeImageModel(imageModel);
+    const selectedImageModelLabel = getImageModelLabel(selectedImageModel);
+    console.log(`🖼️ Sistema de imágenes: ${localAIImages ? 'IA Local (ComfyUI)' : googleImages ? 'Google Images' : skipImages ? 'Sin imágenes' : `IA en la nube (${selectedImageModelLabel})`}`);
     console.log('='.repeat(80) + '\n');
     
     const selectedVoice = voice || 'Orus';
@@ -3752,9 +4890,8 @@ app.post('/generate-batch-automatic', async (req, res) => {
     const numImages = imageCount || 5;
     const wordsMin = minWords || 800;
     const wordsMax = maxWords || 1100;
-    const additionalInstructions = promptModifier || '';
-    const selectedImageModel = imageModel || 'gemini2';
-    const selectedLlmModel = llmModel || 'gemini-2.5-flash';
+  const additionalInstructions = promptModifier || '';
+  const selectedLlmModel = llmModel || 'gemini-2.5-flash';
     let shouldSkipImages = skipImages === true;
     let shouldUseGoogleImages = googleImages === true;
     let shouldUseLocalAI = localAIImages === true;
@@ -4180,199 +5317,22 @@ VERIFICACIÓN FINAL: Tu respuesta debe contener exactamente ${numImages - 1} ocu
 // ENDPOINT PARA CONTINUAR CON FASE 2: GENERACIÓN DE AUDIO POR LOTES
 app.post('/generate-batch-audio', async (req, res) => {
   try {
-    const { projectData, useApplio, voice, applioVoice, applioModel, applioPitch, folderName, narrationStyle } = req.body;
-    
     console.log('\n' + '🎵'.repeat(20));
     console.log('🎵 FASE 2: GENERANDO TODOS LOS ARCHIVOS DE AUDIO');
     console.log('🎵'.repeat(20));
-    
-  const { sections, projectKey } = projectData;
-    const audioMethod = useApplio ? 'Applio' : 'Google TTS';
 
-  const requestedNarrationStyle = narrationStyle || projectData?.audioConfig?.narrationStyle || null;
-    
-    // Obtener el tema base del proyecto
-    const baseTopic = projectData.sections[0].title.split(':')[0] || 'Proyecto';
-    
-    console.log(`🎤 Generando audio para ${sections.length} secciones con ${audioMethod}...`);
-    
-    // Si usamos Applio, inicializarlo una vez
-    if (useApplio) {
-      console.log('🔄 Iniciando Applio para generación de audio...');
-      const applioStarted = await startApplio();
-      if (!applioStarted) {
-        throw new Error('No se pudo iniciar Applio');
-      }
-    }
-    
-    const audioResults = [];
-    
-    // Generar audio para todas las secciones
-    for (let i = 0; i < sections.length; i++) {
-      const section = sections[i];
-      console.log(`🎵 Generando audio ${i + 1}/${sections.length}: ${section.title}`);
-      
-      // Crear estructura de carpetas individual para esta sección
-      const sectionFolderStructure = createProjectStructure(baseTopic, section.section, folderName);
-      
-      try {
-        let audioPath;
-        
-        if (useApplio) {
-          // Generar con Applio
-          const selectedApplioVoice = applioVoice || 'es-ES-ElviraNeural.pth';
-          const selectedApplioModel = applioModel || 'rmvpe';
-          const selectedPitch = applioPitch || 0;
-          
-          const fileName = `${createSafeFolderName(section.title)}_seccion_${section.section}_${Date.now()}.wav`;
-          const filePath = path.join(sectionFolderStructure.sectionDir, fileName);
-          
-          console.log(`📁 Guardando audio en: ${filePath}`);
-          
-          // Generar audio con Applio
-          const result = await applioClient.textToSpeech(section.cleanScript, filePath, {
-            model: selectedApplioModel,
-            speed: 0,
-            pitch: selectedPitch,
-            voicePath: selectedApplioVoice
-          });
-          
-          if (!result.success) {
-            throw new Error('Applio no generó el audio correctamente');
-          }
-          
-          // Retornar ruta relativa para acceso web
-          audioPath = path.relative('./public', filePath).replace(/\\/g, '/');
-          
-          console.log(`✅ Audio Applio generado: ${audioPath}`);
-          
-        } else {
-          // Generar con Google TTS - Si falla, usar Applio como fallback
-          try {
-            audioPath = await generateStoryAudio(
-              section.cleanScript,
-              voice || DEFAULT_TTS_VOICE,
-              sectionFolderStructure.sectionDir,
-              section.title,
-              section.section,
-              requestedNarrationStyle
-            );
-            console.log(`✅ Audio Google TTS generado: ${audioPath}`);
-          } catch (ttsError) {
-            console.log(`⚠️ Google TTS falló, usando Applio como fallback: ${ttsError.message}`);
-            
-            // Fallback a Applio
-            await applioClient.ensureConnection();
-            const audioResponse = await applioClient.generateTTS(
-              section.cleanScript,
-              applioVoice || 'RemyOriginal',
-              applioModel || 'fr-FR-RemyMultilingualNeural',
-              applioPitch || 0
-            );
-            
-            if (!audioResponse.success || !audioResponse.audioPath) {
-              throw new Error('Tanto Google TTS como Applio fallaron');
-            }
-            
-            // Copiar el archivo generado por Applio a la ubicación correcta
-            const sourceFile = audioResponse.audioPath;
-            const safeTitle = createSafeFolderName(section.title);
-            const fileName = `${safeTitle}_seccion_${section.section}_${Date.now()}.wav`;
-            const filePath = path.join(sectionFolderStructure.sectionDir, fileName);
-            
-            fs.copyFileSync(sourceFile, filePath);
-            audioPath = path.relative('./public', filePath).replace(/\\/g, '/');
-            console.log(`✅ Audio Applio (fallback) generado: ${audioPath}`);
-          }
-        }
-        
-        audioResults.push({
-          section: section.section,
-          title: section.title,
-          audioPath: audioPath,
-          success: true
-        });
+    const result = await scheduleBatchAudioGeneration(req.body || {});
 
-        // 📊 GUARDADO PROGRESIVO: Actualizar progreso después de cada audio
-        try {
-          const progressData = updateProjectProgress(projectKey, 'audio', i + 1, sections.length);
-          
-          // Guardar estado del proyecto con audios completados hasta ahora
-          const updatedProjectData = {
-            ...projectData,
-            audioResults: audioResults,
-            audioMethod: audioMethod,
-            audioConfig: useApplio ? { 
-              voice: applioVoice, 
-              model: applioModel, 
-              pitch: applioPitch 
-            } : { voice: voice, narrationStyle: requestedNarrationStyle },
-            phase: 'audio',
-            lastUpdate: new Date().toISOString()
-          };
-          
-          await saveProgressiveProjectState(projectKey, updatedProjectData, progressData);
-          
-          console.log(`📊 Progreso guardado: Audio ${i + 1}/${sections.length} (${progressData.percentage}%) - Tiempo estimado restante: ${progressData.estimatedTimeRemaining}`);
-          
-        } catch (progressError) {
-          console.error('⚠️ Error guardando progreso de audio:', progressError.message);
-          // No interrumpir la generación por errores de guardado
-        }
-        
-      } catch (error) {
-        console.error(`❌ Error generando audio para sección ${section.section}:`, error);
-        audioResults.push({
-          section: section.section,
-          title: section.title,
-          audioPath: null,
-          success: false,
-          error: error.message
-        });
-
-        // 📊 GUARDADO PROGRESIVO: Actualizar progreso incluso en caso de error
-        try {
-          const progressData = updateProjectProgress(projectKey, 'audio', i + 1, sections.length);
-          
-          const updatedProjectData = {
-            ...projectData,
-            audioResults: audioResults,
-            audioMethod: audioMethod,
-            audioConfig: useApplio ? { 
-              voice: applioVoice, 
-              model: applioModel, 
-              pitch: applioPitch 
-            } : { voice: voice, narrationStyle: requestedNarrationStyle },
-            phase: 'audio',
-            lastUpdate: new Date().toISOString()
-          };
-          
-          await saveProgressiveProjectState(projectKey, updatedProjectData, progressData);
-          
-          console.log(`📊 Progreso guardado (con error): Audio ${i + 1}/${sections.length} (${progressData.percentage}%)`);
-          
-        } catch (progressError) {
-          console.error('⚠️ Error guardando progreso de audio:', progressError.message);
-        }
-      }
-    }
-    
-    const successfulAudio = audioResults.filter(r => r.success).length;
-    
-    console.log(`\n✅ FASE 2 COMPLETADA:`);
-    console.log(`🎵 ${successfulAudio}/${sections.length} archivos de audio generados con ${audioMethod}`);
-    
     res.json({
       success: true,
-      phase: 'audio_completed',
-      message: `Fase 2 completada: ${successfulAudio}/${sections.length} audios generados con ${audioMethod}`,
+      phase: result.phase,
+      message: result.message,
       data: {
-        audioResults: audioResults,
-        projectKey: projectKey,
-        audioMethod: audioMethod
+        audioResults: result.audioResults,
+        projectKey: result.projectKey,
+        audioMethod: result.audioMethod
       }
     });
-    
   } catch (error) {
     console.error('❌ Error en generación de audio por lotes:', error);
     res.status(500).json({ error: 'Error en generación de audio: ' + error.message });
@@ -5019,55 +5979,120 @@ app.post('/generate-missing-scripts', async (req, res) => {
     console.log(`📝 Verificando guiones faltantes en proyecto: ${folderName}`);
     console.log(`📊 Total de secciones: ${projectState.completedSections.length}`);
     
-    // Verificar qué secciones tienen guiones vacíos
-    const missingSectionScripts = [];
+  const missingSectionScripts = [];
+  const scriptResults = [];
+  const restoredFromMemory = [];
     const projectDir = path.join('./public/outputs', folderName);
-    
+    const projectTopic = projectState.topic || folderName;
+    const totalSections = projectState.totalSections || projectState.completedSections.length;
+
     for (let i = 0; i < projectState.completedSections.length; i++) {
       const section = projectState.completedSections[i];
-      const sectionDir = path.join(projectDir, `seccion_${section.section}`);
-      
-      if (fs.existsSync(sectionDir)) {
-        const scriptFiles = fs.readdirSync(sectionDir).filter(file => 
+      const sectionNumber = Number.parseInt(section.section, 10) || i + 1;
+      const { sectionDir } = createProjectStructure(projectTopic, sectionNumber, folderName);
+      const defaultScriptFileName = `${folderName}_seccion_${sectionNumber}_guion.txt`;
+      const defaultScriptPath = path.join(sectionDir, defaultScriptFileName);
+
+      let scriptFiles = [];
+      try {
+        scriptFiles = fs.readdirSync(sectionDir).filter((file) =>
           file.endsWith('.txt') && !file.includes('metadata') && !file.includes('keywords')
         );
-        
-        if (scriptFiles.length > 0) {
-          const scriptFilePath = path.join(sectionDir, scriptFiles[0]);
-          const fullContent = fs.readFileSync(scriptFilePath, 'utf8');
-          const scriptResult = extractScriptContent(fullContent);
-          
-          if (scriptResult.isEmpty && scriptResult.hasStructure) {
-            console.log(`📝 Sección ${section.section} necesita regeneración de guión`);
-            missingSectionScripts.push({
-              ...section,
-              scriptFilePath: scriptFilePath,
-              originalContent: fullContent
-            });
-          } else if (scriptResult.content.length > 0) {
-            console.log(`✅ Sección ${section.section} ya tiene guión (${scriptResult.content.length} caracteres)`);
+      } catch (dirError) {
+        console.warn(`⚠️ No se pudo leer archivos de la sección ${sectionNumber}: ${dirError.message}`);
+      }
+
+      const preferredFile = scriptFiles.find((file) => file === defaultScriptFileName) || scriptFiles[0];
+      const scriptFilePath = preferredFile ? path.join(sectionDir, preferredFile) : defaultScriptPath;
+
+      if (!preferredFile) {
+        console.log(`📄 Sección ${sectionNumber} no tiene archivo de guión. Creando uno nuevo...`);
+
+        const fallbackScript = (() => {
+          if (typeof section.cleanScript === 'string' && section.cleanScript.trim()) {
+            return section.cleanScript.trim();
           }
+          if (typeof section.script === 'string' && section.script.trim()) {
+            const extraction = extractScriptContent(section.script);
+            if (extraction && extraction.content.trim()) {
+              return extraction.content.trim();
+            }
+            return cleanScriptText(section.script);
+          }
+          if (section.script && typeof section.script.content === 'string') {
+            return section.script.content.trim();
+          }
+          return '';
+        })();
+
+        if (isScriptContentValid(fallbackScript)) {
+          const fileContent = buildScriptFileContent({
+            topic: projectTopic,
+            totalSections,
+            sectionNumber,
+            chapterTitle: section.title || null,
+            projectKey: folderName,
+            scriptText: fallbackScript
+          });
+
+          fs.writeFileSync(scriptFilePath, fileContent, 'utf8');
+          console.log(`✅ Guión reconstruido desde memoria para sección ${sectionNumber} (${fallbackScript.length} caracteres)`);
+
+          scriptResults.push({
+            section: sectionNumber,
+            scriptLength: fallbackScript.length,
+            success: true,
+            message: 'Guión reconstruido desde memoria'
+          });
+
+          restoredFromMemory.push(sectionNumber);
+
+          continue;
+        } else if (fallbackScript.length > 0) {
+          console.log(`⚠️ El guión en memoria para la sección ${sectionNumber} contiene un mensaje de error, se regenerará con IA.`);
         }
+
+        missingSectionScripts.push({
+          ...section,
+          sectionNumber,
+          scriptFilePath,
+          originalContent: null,
+          requiresNewFile: true
+        });
+        continue;
+      }
+
+      try {
+        const fullContent = fs.readFileSync(scriptFilePath, 'utf8');
+        const scriptResult = extractScriptContent(fullContent);
+        const hasValidContent = scriptResult && !scriptResult.isEmpty && isScriptContentValid(scriptResult.content);
+
+        if (hasValidContent) {
+          console.log(`✅ Sección ${sectionNumber} ya tiene guión (${scriptResult.content.length} caracteres)`);
+        } else {
+          console.log(`📝 Sección ${sectionNumber} necesita regeneración de guión (contenido inválido o vacío)`);
+          missingSectionScripts.push({
+            ...section,
+            sectionNumber,
+            scriptFilePath,
+            originalContent: fullContent,
+            requiresNewFile: false
+          });
+        }
+      } catch (readError) {
+        console.warn(`⚠️ No se pudo leer guión de la sección ${sectionNumber}: ${readError.message}`);
+        missingSectionScripts.push({
+          ...section,
+          sectionNumber,
+          scriptFilePath,
+          originalContent: null,
+          requiresNewFile: true
+        });
       }
     }
-    
-    console.log(`📊 Análisis de guiones: ${missingSectionScripts.length}/${projectState.completedSections.length} secciones necesitan regeneración`);
-    
-    if (missingSectionScripts.length === 0) {
-      return res.json({
-        success: true,
-        message: 'Todos los guiones ya existen, no se regeneró ninguno',
-        data: {
-          generatedCount: 0,
-          totalSections: projectState.completedSections.length,
-          skippedSections: projectState.completedSections.length,
-          missingScripts: []
-        }
-      });
-    }
-    
-    const scriptResults = [];
-    
+
+    console.log(`📊 Análisis de guiones: ${missingSectionScripts.length}/${projectState.completedSections.length} secciones requieren regeneración con IA`);
+
     // Generar guiones solo para las secciones que lo necesitan
     for (let i = 0; i < missingSectionScripts.length; i++) {
       const section = missingSectionScripts[i];
@@ -5087,7 +6112,7 @@ app.post('/generate-missing-scripts', async (req, res) => {
         const generationResult = await generateMissingScript(
           projectState.topic || 'Proyecto de gaming',
           section.section,
-          projectState.totalSections,
+          totalSections,
           chapterTitle,
           previousSections,
           scriptStyle,
@@ -5097,19 +6122,34 @@ app.post('/generate-missing-scripts', async (req, res) => {
         );
         
         if (generationResult.success) {
-          // Actualizar el archivo TXT con el nuevo contenido
-          const updatedContent = section.originalContent.replace(
-            /(CONTENIDO DEL GUIÓN:\s*\n)(.*?)(===============================)/s,
-            `$1${generationResult.script}\n\n$3`
-          );
-          
-          fs.writeFileSync(section.scriptFilePath, updatedContent, 'utf8');
-          
+          if (!isScriptContentValid(generationResult.script)) {
+            throw new Error('El contenido generado contiene un mensaje de error del proveedor de IA');
+          }
+          let fileContent;
+
+          if (section.originalContent) {
+            fileContent = section.originalContent.replace(
+              /(CONTENIDO DEL GUIÓN:\s*\n)(.*?)(===============================)/s,
+              `$1${generationResult.script}\n\n$3`
+            );
+          } else {
+            fileContent = buildScriptFileContent({
+              topic: projectTopic,
+              totalSections,
+              sectionNumber: section.sectionNumber || section.section,
+              chapterTitle,
+              projectKey: folderName,
+              scriptText: generationResult.script
+            });
+          }
+
+          fs.writeFileSync(section.scriptFilePath, fileContent, 'utf8');
+
           scriptResults.push({
             section: section.section,
             scriptLength: generationResult.script.length,
             success: true,
-            message: `Guión generado exitosamente`
+            message: section.originalContent ? 'Guión regenerado exitosamente' : 'Guión generado desde cero'
           });
           
           console.log(`✅ Guión generado para sección ${section.section}: ${generationResult.script.length} caracteres`);
@@ -5136,18 +6176,37 @@ app.post('/generate-missing-scripts', async (req, res) => {
     const successfulGeneration = scriptResults.filter(r => r.success).length;
     
     console.log(`\n✅ REGENERACIÓN DE GUIONES COMPLETADA:`);
-    console.log(`📝 ${successfulGeneration}/${missingSectionScripts.length} guiones faltantes regenerados`);
-    console.log(`⏭️ ${projectState.completedSections.length - missingSectionScripts.length} guiones ya existían`);
+    console.log(`📝 ${successfulGeneration}/${projectState.completedSections.length} guiones corregidos o verificados`);
+    console.log(`⏭️ ${projectState.completedSections.length - successfulGeneration} guiones ya estaban correctos`);
+    
+    if (scriptResults.length === 0) {
+      return res.json({
+        success: true,
+        message: 'Todos los guiones ya existen, no se regeneró ninguno',
+        data: {
+          scriptResults: [],
+          generatedCount: 0,
+          totalSections: projectState.completedSections.length,
+          skippedSections: projectState.completedSections.length,
+          missingScripts: []
+        }
+      });
+    }
+
+    const affectedSections = Array.from(new Set([
+      ...restoredFromMemory,
+      ...missingSectionScripts.map((s) => s.section)
+    ])).sort((a, b) => a - b);
     
     res.json({
       success: true,
-      message: `${successfulGeneration}/${missingSectionScripts.length} guiones faltantes regenerados exitosamente`,
+      message: `${successfulGeneration} guion(es) reparados o regenerados exitosamente`,
       data: {
         scriptResults: scriptResults,
         generatedCount: successfulGeneration,
         totalSections: projectState.completedSections.length,
-        skippedSections: projectState.completedSections.length - missingSectionScripts.length,
-        missingScripts: missingSectionScripts.map(s => s.section)
+        skippedSections: projectState.completedSections.length - successfulGeneration,
+        missingScripts: affectedSections
       }
     });
     
@@ -5175,6 +6234,16 @@ app.get('/api/google-image-apis', (req, res) => {
   }
 });
 
+app.get('/api/comfy-defaults', (req, res) => {
+  res.json({
+    success: true,
+    steps: comfyDefaultConfig.steps,
+    cfg: comfyDefaultConfig.cfg,
+    guidance: comfyDefaultConfig.guidance,
+    resolutions: comfyDefaultConfig.resolutions
+  });
+});
+
 // Función auxiliar para generar imágenes faltantes de un proyecto (para uso interno)
 async function generateMissingImagesForProject(data) {
   const { 
@@ -5184,10 +6253,14 @@ async function generateMissingImagesForProject(data) {
     useLocalAI = false, 
     comfyUIConfig = {},
     allowComfyFallback = true,
-    selectedApis = []
+    selectedApis = [],
+    aspectRatio = '9:16'
   } = data;
 
   console.log('🖼️ Iniciando generación automática de imágenes...');
+  const aspectInfo = describeAspectRatio(aspectRatio);
+  const safeAspectRatio = aspectInfo.ratio;
+  console.log(`📐 Aspect ratio solicitado: ${aspectInfo.label}`);
   const googleApiPreferences = resolveGoogleImageApiSelection(Array.isArray(selectedApis) ? selectedApis : []);
 
   if (!googleApiPreferences.length) {
@@ -5314,7 +6387,8 @@ async function generateMissingImagesForProject(data) {
           imageNumber,
           prompt,
           imageName,
-          outputDir: section.sectionDir
+          outputDir: section.sectionDir,
+          imageModel: selectedImageModel
         };
       })
       .filter(Boolean);
@@ -5333,11 +6407,13 @@ async function generateMissingImagesForProject(data) {
         return {};
       }
 
+      const { width: defaultWidth, height: defaultHeight } = resolveComfyDefaultResolution(safeAspectRatio);
       return {
-        width: comfyUIConfig.width || 1920,
-        height: comfyUIConfig.height || 1080,
-        steps: comfyUIConfig.steps || 25,
-        guidance: comfyUIConfig.guidance || 3.5,
+        width: comfyUIConfig.width || defaultWidth,
+        height: comfyUIConfig.height || defaultHeight,
+        steps: comfyUIConfig.steps || comfyDefaultConfig.steps,
+        guidance: comfyUIConfig.guidance || comfyDefaultConfig.guidance,
+        cfg: comfyUIConfig.cfg || comfyDefaultConfig.cfg,
         sampler: comfyUIConfig.sampler || 'euler',
         scheduler: comfyUIConfig.scheduler || 'simple',
         model: comfyUIConfig.model || 'flux1-dev-fp8.safetensors'
@@ -5350,12 +6426,13 @@ async function generateMissingImagesForProject(data) {
         console.log(`🎨 Generando imagen para sección ${section.section} (prompt ${task.imageNumber})...`);
         console.log(`📝 Usando prompt: ${task.prompt.substring(0, 100)}...`);
         return await processPromptGenerationTask(task, {
-          aspectRatio,
+          aspectRatio: safeAspectRatio,
           fallbackConfigProvider,
           allowComfyFallback,
           allowCooldownRetry: !allowComfyFallback,
           cooldownRetryMs: 60000,
-          googleApiPreferences
+          googleApiPreferences,
+          imageModel: selectedImageModel
         });
       },
       {
@@ -5372,11 +6449,13 @@ async function generateMissingImagesForProject(data) {
         if (result.retries > 0) {
           console.log(`🔁 Reintentos usados para prompt ${result.imageNumber}: ${result.retries}`);
         }
+        const resultModelLabel = result.model ? getImageModelLabel(result.model) : selectedImageModelLabel;
         generatedImages.push({
           section: section.section,
           filename: result.filename,
           method: result.method,
-          attempt: result.generator === 'google' ? (result.googleAttempts || 1) : 1
+          attempt: result.generator === 'google' ? (result.googleAttempts || 1) : 1,
+          model: resultModelLabel
         });
       } else {
         totalFailed++;
@@ -5413,18 +6492,25 @@ app.post('/api/generate-missing-images', async (req, res) => {
       useLocalAI = false, 
       comfyUIConfig = {},
       allowComfyFallback: allowComfyFallbackInput,
+      comfyOnlyMode: comfyOnlyModeInput = false,
       sectionNumber: sectionNumberInput,
-      selectedApis: selectedApisInput = []
+      selectedApis: selectedApisInput = [],
+      imageModel: imageModelInput = null
     } = req.body;
 
-    const allowComfyFallback = typeof allowComfyFallbackInput === 'boolean' ? allowComfyFallbackInput : true;
+    const comfyOnlyMode = Boolean(comfyOnlyModeInput);
+    const allowComfyFallbackRaw = typeof allowComfyFallbackInput === 'boolean' ? allowComfyFallbackInput : true;
+    const allowComfyFallback = comfyOnlyMode ? true : allowComfyFallbackRaw;
     const parsedSectionNumber = Number.parseInt(sectionNumberInput, 10);
     const sectionNumber = Number.isInteger(parsedSectionNumber) && parsedSectionNumber > 0 ? parsedSectionNumber : null;
     const selectedApisRaw = Array.isArray(selectedApisInput) ? selectedApisInput : [];
-    const googleApiPreferences = resolveGoogleImageApiSelection(selectedApisRaw);
+    const googleApiPreferences = comfyOnlyMode ? [] : resolveGoogleImageApiSelection(selectedApisRaw);
     const hasExplicitApiSelection = selectedApisRaw.length > 0;
+    const effectiveUseLocalAI = comfyOnlyMode ? true : Boolean(useLocalAI);
+    const aspectInfo = describeAspectRatio(aspectRatio);
+    const safeAspectRatio = aspectInfo.ratio;
 
-    if (!googleApiPreferences.length) {
+    if (!comfyOnlyMode && !googleApiPreferences.length) {
       if (hasExplicitApiSelection) {
         return res.status(400).json({ error: 'Las APIs seleccionadas no están disponibles o no tienen una key configurada.' });
       }
@@ -5442,7 +6528,11 @@ app.post('/api/generate-missing-images', async (req, res) => {
       return res.status(404).json({ error: 'Proyecto no encontrado' });
     }
 
+    const selectedImageModel = normalizeImageModel(imageModelInput || projectState.imageModel);
+    const selectedImageModelLabel = getImageModelLabel(selectedImageModel);
+
     console.log(`🖼️ Verificando imágenes faltantes en proyecto: ${folderName}`);
+    console.log(`🤖 Modelo de imágenes seleccionado: ${selectedImageModelLabel} (${selectedImageModel})`);
 
     sessionId = startImageGenerationSession();
 
@@ -5475,18 +6565,28 @@ app.post('/api/generate-missing-images', async (req, res) => {
 
     console.log(`🎨 Instrucciones para imágenes: "${imageInstructions || 'Por defecto'}"`);
     console.log(`📱 Cantidad de imágenes por sección: ${imageCount}`);
-    console.log(`🤖 Usar IA local (ComfyUI): ${useLocalAI}`);
+    console.log(`📐 Aspect ratio solicitado: ${aspectInfo.label}`);
+    console.log(`🤖 Usar IA local (ComfyUI): ${effectiveUseLocalAI}`);
+    console.log(`🎯 Modo Comfy directo: ${comfyOnlyMode}`);
     console.log(`🔁 Fallback con ComfyUI habilitado: ${allowComfyFallback}`);
-    console.log(`🔐 APIs de Google seleccionadas: ${googleApiPreferences.map((api) => api.label).join(', ')}`);
-    const googleApiLabel = googleApiPreferences.some((api) => api.type === 'primary')
-      ? 'Google Gemini (APIs seleccionadas)'
-      : 'Google Gemini (APIs gratuitas)';
+    if (!comfyOnlyMode) {
+      console.log(`🔐 APIs de Google seleccionadas: ${googleApiPreferences.map((api) => api.label).join(', ')}`);
+    } else {
+      console.log('🔐 Modo Comfy directo: se omiten las APIs de Google.');
+    }
+    const googleApiLabel = comfyOnlyMode
+      ? 'ComfyUI (modo directo)'
+      : googleApiPreferences.some((api) => api.type === 'primary')
+        ? 'Google Gemini (APIs seleccionadas)'
+        : 'Google Gemini (APIs gratuitas)';
     
-    if (useLocalAI && allowComfyFallback) {
+    if (effectiveUseLocalAI && (allowComfyFallback || comfyOnlyMode)) {
+      const { width: defaultWidth, height: defaultHeight } = resolveComfyDefaultResolution(safeAspectRatio);
       console.log(`⚙️ Configuración ComfyUI:`, {
-        steps: comfyUIConfig.steps || 15,
-        guidance: comfyUIConfig.guidance || 3.5,
-        resolution: `${comfyUIConfig.width || 1280}x${comfyUIConfig.height || 720}`,
+        steps: comfyUIConfig.steps || comfyDefaultConfig.steps,
+        guidance: comfyUIConfig.guidance || comfyDefaultConfig.guidance,
+        cfg: comfyUIConfig.cfg || comfyDefaultConfig.cfg,
+        resolution: `${comfyUIConfig.width || defaultWidth}x${comfyUIConfig.height || defaultHeight}`,
         model: comfyUIConfig.model || 'flux1-dev-fp8.safetensors',
         sampler: comfyUIConfig.sampler || 'euler',
         scheduler: comfyUIConfig.scheduler || 'simple'
@@ -5603,6 +6703,8 @@ app.post('/api/generate-missing-images', async (req, res) => {
     
     const protagonistContext = await ensureProtagonistStyleGuide(projectDir, projectState, imageInstructions);
     const protagonistProfile = protagonistContext?.profile || null;
+    const worldContextResult = await ensureStoryWorldGuide(projectDir, projectState, projectState.topic, imageInstructions);
+    const storyWorldContext = worldContextResult?.context || null;
 
     if (protagonistContext?.filePath) {
       if (protagonistContext?.wasCreated) {
@@ -5611,6 +6713,16 @@ app.post('/api/generate-missing-images', async (req, res) => {
         console.log(`🧾 Guía de protagonista actualizada: ${protagonistContext.filePath}`);
       } else {
         console.log(`🧾 Guía de protagonista existente utilizada: ${protagonistContext.filePath}`);
+      }
+    }
+
+    if (worldContextResult?.filePath) {
+      if (worldContextResult?.wasCreated) {
+        console.log(`🌍 Guía de worldbuilding creada: ${worldContextResult.filePath}`);
+      } else if (worldContextResult?.wasUpdated) {
+        console.log(`🌍 Guía de worldbuilding actualizada: ${worldContextResult.filePath}`);
+      } else {
+        console.log(`🌍 Guía de worldbuilding existente utilizada: ${worldContextResult.filePath}`);
       }
     }
 
@@ -5655,7 +6767,9 @@ app.post('/api/generate-missing-images', async (req, res) => {
             extractedScript.content,
             imageInstructions,
             imageCount,
-            protagonistProfile
+            protagonistProfile,
+            storyWorldContext,
+            projectState.topic
           );
           
           if (promptsResult && promptsResult.prompts && promptsResult.prompts.length > 0) {
@@ -5705,9 +6819,11 @@ app.post('/api/generate-missing-images', async (req, res) => {
     
     // PASO 3: Generar imágenes faltantes
     if (sectionsNeedingImages.length > 0) {
-      const aiService = allowComfyFallback
-        ? (useLocalAI ? `${googleApiLabel} → ComfyUI (IA Local)` : `${googleApiLabel} → ComfyUI (fallback)`)
-        : `${googleApiLabel} (sin fallback de ComfyUI)`;
+      const aiService = comfyOnlyMode
+        ? 'ComfyUI (modo directo)'
+        : allowComfyFallback
+          ? (effectiveUseLocalAI ? `${googleApiLabel} → ComfyUI (IA Local)` : `${googleApiLabel} → ComfyUI (fallback)`)
+          : `${googleApiLabel} (sin fallback de ComfyUI)`;
       console.log(`🖼️ Generando imágenes para ${sectionsNeedingImages.length} secciones usando ${aiService}...`);
       
       for (const section of sectionsNeedingImages) {
@@ -5782,7 +6898,8 @@ app.post('/api/generate-missing-images', async (req, res) => {
                 imageNumber,
                 prompt,
                 imageName,
-                outputDir: sectionDir
+                outputDir: sectionDir,
+                imageModel: selectedImageModel
               };
             })
             .filter(Boolean);
@@ -5800,15 +6917,18 @@ app.post('/api/generate-missing-images', async (req, res) => {
               return false;
             }
 
-            if (!useLocalAI) {
+            if (!effectiveUseLocalAI) {
               return {};
             }
 
+            const { width: defaultWidth, height: defaultHeight } = resolveComfyDefaultResolution(safeAspectRatio);
+
             return {
-              width: comfyUIConfig.width || 1280,
-              height: comfyUIConfig.height || 720,
-              steps: comfyUIConfig.steps || 15,
-              guidance: comfyUIConfig.guidance || 3.5,
+              width: comfyUIConfig.width || defaultWidth,
+              height: comfyUIConfig.height || defaultHeight,
+              steps: comfyUIConfig.steps || comfyDefaultConfig.steps,
+              guidance: comfyUIConfig.guidance || comfyDefaultConfig.guidance,
+              cfg: comfyUIConfig.cfg || comfyDefaultConfig.cfg,
               sampler: comfyUIConfig.sampler || 'euler',
               scheduler: comfyUIConfig.scheduler || 'simple',
               model: comfyUIConfig.model || 'flux1-dev-fp8.safetensors'
@@ -5822,18 +6942,20 @@ app.post('/api/generate-missing-images', async (req, res) => {
               console.log(`🎨 Generando imagen para sección ${sectionNumberToProcess} (prompt ${task.imageNumber})...`);
               console.log(`📝 Usando prompt: ${task.prompt.substring(0, 100)}...`);
               return await processPromptGenerationTask(task, {
-                aspectRatio,
+                aspectRatio: safeAspectRatio,
                 fallbackConfigProvider,
                 allowComfyFallback,
                 allowCooldownRetry: !allowComfyFallback,
                 cooldownRetryMs: 60000,
                 checkCancellation: () => checkImageGenerationCancellation(sessionId),
-                googleApiPreferences
+                googleApiPreferences,
+                imageModel: selectedImageModel,
+                forceComfyOnly: comfyOnlyMode
               });
             },
             {
-              batchSize: IMAGE_BATCH_SIZE,
-              delayBetweenBatchesMs: IMAGE_BATCH_DELAY_MS
+              batchSize: comfyOnlyMode ? 1 : IMAGE_BATCH_SIZE,
+              delayBetweenBatchesMs: comfyOnlyMode ? 0 : IMAGE_BATCH_DELAY_MS
             }
           );
 
@@ -5877,9 +6999,11 @@ app.post('/api/generate-missing-images', async (req, res) => {
       }
     }
     
-    const aiServiceUsed = allowComfyFallback
-      ? (useLocalAI ? `${googleApiLabel} → ComfyUI (IA Local)` : `${googleApiLabel} → ComfyUI (fallback)`)
-      : `${googleApiLabel} (sin fallback de ComfyUI)`;
+    const aiServiceUsed = comfyOnlyMode
+      ? 'ComfyUI (modo directo)'
+      : allowComfyFallback
+        ? (effectiveUseLocalAI ? `${googleApiLabel} → ComfyUI (IA Local)` : `${googleApiLabel} → ComfyUI (fallback)`)
+        : `${googleApiLabel} (sin fallback de ComfyUI)`;
     const scopeLabel = sectionNumber
       ? `sección ${sectionNumber}`
       : `${normalizedSections.length} sección(es)`;
@@ -5900,9 +7024,10 @@ app.post('/api/generate-missing-images', async (req, res) => {
         sectionsNeedingPrompts: sectionsNeedingPrompts.length,
         sectionsNeedingImages: sectionsNeedingImages.length,
         aiService: aiServiceUsed,
-        useLocalAI: useLocalAI,
+        useLocalAI: effectiveUseLocalAI,
         allowComfyFallback,
-        comfyUIConfig: (useLocalAI && allowComfyFallback) ? comfyUIConfig : null
+        comfyUIConfig: (effectiveUseLocalAI && allowComfyFallback) ? comfyUIConfig : null,
+        comfyOnlyMode
       }
     });
   } catch (error) {
@@ -5971,10 +7096,14 @@ app.post('/api/generate-prompts-only', async (req, res) => {
       return res.status(404).json({ error: 'Proyecto no encontrado' });
     }
     
-    console.log(`📝 Generando prompts para proyecto: ${folderName}`);
-    console.log(`📊 Total de secciones: ${projectState.completedSections.length}`);
-    console.log(`🎨 Instrucciones para imágenes: "${imageInstructions || 'Por defecto'}"`);
-    console.log(`📱 Cantidad de imágenes por sección: ${imageCount}`);
+  const selectedImageModel = normalizeImageModel(projectState?.imageModel);
+  const selectedImageModelLabel = getImageModelLabel(selectedImageModel);
+
+  console.log(`📝 Generando prompts para proyecto: ${folderName}`);
+  console.log(`📊 Total de secciones: ${projectState.completedSections.length}`);
+  console.log(`🎨 Instrucciones para imágenes: "${imageInstructions || 'Por defecto'}"`);
+  console.log(`📱 Cantidad de imágenes por sección: ${imageCount}`);
+  console.log(`🤖 Modelo de imágenes referencial: ${selectedImageModelLabel} (${selectedImageModel})`);
     
     const projectDir = path.join('./public/outputs', folderName);
     const sectionsNeedingPrompts = [];
@@ -6013,6 +7142,8 @@ app.post('/api/generate-prompts-only', async (req, res) => {
     
     const protagonistContext = await ensureProtagonistStyleGuide(projectDir, projectState, imageInstructions);
     const protagonistProfile = protagonistContext?.profile || null;
+    const worldContextResult = await ensureStoryWorldGuide(projectDir, projectState, projectState.topic, imageInstructions);
+    const storyWorldContext = worldContextResult?.context || null;
 
     if (protagonistContext?.filePath) {
       if (protagonistContext?.wasCreated) {
@@ -6021,6 +7152,16 @@ app.post('/api/generate-prompts-only', async (req, res) => {
         console.log(`🧾 Guía de protagonista actualizada: ${protagonistContext.filePath}`);
       } else {
         console.log(`🧾 Guía de protagonista existente utilizada: ${protagonistContext.filePath}`);
+      }
+    }
+
+    if (worldContextResult?.filePath) {
+      if (worldContextResult?.wasCreated) {
+        console.log(`🌍 Guía de worldbuilding creada: ${worldContextResult.filePath}`);
+      } else if (worldContextResult?.wasUpdated) {
+        console.log(`🌍 Guía de worldbuilding actualizada: ${worldContextResult.filePath}`);
+      } else {
+        console.log(`🌍 Guía de worldbuilding existente utilizada: ${worldContextResult.filePath}`);
       }
     }
 
@@ -6058,7 +7199,9 @@ app.post('/api/generate-prompts-only', async (req, res) => {
           extractedScript.content,
           imageInstructions,
           imageCount,
-          protagonistProfile
+          protagonistProfile,
+          storyWorldContext,
+          projectState.topic
         );
         
         if (promptsResult && promptsResult.prompts && promptsResult.prompts.length > 0) {
@@ -6096,7 +7239,8 @@ app.post('/api/generate-prompts-only', async (req, res) => {
       data: {
         generatedPrompts: generatedPrompts,
         totalSections: projectState.completedSections.length,
-        sectionsNeedingPrompts: sectionsNeedingPrompts.length
+        sectionsNeedingPrompts: sectionsNeedingPrompts.length,
+        imageModel: selectedImageModel
       }
     });
     
@@ -6107,7 +7251,7 @@ app.post('/api/generate-prompts-only', async (req, res) => {
 });
 
 // Función auxiliar para generar prompts de imágenes usando Gemini
-async function generateImagePrompts(scriptContent, imageInstructions = '', imageCount = 5, protagonistProfile = null) {
+async function generateImagePrompts(scriptContent, imageInstructions = '', imageCount = 5, protagonistProfile = null, storyWorldContext = null, storyTopic = '') {
   try {
     console.log(`🎨 Generando ${imageCount} prompts basados en el guión...`);
     
@@ -6121,7 +7265,24 @@ async function generateImagePrompts(scriptContent, imageInstructions = '', image
       protagonistProfile.promptSnippet = protagonistProfile.promptSnippet || createProtagonistPromptSnippet(protagonistProfile);
     }
 
-    const protagonistInstructionBlock = formatProtagonistInstructionBlock(protagonistProfile);
+  const protagonistInstructionBlock = formatProtagonistInstructionBlock(protagonistProfile);
+  const worldInstructionBlock = formatStoryWorldInstructionBlock(storyWorldContext);
+  const storyTopicReference = storyTopic ? storyTopic.toString().trim() : '';
+  const worldContextSection = worldInstructionBlock
+    ? `
+CONTINUIDAD HISTÓRICA Y WORLD-BUILDING:
+${worldInstructionBlock}
+• Usa estos datos como referencia canónica, pero integra solo los detalles que potencien la escena.
+• En cada prompt menciona al menos un elemento que recuerde la época o localización, variando la redacción y sin repetir frases.
+${storyTopicReference ? `• Refuerza el tema central del proyecto: "${storyTopicReference}" mediante símbolos, conflictos o emociones relacionados.` : ''}
+• Prioriza narrar acciones, símbolos, emociones y consecuencias propias de cada segmento mientras mantienes coherencia con estas guías.
+`
+    : `
+CONTINUIDAD HISTÓRICA Y WORLD-BUILDING:
+${storyTopicReference ? `• El proyecto trata sobre "${storyTopicReference}". ` : '• '}Analiza el guion y deduce época, ambientación, arquitectura, culturas dominantes y rasgos étnicos o de especie.
+• Usa esas inferencias para dar contexto cuando sea relevante, variando la manera de mencionarlas.
+• Si falta información, realiza suposiciones coherentes, documenta la inferencia en el prompt y mantén la misma decisión en escenas posteriores sin repetir el mismo texto.
+`;
     const protagonistPromptSnippet = protagonistProfile?.promptSnippet || '';
     const protagonistName = protagonistProfile?.name ? protagonistProfile.name.trim() : '';
     const maxProtagonistPrompts = determineMaxProtagonistPrompts(imageCount);
@@ -6164,7 +7325,7 @@ async function generateImagePrompts(scriptContent, imageInstructions = '', image
       console.log(`   📝 Segmento ${i + 1}: palabras ${startIndex + 1}-${endIndex} (${segmentWords.length} palabras)`);
     }
     
-    const { model } = await getGoogleAI("gemini-2.0-flash-exp");
+  const { model } = await getGoogleAI("gemini-2.0-flash-exp", { context: 'llm' });
 
   const baseInstructions = `
 Basándote en los siguientes segmentos secuenciales del guión/script, genera ${imageCount} prompts MUY DETALLADOS para generar imágenes que representen ESPECÍFICAMENTE cada segmento en orden cronológico.
@@ -6173,6 +7334,15 @@ IMPORTANTE: Cada prompt debe representar ÚNICAMENTE el contenido de su segmento
 
 INSTRUCCIONES ESPECÍFICAS DEL USUARIO:
 ${imageInstructions || 'Crear imágenes cinematográficas que ilustren los conceptos principales del texto de manera visualmente impactante.'}
+
+${worldContextSection}
+
+VARIACIÓN NARRATIVA Y SENSORIAL:
+• Extrae de cada segmento al menos dos elementos narrativos únicos (acciones, giros, emociones, símbolos, conflictos o consecuencias) e intégralos de forma explícita.
+• Alterna el tipo de foco entre personajes, entornos, objetos clave, multitudes, clima, rituales o detalles simbólicos, evitando repetir el mismo sujeto central en prompts consecutivos.
+• Cambia el punto de vista, la estructura verbal y el ritmo descriptivo entre prompts; no comiences múltiples prompts con la misma frase o fórmula.
+• Añade detalles sensoriales (sonidos, temperaturas, aromas, texturas, iluminación) y referencias a cómo evoluciona la escena anterior para reforzar progresión.
+• Introduce metáforas visuales, motivos o contraste emocional cuando el segmento lo permita, manteniendo coherencia con la historia.
 
 CONSISTENCIA DE PERSONAJES Y ESCENAS:
 • Identifica a los personajes principales del guión (o créalos si no se nombran) y define para cada uno: nombre consistente, edad aproximada, género, rasgos físicos, vestimenta característica y rol narrativo. No cambies estos atributos entre prompts.
@@ -6215,7 +7385,7 @@ REGLAS PARA LOS PROMPTS DETALLADOS:
 8. Crear una progresión visual secuencial que cuente la historia cronológicamente, mencionando explícitamente continuidades o cambios relevantes.
 9. Evitar repetir enfoque frontal del protagonista; alterna con planos que destaquen objetos, arquitectura, paisajes o acciones colectivas.
 10. Usar vocabulario cinematográfico profesional
-11. Incluir detalles de época, estilo y género cuando sea relevante
+11. Asegurar que cada prompt esté claramente anclado en la era, ubicación y estética cultural correctas, pero variando la redacción y combinándolo con nuevos elementos narrativos relevantes al segmento
 12. MANTENER CONTINUIDAD VISUAL Y NARRATIVA entre segmentos (personajes, vestuario, utilería, iluminación y estado emocional)
 
 ESTILO DE PROMPT OBJETIVO:
@@ -6258,11 +7428,27 @@ PROMPTS CINEMATOGRÁFICOS DETALLADOS (en inglés, uno por segmento en orden):`;
       maxProtagonistPrompts,
       scriptSegments,
       imageInstructions,
-      model
+      model,
+      storyWorldContext,
+      storyTopic: storyTopicReference
     });
     prompts = diversityResult.prompts;
     if (diversityResult.adjustedCount > 0) {
       console.log(`🎛️ Se ajustaron ${diversityResult.adjustedCount} prompt(s) para equilibrar el enfoque narrativo.`);
+    }
+
+    const varietyResult = await enforceNarrativeVariety({
+      prompts,
+      scriptSegments,
+      model,
+      protagonistProfile,
+      imageInstructions,
+      storyWorldContext,
+      storyTopic: storyTopicReference
+    });
+    prompts = varietyResult.prompts;
+    if (varietyResult.adjustedCount > 0) {
+      console.log(`🎨 Se reescribieron ${varietyResult.adjustedCount} prompt(s) para diversificar escenas y motivos.`);
     }
 
     if (protagonistPromptSnippet && protagonistName) {
@@ -6307,6 +7493,8 @@ PROMPTS CINEMATOGRÁFICOS DETALLADOS (en inglés, uno por segmento en orden):`;
 
 const PROTAGONIST_GUIDE_FILENAME = 'protagonist_style.txt';
 const PROTAGONIST_SCRIPT_CHARACTER_LIMIT = 15000;
+const STORY_WORLD_GUIDE_FILENAME = 'worldbuilding_style.json';
+const STORY_WORLD_CONTEXT_CHARACTER_LIMIT = 20000;
 
 async function ensureProtagonistStyleGuide(projectDir, projectState, imageInstructions = '') {
   try {
@@ -6380,6 +7568,184 @@ async function ensureProtagonistStyleGuide(projectDir, projectState, imageInstru
   }
 }
 
+async function ensureStoryWorldGuide(projectDir, projectState, fallbackTopic = '', imageInstructions = '') {
+  try {
+    if (!projectDir || !projectState) {
+      return { context: null, filePath: null, wasCreated: false, wasUpdated: false };
+    }
+
+    const worldGuidePath = path.join(projectDir, STORY_WORLD_GUIDE_FILENAME);
+
+    if (fs.existsSync(worldGuidePath)) {
+      try {
+        const existingContent = fs.readFileSync(worldGuidePath, 'utf8');
+        const parsed = JSON.parse(existingContent);
+        const normalized = normalizeStoryWorldContext(parsed);
+        return {
+          context: normalized,
+          filePath: worldGuidePath,
+          wasCreated: false,
+          wasUpdated: false
+        };
+      } catch (parseError) {
+        console.warn(`⚠️ No se pudo interpretar la guía de worldbuilding existente (${worldGuidePath}): ${parseError.message}. Se generará una nueva.`);
+      }
+    }
+
+    const aggregatedScript = aggregateProjectScripts(projectDir, projectState);
+    const trimmedScript = aggregatedScript
+      ? aggregatedScript.slice(0, STORY_WORLD_CONTEXT_CHARACTER_LIMIT)
+      : '';
+
+    const topicReference = (fallbackTopic || projectState.topic || projectState.originalFolderName || '').toString();
+    const summaryData = {
+      topic: topicReference,
+      style: projectState.scriptStyle || '',
+      customInstructions: projectState.customStyleInstructions || '',
+      promptModifier: projectState.promptModifier || '',
+      imageInstructions: imageInstructions || ''
+    };
+
+    const contextPrompt = `You are a worldbuilding analyst ensuring strict visual continuity between narrative scripts and concept art. Examine the provided story materials and deduce the canonical historical context. Respond with STRICT JSON (no markdown, no extra text) using these keys:
+{
+  "timePeriod": "Concise description of the historical era or temporal framing (e.g., 'Late Edo period Japan')",
+  "specificYearOrEra": "Exact year, range of years, or named era (e.g., '1868', '5th century BCE', 'Post-apocalyptic future 2150')",
+  "primaryLocations": ["List of the main cities, regions, planets or settings"],
+  "architecturalStyles": ["Dominant architectural or environmental aesthetics"],
+  "dominantCivilizationsOrCultures": ["Relevant empires, cultures, factions or civilizations"],
+  "characterEthnicitiesOrSpecies": ["Races, ethnicities, species or phenotypes that should appear"],
+  "technologyLevel": "Summary of technological sophistication",
+  "environmentalMood": "Short atmospheric description (climate, weather, tone)",
+  "additionalKeywords": ["Recurring motifs, symbols, wardrobe elements or props to reinforce"],
+  "consistencyNotes": "Instructions to maintain lore and historical consistency",
+  "uncertaintyNotes": "If details are missing, note safe assumptions or mark 'unknown'"
+}
+
+If information is unstated, make the safest, story-aligned inference and document the assumption inside "uncertaintyNotes". Always write in English.
+
+TOPIC / PROJECT SUMMARY:
+${JSON.stringify(summaryData, null, 2)}
+
+${trimmedScript
+  ? `SCRIPT EXCERPTS (TRIMMED):\n"""${trimmedScript}"""`
+  : 'SCRIPT EXCERPTS: Not available, rely on topic and summary.'}
+`;
+
+  const { model } = await getGoogleAI('gemini-2.0-flash-exp', { context: 'llm' });
+    const result = await model.generateContent([{ text: contextPrompt }]);
+    let responseText = result?.response?.text?.() ?? result?.response?.candidates?.[0]?.content?.parts?.[0]?.text;
+
+    if (!responseText || typeof responseText !== 'string') {
+      throw new Error('Respuesta vacía del modelo al generar la guía de worldbuilding');
+    }
+
+    responseText = responseText.replace(/```json/gi, '').replace(/```/g, '').trim();
+
+    const parsed = JSON.parse(responseText);
+    const normalized = normalizeStoryWorldContext(parsed);
+
+    fs.writeFileSync(worldGuidePath, JSON.stringify(normalized, null, 2), 'utf8');
+
+    return {
+      context: normalized,
+      filePath: worldGuidePath,
+      wasCreated: true,
+      wasUpdated: false
+    };
+  } catch (error) {
+    console.error('⚠️ Error generando la guía de worldbuilding:', error);
+    return { context: null, filePath: null, wasCreated: false, wasUpdated: false, error };
+  }
+}
+
+function normalizeStoryWorldContext(rawContext) {
+  if (!rawContext || typeof rawContext !== 'object') {
+    return null;
+  }
+
+  const toArray = (value) => {
+    if (Array.isArray(value)) {
+      return value
+        .map((item) => (item ?? '').toString().trim())
+        .filter((item) => item.length > 0);
+    }
+    if (typeof value === 'string') {
+      return value
+        .split(/[,;\n]+/)
+        .map((item) => item.trim())
+        .filter((item) => item.length > 0);
+    }
+    return [];
+  };
+
+  const normalized = {
+    timePeriod: (rawContext.timePeriod || rawContext.era || '').toString().trim(),
+    specificYearOrEra: (rawContext.specificYearOrEra || rawContext.year || rawContext.timeline || '').toString().trim(),
+    primaryLocations: toArray(rawContext.primaryLocations || rawContext.locations),
+    architecturalStyles: toArray(rawContext.architecturalStyles || rawContext.architecture || rawContext.environments),
+    dominantCivilizationsOrCultures: toArray(rawContext.dominantCivilizationsOrCultures || rawContext.civilizations || rawContext.cultures || rawContext.factions),
+    characterEthnicitiesOrSpecies: toArray(rawContext.characterEthnicitiesOrSpecies || rawContext.ethnicities || rawContext.species || rawContext.races),
+    technologyLevel: (rawContext.technologyLevel || rawContext.techLevel || '').toString().trim(),
+    environmentalMood: (rawContext.environmentalMood || rawContext.mood || '').toString().trim(),
+    additionalKeywords: toArray(rawContext.additionalKeywords || rawContext.mustMention || rawContext.keyMotifs),
+    consistencyNotes: (rawContext.consistencyNotes || rawContext.instructions || '').toString().trim(),
+    uncertaintyNotes: (rawContext.uncertaintyNotes || rawContext.assumptions || '').toString().trim()
+  };
+
+  return normalized;
+}
+
+function formatStoryWorldInstructionBlock(context) {
+  if (!context) {
+    return '';
+  }
+
+  const lines = [];
+
+  if (context.timePeriod || context.specificYearOrEra) {
+    const era = [context.specificYearOrEra, context.timePeriod].filter(Boolean).join(' – ');
+    lines.push(`• Era/Año canónico: ${era}`);
+  }
+
+  if (context.primaryLocations?.length) {
+    lines.push(`• Ubicaciones principales: ${context.primaryLocations.join(', ')}`);
+  }
+
+  if (context.architecturalStyles?.length) {
+    lines.push(`• Arquitectura y entorno: ${context.architecturalStyles.join(', ')}`);
+  }
+
+  if (context.dominantCivilizationsOrCultures?.length) {
+    lines.push(`• Civilizaciones o culturas dominantes: ${context.dominantCivilizationsOrCultures.join(', ')}`);
+  }
+
+  if (context.characterEthnicitiesOrSpecies?.length) {
+    lines.push(`• Raza/etnicidad o especies de los personajes: ${context.characterEthnicitiesOrSpecies.join(', ')}`);
+  }
+
+  if (context.technologyLevel) {
+    lines.push(`• Nivel tecnológico: ${context.technologyLevel}`);
+  }
+
+  if (context.environmentalMood) {
+    lines.push(`• Tono ambiental y clima: ${context.environmentalMood}`);
+  }
+
+  if (context.additionalKeywords?.length) {
+    lines.push(`• Motivos visuales recurrentes: ${context.additionalKeywords.join(', ')}`);
+  }
+
+  if (context.consistencyNotes) {
+    lines.push(`• Notas de consistencia: ${context.consistencyNotes}`);
+  }
+
+  if (context.uncertaintyNotes) {
+    lines.push(`• Datos asumidos o inciertos: ${context.uncertaintyNotes}`);
+  }
+
+  return lines.join('\n');
+}
+
 function aggregateProjectScripts(projectDir, projectState) {
   if (!projectDir || !projectState || !Array.isArray(projectState.completedSections)) {
     return '';
@@ -6444,7 +7810,7 @@ async function generateProtagonistProfile(scriptContent, imageInstructions = '')
       ? scriptContent.slice(0, PROTAGONIST_SCRIPT_CHARACTER_LIMIT)
       : scriptContent;
 
-    const { model } = await getGoogleAI('gemini-2.0-flash-exp');
+  const { model } = await getGoogleAI('gemini-2.0-flash-exp', { context: 'llm' });
 
     const profilePrompt = `You are designing a visual bible for a story's main protagonist. Analyze the script excerpts provided and infer the most consistent primary character. Return a strict JSON object (no extra text) with the following keys as strings: "name", "gender", "age", "skinTone", "hair", "eyes", "clothing", "personality", "uniqueFeatures", "role", "promptSnippet", "notes".\n- "promptSnippet" must be a 25-45 word English sentence describing how to depict the protagonist consistently in image prompts.\n- Use concise yet vivid language.\n- If information is missing, make creative but coherent choices.\n- Keep all values in English.\n- Consider the user visual style instructions: "${imageInstructions || 'none provided'}".\n\nSCRIPT EXCERPTS (TRIMMED):\n"""${trimmedScript}"""`;
 
@@ -6755,6 +8121,75 @@ function extractStyleCuesFromPrompt(prompt = '') {
   );
 }
 
+const PROMPT_VARIETY_STOP_WORDS = new Set([
+  'the', 'and', 'with', 'from', 'into', 'onto', 'over', 'under', 'near', 'into', 'through', 'about', 'como', 'con', 'para', 'entre', 'sobre', 'ante', 'tras', 'desde', 'sin', 'una', 'unas', 'los', 'las', 'del', 'por', 'into', 'around', 'toward', 'towards', 'during', 'while', 'cuando', 'donde', 'this', 'that', 'those', 'these', 'cada', 'cada', 'este', 'esta', 'estos', 'estas', 'hacia', 'entre', 'solo', 'solo', 'muy', 'más', 'menos', 'both', 'just', 'still', 'only', 'into', 'across', 'hasta', 'desde', 'luego', 'then', 'after', 'before', 'upon', 'amid', 'amidst', 'throughout', 'within'
+]);
+
+function tokenizeForNarrativeVariety(prompt = '') {
+  if (!prompt) {
+    return [];
+  }
+
+  return prompt
+    .toLowerCase()
+    .replace(/[^a-z0-9áéíóúüñ\s-]+/g, ' ')
+    .split(/\s+/)
+    .filter((token) => token && token.length >= 4 && !PROMPT_VARIETY_STOP_WORDS.has(token));
+}
+
+function getLeadingPhrase(prompt = '', maxWords = 6) {
+  if (!prompt) {
+    return '';
+  }
+
+  const words = prompt.trim().split(/\s+/).slice(0, maxWords);
+  return words.join(' ').toLowerCase();
+}
+
+function computeJaccardSimilarity(tokensA = [], tokensB = []) {
+  if (!tokensA.length || !tokensB.length) {
+    return 0;
+  }
+
+  const setA = new Set(tokensA);
+  const setB = new Set(tokensB);
+  let intersection = 0;
+
+  for (const token of setA) {
+    if (setB.has(token)) {
+      intersection += 1;
+    }
+  }
+
+  const union = setA.size + setB.size - intersection;
+  if (union === 0) {
+    return 0;
+  }
+
+  return intersection / union;
+}
+
+function identifyRepeatedMotifs(prompts = [], minFrequency = 3) {
+  if (!Array.isArray(prompts) || prompts.length === 0) {
+    return [];
+  }
+
+  const counts = new Map();
+
+  for (const prompt of prompts) {
+    const tokens = new Set(tokenizeForNarrativeVariety(prompt));
+    for (const token of tokens) {
+      counts.set(token, (counts.get(token) || 0) + 1);
+    }
+  }
+
+  return Array.from(counts.entries())
+    .filter(([, count]) => count >= minFrequency)
+    .sort((a, b) => b[1] - a[1])
+    .map(([token]) => token)
+    .slice(0, 12);
+}
+
 function evaluatePromptFocus(prompt, protagonistProfile, index = 0) {
   const text = (prompt || '').toString();
   const lower = text.toLowerCase();
@@ -6804,7 +8239,9 @@ async function enforcePromptDiversity({
   maxProtagonistPrompts,
   scriptSegments = [],
   imageInstructions = '',
-  model
+  model,
+  storyWorldContext = null,
+  storyTopic = ''
 }) {
   if (!Array.isArray(prompts) || !prompts.length || !model) {
     return { prompts, adjustedCount: 0 };
@@ -6843,7 +8280,10 @@ async function enforcePromptDiversity({
         originalPrompt: prompts[candidate.index],
         segment,
         protagonistProfile,
-        imageInstructions
+        imageInstructions,
+        storyWorldContext,
+        storyTopic,
+        noveltyTargets: prompts.filter((_, idx) => idx !== candidate.index)
       });
 
       if (rewriteResult && rewriteResult.prompt) {
@@ -6870,12 +8310,113 @@ async function enforcePromptDiversity({
   };
 }
 
+async function enforceNarrativeVariety({
+  prompts,
+  scriptSegments = [],
+  model,
+  protagonistProfile = null,
+  imageInstructions = '',
+  storyWorldContext = null,
+  storyTopic = ''
+}) {
+  if (!Array.isArray(prompts) || prompts.length < 2 || !model) {
+    return { prompts, adjustedCount: 0 };
+  }
+
+  const analyses = prompts.map((prompt, index) => ({
+    index,
+    prompt,
+    tokens: tokenizeForNarrativeVariety(prompt),
+    leadingPhrase: getLeadingPhrase(prompt),
+    segment: Array.isArray(scriptSegments) ? scriptSegments[index] : null
+  }));
+
+  const similarityThreshold = 0.62;
+  const leadingPhraseWords = 4;
+  const maxIterations = 2;
+  const rewritten = new Set();
+  let iteration = 0;
+  let totalAdjustments = 0;
+
+  const allPromptsSnapshot = () => analyses.map(({ prompt }) => prompt);
+
+  while (iteration < maxIterations) {
+    iteration += 1;
+    let changesThisRound = 0;
+
+    for (let i = 0; i < analyses.length; i += 1) {
+      const a = analyses[i];
+      for (let j = i + 1; j < analyses.length; j += 1) {
+        const b = analyses[j];
+
+        if (rewritten.has(b.index)) {
+          continue;
+        }
+
+        const leadingMatch = a.leadingPhrase && b.leadingPhrase && a.leadingPhrase === b.leadingPhrase && a.leadingPhrase.split(' ').length >= leadingPhraseWords;
+        const similarity = computeJaccardSimilarity(a.tokens, b.tokens);
+
+        if (!leadingMatch && similarity < similarityThreshold) {
+          continue;
+        }
+
+        const target = b.tokens.length >= a.tokens.length ? b : a;
+        const segment = target.segment;
+        const rewriteResult = await rewritePromptWithBroaderFocus({
+          model,
+          originalPrompt: target.prompt,
+          segment,
+          protagonistProfile,
+          imageInstructions,
+          storyWorldContext,
+          storyTopic,
+          noveltyTargets: allPromptsSnapshot().filter((_, idx) => idx !== target.index)
+        });
+
+        if (rewriteResult?.prompt) {
+          prompts[target.index] = rewriteResult.prompt.trim();
+          analyses[target.index] = {
+            index: target.index,
+            prompt: prompts[target.index],
+            tokens: tokenizeForNarrativeVariety(prompts[target.index]),
+            leadingPhrase: getLeadingPhrase(prompts[target.index]),
+            segment
+          };
+          rewritten.add(target.index);
+          changesThisRound += 1;
+          totalAdjustments += 1;
+        }
+
+        if (changesThisRound >= prompts.length) {
+          break;
+        }
+      }
+
+      if (changesThisRound >= prompts.length) {
+        break;
+      }
+    }
+
+    if (changesThisRound === 0) {
+      break;
+    }
+  }
+
+  return {
+    prompts,
+    adjustedCount: totalAdjustments
+  };
+}
+
 async function rewritePromptWithBroaderFocus({
   model,
   originalPrompt,
   segment,
   protagonistProfile,
-  imageInstructions = ''
+  imageInstructions = '',
+  storyWorldContext = null,
+  storyTopic = '',
+  noveltyTargets = []
 }) {
   if (!model || !originalPrompt) {
     return null;
@@ -6892,7 +8433,84 @@ async function rewritePromptWithBroaderFocus({
     ? imageInstructions.trim()
     : 'Maintain the cinematic, atmospheric qualities already established.';
 
-  const directive = `You are refining an image-generation prompt to reduce focus on ${protagonistName}.
+  const noveltyGuidance = (() => {
+    if (!Array.isArray(noveltyTargets) || noveltyTargets.length === 0) {
+      return 'Highlight fresh narrative elements from this segment that have not yet been emphasized (new props, actions, emotions, or symbolic details).';
+    }
+
+    const leadingPhrases = noveltyTargets
+      .map((prompt) => getLeadingPhrase(prompt))
+      .filter(Boolean)
+      .slice(0, 5);
+
+    const motifThreshold = Math.max(2, Math.ceil(noveltyTargets.length * 0.35));
+    const repeatedMotifs = identifyRepeatedMotifs(noveltyTargets, motifThreshold);
+
+    const lines = ['Highlight fresh narrative elements from this segment that earlier prompts did not foreground (new props, actions, emotions, or symbolic consequences).'];
+
+    if (leadingPhrases.length) {
+      lines.push(`Do not start with phrases similar to: ${leadingPhrases.map((phrase) => `"${phrase}"`).join(', ')}.`);
+    }
+
+    if (repeatedMotifs.length) {
+      lines.push(`Avoid repeating overused motifs or nouns such as: ${repeatedMotifs.join(', ')}.`);
+    }
+
+    lines.push('Change the vantage point or composition compared to earlier prompts (e.g., shift from interior to exterior, macro to micro, or different character focus).');
+
+    return lines.join('\n');
+  })();
+
+  const worldContextSummary = (() => {
+    if (!storyWorldContext) {
+      return storyTopic
+        ? `Infer and explicitly state the most coherent era/year, location, architectural style and dominant cultures or species aligned with the topic "${storyTopic}". Keep those details consistent.`
+        : 'Deduce and explicitly state the era/year, location, architectural style and dominant cultures or species implied by the script. Keep those choices consistent across prompts.';
+    }
+
+    const lines = [];
+    const era = [storyWorldContext.specificYearOrEra, storyWorldContext.timePeriod]
+      .filter(Boolean)
+      .map((item) => item.trim())
+      .join(' – ');
+    if (era) {
+      lines.push(`Era/Year: ${era}`);
+    }
+    if (storyWorldContext.primaryLocations?.length) {
+      lines.push(`Primary locations: ${storyWorldContext.primaryLocations.join(', ')}`);
+    }
+    if (storyWorldContext.architecturalStyles?.length) {
+      lines.push(`Architectural/environment styles: ${storyWorldContext.architecturalStyles.join(', ')}`);
+    }
+    if (storyWorldContext.dominantCivilizationsOrCultures?.length) {
+      lines.push(`Civilizations/Cultures: ${storyWorldContext.dominantCivilizationsOrCultures.join(', ')}`);
+    }
+    if (storyWorldContext.characterEthnicitiesOrSpecies?.length) {
+      lines.push(`Character ethnicities/species: ${storyWorldContext.characterEthnicitiesOrSpecies.join(', ')}`);
+    }
+    if (storyWorldContext.technologyLevel) {
+      lines.push(`Technology level: ${storyWorldContext.technologyLevel}`);
+    }
+    if (storyWorldContext.environmentalMood) {
+      lines.push(`Environmental mood: ${storyWorldContext.environmentalMood}`);
+    }
+    if (storyWorldContext.additionalKeywords?.length) {
+      lines.push(`Recurring motifs: ${storyWorldContext.additionalKeywords.join(', ')}`);
+    }
+    if (storyWorldContext.consistencyNotes) {
+      lines.push(`Consistency notes: ${storyWorldContext.consistencyNotes}`);
+    }
+    if (storyWorldContext.uncertaintyNotes) {
+      lines.push(`Uncertainty notes: ${storyWorldContext.uncertaintyNotes}`);
+    }
+
+    const joined = lines.join('\n');
+    const topicLine = storyTopic ? `Project/topic focus: "${storyTopic}".` : '';
+
+    return `${topicLine}${topicLine ? '\n' : ''}Maintain these canonical world details:\n${joined}\nExplicitly reference the era/year, location, architecture and cultural or racial context when rewriting.`;
+  })();
+
+  const directive = `You are refining an image-generation prompt to reduce focus on ${protagonistName} while preserving the canonical historical and cultural context.
 
 SCRIPT SEGMENT CONTEXT:
 """${segmentText}
@@ -6909,6 +8527,9 @@ GOAL:
 - Highlight spatial depth, atmosphere, and narrative continuity drawn from the script segment.
 - ${styleGuidance}
 - Honor the user's visual instructions: ${visualInstructions}
+- ${worldContextSummary}
+- Explicitly mention the relevant era/year, location, architecture, dominant civilizations or cultures, and character ethnicities/species in the revised prompt.
+- ${noveltyGuidance.split('\n').join('\n- ')}
 - Keep the tone cinematic, richly detailed, and consistent with the ongoing story. No bullet points or numbering.
 
 Return only the rewritten prompt.`;
@@ -6947,7 +8568,7 @@ function isQuotaError(error) {
   return message.includes('quota') || message.includes('quota_exceeded') || error.status === 429;
 }
 
-async function attemptGoogleGeneration({ prompt, imageName, outputDir, aspectRatio, checkCancellation, apiKeyPreferences = null }) {
+async function attemptGoogleGeneration({ prompt, imageName, outputDir, aspectRatio, checkCancellation, apiKeyPreferences = null, modelType = IMAGE_MODEL_DEFAULT }) {
   const hasCustomPreferences = Array.isArray(apiKeyPreferences) && apiKeyPreferences.length > 0;
   const apiKeys = hasCustomPreferences
     ? apiKeyPreferences.filter((api) => api && api.key)
@@ -6978,7 +8599,8 @@ async function attemptGoogleGeneration({ prompt, imageName, outputDir, aspectRat
           imageName,
           outputDir,
           apiInfo: apiKeyInfo,
-          aspectRatio
+          aspectRatio,
+          modelType
         });
 
         if (imageResult && imageResult.success) {
@@ -7025,13 +8647,15 @@ async function attemptGoogleGeneration({ prompt, imageName, outputDir, aspectRat
 }
 
 async function attemptComfyGeneration({ prompt, imageName, outputDir, aspectRatio, fallbackConfig }) {
-  console.log('🔸 Fallback: Intentando generación con ComfyUI...');
+  const aspectInfo = describeAspectRatio(aspectRatio);
+  const safeAspectRatio = aspectInfo.ratio;
+  console.log(`🔸 Fallback: Intentando generación con ComfyUI (${aspectInfo.label})...`);
   const comfyResult = await generateComfyUIImage(
     prompt,
     imageName,
     outputDir,
     fallbackConfig || {},
-    aspectRatio
+    safeAspectRatio
   );
 
   if (comfyResult && comfyResult.success) {
@@ -7055,10 +8679,14 @@ async function processPromptGenerationTask(task, options) {
     fallbackConfigProvider,
     allowComfyFallback = true,
     checkCancellation = null,
-    googleApiPreferences = null
+    googleApiPreferences = null,
+    forceComfyOnly = false,
+    imageModel = IMAGE_MODEL_DEFAULT
   } = options;
 
-  let comfyEnabled = !!allowComfyFallback;
+  const normalizedImageModel = normalizeImageModel(imageModel);
+
+  let comfyEnabled = forceComfyOnly || !!allowComfyFallback;
   let fallbackConfig = {};
 
   if (!comfyEnabled) {
@@ -7077,38 +8705,42 @@ async function processPromptGenerationTask(task, options) {
   let googleAttempts = 0;
 
   let googleResult = null;
-  try {
-    if (typeof checkCancellation === 'function') {
-      checkCancellation();
+  if (!forceComfyOnly) {
+    try {
+      if (typeof checkCancellation === 'function') {
+        checkCancellation();
+      }
+
+      const result = await attemptGoogleGeneration({
+        prompt: task.prompt,
+        imageName: task.imageName,
+        outputDir: task.outputDir,
+        aspectRatio,
+        checkCancellation,
+        apiKeyPreferences: googleApiPreferences,
+        modelType: normalizedImageModel
+      });
+
+      googleAttempts = result.googleAttempts || 0;
+      googleResult = {
+        success: true,
+        promptIndex: task.promptIndex,
+        imageNumber: task.imageNumber,
+        filename: result.filename,
+        filepath: result.filepath,
+        method: result.method,
+        provider: result.provider,
+        generator: result.generator,
+        googleAttempts,
+        retries: Math.max(googleAttempts - 1, 0),
+        model: normalizedImageModel
+      };
+    } catch (error) {
+      lastError = error;
+      googleAttempts = error?.googleAttempts || 0;
+      const message = error?.message || 'Error desconocido';
+      console.log(`⚠️ Error generando imagen (prompt ${task.imageNumber}) con APIs de Google: ${message}`);
     }
-
-    const result = await attemptGoogleGeneration({
-      prompt: task.prompt,
-      imageName: task.imageName,
-      outputDir: task.outputDir,
-      aspectRatio,
-      checkCancellation,
-      apiKeyPreferences: googleApiPreferences
-    });
-
-    googleAttempts = result.googleAttempts || 0;
-    googleResult = {
-      success: true,
-      promptIndex: task.promptIndex,
-      imageNumber: task.imageNumber,
-      filename: result.filename,
-      filepath: result.filepath,
-      method: result.method,
-      provider: result.provider,
-      generator: result.generator,
-      googleAttempts,
-      retries: Math.max(googleAttempts - 1, 0)
-    };
-  } catch (error) {
-    lastError = error;
-    googleAttempts = error?.googleAttempts || 0;
-    const message = error?.message || 'Error desconocido';
-    console.log(`⚠️ Error generando imagen (prompt ${task.imageNumber}) con APIs de Google: ${message}`);
   }
 
   if (googleResult) {
@@ -7156,7 +8788,8 @@ async function processPromptGenerationTask(task, options) {
       provider: fallbackResult.provider,
       generator: fallbackResult.generator,
       googleAttempts,
-      retries: googleAttempts
+      retries: googleAttempts,
+      model: normalizedImageModel
     };
   } catch (fallbackError) {
     return {
@@ -7164,7 +8797,8 @@ async function processPromptGenerationTask(task, options) {
       promptIndex: task.promptIndex,
       imageNumber: task.imageNumber,
       error: fallbackError,
-      googleAttempts
+      googleAttempts,
+      model: normalizedImageModel
     };
   }
 }
@@ -7212,109 +8846,105 @@ async function runPromptTasksInBatches(tasks, processor, options = {}) {
 }
 
 // Función para generar imágenes con Google Gemini usando la API seleccionada
-async function generateImageWithGoogleApi({ prompt, imageName, outputDir, apiInfo, aspectRatio = '9:16' }) {
+async function generateImageWithGoogleApi({ prompt, imageName, outputDir, apiInfo, aspectRatio = '9:16', modelType = IMAGE_MODEL_DEFAULT }) {
   if (!apiInfo || !apiInfo.key) {
     throw new Error('API key de Google no disponible para la generación solicitada.');
   }
 
   const providerLabel = apiInfo.shortName || apiInfo.label || apiInfo.id || 'DESCONOCIDA';
+  const normalizedModel = normalizeImageModel(modelType);
+  const modelId = resolveGoogleImageModelId(normalizedModel);
+  const modelLabel = getImageModelLabel(normalizedModel);
+  const aspectInfo = describeAspectRatio(aspectRatio);
+  const safeAspectRatio = aspectInfo.ratio;
 
   try {
-    console.log(`🔸 Generando imagen con Google Gemini (${providerLabel}): ${imageName}`);
+    console.log(`🔸 Generando imagen con Google Gemini (${providerLabel}) usando ${aspectInfo.label}: ${imageName}`);
 
     const genAI = new GoogleGenerativeAI(apiInfo.key);
-    console.log(`🤖 Usando modelo gemini-2.0-flash-preview-image-generation con API ${providerLabel}...`);
+    console.log(`🤖 Usando modelo ${modelLabel} (${modelId}) con API ${providerLabel}...`);
+    const supportsAspectRatio = geminiModelSupportsAspectRatio(modelId);
+    if (!supportsAspectRatio && aspectInfo.ratio !== '9:16') {
+      console.log(`ℹ️ ${modelLabel} (${modelId}) no admite aspect ratios personalizados. Se usará el formato predeterminado del modelo.`);
+    }
 
     const model = genAI.getGenerativeModel({
-      model: 'gemini-2.0-flash-preview-image-generation',
+      model: modelId,
       generationConfig: {
         temperature: 0.7,
         maxOutputTokens: 1024
       }
     });
 
-    let formatDescription;
-    let orientation;
+    const generationConfig = {
+      responseModalities: ['IMAGE', 'TEXT']
+    };
 
-    switch (aspectRatio) {
-      case '16:9':
-        formatDescription = '16:9 aspect ratio image (widescreen format, landscape orientation, 1920x1080 or similar proportions)';
-        orientation = 'landscape orientation with 16:9 aspect ratio';
-        break;
-      case '1:1':
-        formatDescription = '1:1 aspect ratio image (square format, 1024x1024 or similar proportions)';
-        orientation = 'square format with 1:1 aspect ratio';
-        break;
-      case '9:16':
-      default:
-        formatDescription = '9:16 aspect ratio image (vertical format, portrait orientation, 720x1280 or similar proportions)';
-        orientation = 'portrait orientation with 9:16 aspect ratio';
-        break;
+    if (supportsAspectRatio) {
+      generationConfig.imageConfig = {
+        aspectRatio: safeAspectRatio
+      };
+      console.log(`📡 Enviando prompt para generación de imagen en formato ${safeAspectRatio}...`);
+    } else {
+      console.log('📡 Enviando prompt para generación de imagen con el formato predeterminado del modelo...');
     }
 
-    console.log(`📡 Enviando prompt para generación de imagen en formato ${aspectRatio}...`);
-    const response = await model.generateContent({
-      contents: [{
-        role: 'user',
-        parts: [{
-          text: `Generate a ${formatDescription}: ${prompt}. The image should be in ${orientation}.`
-        }]
-      }],
-      generationConfig: {
-        responseModalities: ['TEXT', 'IMAGE']
-      }
+    const contents = [{
+      role: 'user',
+      parts: [{
+        text: `Generate a ${aspectInfo.googleFormatDescription}: ${prompt}. The image should be in ${aspectInfo.googleOrientation}.`
+      }]
+    }];
+
+    const stream = await model.generateContentStream({
+      contents,
+      generationConfig
     });
 
-    console.log('📡 Respuesta recibida, procesando imágenes...');
+    const { inlineImages } = await collectGeminiStreamData(stream);
 
-    let savedFilePath = null;
-
-    if (response.response?.candidates && response.response.candidates[0]?.content) {
-      const parts = response.response.candidates[0].content.parts || [];
-
-      for (const part of parts) {
-        if (part.inlineData && part.inlineData.mimeType && part.inlineData.mimeType.includes('image')) {
-          console.log(`🖼️ Imagen encontrada con tipo MIME: ${part.inlineData.mimeType}`);
-
-          const buffer = Buffer.from(part.inlineData.data || '', 'base64');
-          const fileExtension = part.inlineData.mimeType.includes('png')
-            ? 'png'
-            : part.inlineData.mimeType.includes('jpeg')
-              ? 'jpg'
-              : 'png';
-
-          const timestamp = Date.now();
-          const filename = `${imageName}_google_${timestamp}.${fileExtension}`;
-          const filepath = path.join(outputDir, filename);
-
-          if (!fs.existsSync(outputDir)) {
-            fs.mkdirSync(outputDir, { recursive: true });
-          }
-
-          fs.writeFileSync(filepath, buffer);
-
-          console.log(`✅ Imagen generada con Google Gemini (${providerLabel}): ${filename}`);
-          console.log(`📁 Guardada en: ${filepath}`);
-          console.log(`📏 Tamaño: ${buffer.length} bytes`);
-
-          savedFilePath = filepath;
-          break;
-        } else if (part.text) {
-          console.log(`📝 Texto de respuesta: ${part.text.substring(0, 100)}...`);
-        }
-      }
-    }
-
-    if (!savedFilePath) {
+    if (!inlineImages.length) {
       throw new Error('No se generaron imágenes en la respuesta');
     }
 
+    if (!fs.existsSync(outputDir)) {
+      fs.mkdirSync(outputDir, { recursive: true });
+    }
+
+    let savedFilePath = null;
+    let savedFilename = null;
+
+    inlineImages.forEach((inlineData, index) => {
+      const mimeType = inlineData.mimeType || 'image/png';
+      const buffer = Buffer.from(inlineData.data || '', 'base64');
+      const fileExtension = mimeType.includes('png')
+        ? 'png'
+        : mimeType.includes('jpeg')
+          ? 'jpg'
+          : 'png';
+
+      const timestamp = Date.now();
+      const filename = `${imageName}_google_${timestamp}${index ? `_${index}` : ''}.${fileExtension}`;
+      const filepath = path.join(outputDir, filename);
+
+      fs.writeFileSync(filepath, buffer);
+
+      console.log(`✅ Imagen generada con Google Gemini (${providerLabel}): ${filename}`);
+      console.log(`📁 Guardada en: ${filepath}`);
+      console.log(`📏 Tamaño: ${buffer.length} bytes`);
+
+      if (!savedFilePath) {
+        savedFilePath = filepath;
+        savedFilename = filename;
+      }
+    });
+
     return {
       success: true,
-      filename: path.basename(savedFilePath),
+      filename: savedFilename,
       filepath: savedFilePath,
       method: `Google Gemini (${providerLabel})`,
-      model: 'gemini-2.0-flash-preview-image-generation',
+      model: modelId,
       provider: providerLabel
     };
   } catch (error) {
@@ -7332,54 +8962,27 @@ async function generateComfyUIImage(prompt, imageName, outputDir, customConfig =
     console.log(`🎨 Generando imagen: ${imageName}`);
     console.log(`📁 Directorio de salida: ${outputDir}`);
     console.log(`🖼️ Prompt: ${prompt.substring(0, 100)}...`);
-    
+    const aspectInfo = describeAspectRatio(aspectRatio);
+    const safeAspectRatio = aspectInfo.ratio;
+    console.log(`📐 Resolución objetivo basada en ${aspectInfo.label}`);
+
     // Configuración dinámica basada en aspect ratio
-    let defaultOptions;
-    switch(aspectRatio) {
-      case '16:9':
-        defaultOptions = {
-          width: 1280,   // Resolución 16:9 HD
-          height: 720,
-          steps: 25,
-          cfg: 1.8,
-          guidance: 3.5,
-          sampler: "euler",
-          scheduler: "simple",
-          model: "flux1-dev-fp8.safetensors",
-          negativePrompt: "low quality, blurry, distorted, text, watermark",
-          timeout: 180
-        };
-        break;
-      case '1:1':
-        defaultOptions = {
-          width: 1024,   // Resolución 1:1 cuadrada
-          height: 1024,
-          steps: 25,
-          cfg: 1.8,
-          guidance: 3.5,
-          sampler: "euler",
-          scheduler: "simple",
-          model: "flux1-dev-fp8.safetensors",
-          negativePrompt: "low quality, blurry, distorted, text, watermark",
-          timeout: 180
-        };
-        break;
-      case '9:16':
-      default:
-        defaultOptions = {
-          width: 720,   // Resolución 9:16 HD
-          height: 1280,
-          steps: 25,
-          cfg: 1.8,
-          guidance: 3.5,
-          sampler: "euler",
-          scheduler: "simple",
-          model: "flux1-dev-fp8.safetensors",
-          negativePrompt: "low quality, blurry, distorted, text, watermark",
-          timeout: 180
-        };
-        break;
-    }
+    const defaultSteps = comfyDefaultConfig.steps || 25;
+    const defaultCfg = comfyDefaultConfig.cfg || 1.8;
+    const defaultGuidance = comfyDefaultConfig.guidance || 3.5;
+    const resolvedDefaults = resolveComfyDefaultResolution(safeAspectRatio);
+    const defaultOptions = {
+      width: resolvedDefaults.width,
+      height: resolvedDefaults.height,
+      steps: defaultSteps,
+      cfg: defaultCfg,
+      guidance: defaultGuidance,
+      sampler: "euler",
+      scheduler: "simple",
+      model: "flux1-dev-fp8.safetensors",
+      negativePrompt: "low quality, blurry, distorted, text, watermark",
+      timeout: 180
+    };
     
     // Combinar configuración por defecto con configuración personalizada
     const options = {
@@ -7389,10 +8992,13 @@ async function generateComfyUIImage(prompt, imageName, outputDir, customConfig =
       height: customConfig.height || defaultOptions.height,
       steps: customConfig.steps || defaultOptions.steps,
       guidance: customConfig.guidance || defaultOptions.guidance,
+      cfg: customConfig.cfg ?? defaultOptions.cfg,
       sampler: customConfig.sampler || defaultOptions.sampler,
       scheduler: customConfig.scheduler || defaultOptions.scheduler,
       model: customConfig.model || defaultOptions.model
     };
+
+    options.timeout = customConfig.timeout || Math.max(defaultOptions.timeout, options.steps * 6, 180);
     
     console.log(`⚙️ Configuración de generación:`, {
       resolution: `${options.width}x${options.height}`,
@@ -7404,7 +9010,7 @@ async function generateComfyUIImage(prompt, imageName, outputDir, customConfig =
     });
     
     // Usar la función existente de generación con auto-restart
-    const result = await generateImageWithAutoRestart(prompt, options);
+  const result = await generateImageWithAutoRestart(prompt, options);
     
     if (result.success && result.filename) {
       // Mover la imagen generada al directorio de la sección
@@ -7478,6 +9084,11 @@ app.post('/generate-batch-images', async (req, res) => {
     let shouldUseGoogleImages = googleImages === true;
     let shouldUseLocalAI = localAIImages === true;
     let shouldUseGeminiImages = geminiGeneratedImages === true;
+  const aspectInfo = describeAspectRatio(aspectRatio);
+  const safeAspectRatio = aspectInfo.ratio;
+  const selectedImageModel = normalizeImageModel(imageModel || projectData?.imageModel);
+  const selectedImageModelLabel = getImageModelLabel(selectedImageModel);
+  console.log(`🤖 Modelo de imágenes seleccionado para generación masiva: ${selectedImageModelLabel} (${selectedImageModel})`);
     const selectedApisRaw = Array.isArray(selectedApisInput) ? selectedApisInput : [];
     const googleApiPreferences = resolveGoogleImageApiSelection(selectedApisRaw);
     const hasExplicitApiSelection = selectedApisRaw.length > 0;
@@ -7498,6 +9109,7 @@ app.post('/generate-batch-images', async (req, res) => {
     
     // Crear estructura de carpetas base para este proyecto
     const baseTopic = topic || sections[0].title.split(':')[0] || 'Proyecto';
+    console.log(`📐 Aspect ratio solicitado para generación masiva: ${aspectInfo.label}`);
     
     if (shouldSkipImages) {
       console.log('⏭️ Saltando generación de imágenes...');
@@ -7509,8 +9121,8 @@ app.post('/generate-batch-images', async (req, res) => {
       });
     }
 
-    const imageMethod = shouldUseLocalAI ? 'ComfyUI (IA Local)' : shouldUseGoogleImages ? 'Google Images' : 'IA en la nube';
-    console.log(`🖼️ Generando imágenes para ${sections.length} secciones con ${imageMethod}...`);
+  const imageMethod = shouldUseLocalAI ? 'ComfyUI (IA Local)' : shouldUseGoogleImages ? 'Google Images' : `IA en la nube (${selectedImageModelLabel})`;
+  console.log(`🖼️ Generando imágenes para ${sections.length} secciones con ${imageMethod}...`);
 
     const allImageResults = [];
 
@@ -7541,7 +9153,8 @@ app.post('/generate-batch-images', async (req, res) => {
             sectionFolderStructure.sectionDir,
             section.section,
             comfyUISettings,
-            !isLastSection // keepAlive = true para todas excepto la última
+            !isLastSection, // keepAlive = true para todas excepto la última
+            safeAspectRatio
           );
           
         } else if (shouldUseGoogleImages) {
@@ -7596,7 +9209,8 @@ app.post('/generate-batch-images', async (req, res) => {
             imageNumber: index + 1,
             prompt,
             imageName: `seccion_${section.section}_imagen_${index + 1}`,
-            outputDir: sectionFolderStructure.sectionDir
+            outputDir: sectionFolderStructure.sectionDir,
+            imageModel: selectedImageModel
           }));
 
           const taskResults = await runPromptTasksInBatches(
@@ -7604,12 +9218,13 @@ app.post('/generate-batch-images', async (req, res) => {
             async (task) => {
               console.log(`🔑 Preparando generación con Google Gemini para imagen ${task.imageNumber}...`);
               return await processPromptGenerationTask(task, {
-                aspectRatio,
+                aspectRatio: safeAspectRatio,
                 fallbackConfigProvider: () => false,
                 allowComfyFallback: false,
                 allowCooldownRetry: true,
                 cooldownRetryMs: 60000,
-                googleApiPreferences
+                googleApiPreferences,
+                imageModel: selectedImageModel
               });
             }
           );
@@ -7875,7 +9490,7 @@ app.get('/progress/:projectKey', (req, res) => {
 
 app.post('/generate', async (req, res) => {
   try {
-    const { topic, folderName, voice, totalSections, currentSection, previousSections, minWords, maxWords, imageCount, aspectRatio, promptModifier, imageModel, llmModel, skipImages, googleImages, localAIImages, comfyUISettings, scriptStyle, customStyleInstructions, applioVoice, applioModel, applioPitch } = req.body;
+  const { topic, folderName, voice, totalSections, currentSection, previousSections, minWords, maxWords, imageCount, aspectRatio, promptModifier, imageModel, llmModel, skipImages, googleImages, localAIImages, comfyUISettings, scriptStyle, customStyleInstructions, applioVoice, applioModel, applioPitch } = req.body;
     
     const selectedVoice = voice || 'Orus';
     const sections = totalSections || 3;
@@ -7884,12 +9499,17 @@ app.post('/generate', async (req, res) => {
     const wordsMax = maxWords || 1100;
     const selectedStyle = scriptStyle || 'professional'; // Default al estilo profesional
     const numImages = imageCount || 5; // Default a 5 imágenes si no se especifica
-    const additionalInstructions = promptModifier || ''; // Instrucciones adicionales para imágenes
-    const selectedImageModel = imageModel || 'gemini2';
+  const additionalInstructions = promptModifier || ''; // Instrucciones adicionales para imágenes
+  const selectedImageModel = normalizeImageModel(imageModel);
+  const selectedImageModelLabel = getImageModelLabel(selectedImageModel);
+  console.log(`🤖 Modelo de imágenes seleccionado para esta sección: ${selectedImageModelLabel} (${selectedImageModel})`);
     const selectedLlmModel = llmModel || 'gemini-2.5-flash';
     let shouldSkipImages = skipImages === true;
     let shouldUseGoogleImages = googleImages === true;
     let shouldUseLocalAI = localAIImages === true;
+  const aspectInfo = describeAspectRatio(aspectRatio);
+  const safeAspectRatio = aspectInfo.ratio;
+  console.log(`📐 Aspect ratio solicitado para la sección: ${aspectInfo.label}`);
     
     console.log(`🎯 Solicitud recibida: ${shouldUseLocalAI ? 'IA LOCAL' : shouldUseGoogleImages ? 'ENLACES GOOGLE' : shouldSkipImages ? 'SIN IMÁGENES' : numImages + ' imágenes'} para la sección ${section}`);
     
@@ -8374,7 +9994,8 @@ Generado automáticamente
             imageInstructions: additionalInstructions || "",
             imageCount: numImages,
             useLocalAI: false, // Usar el proceso híbrido Google → ComfyUI
-            comfyUIConfig: comfyUISettings || {}
+            comfyUIConfig: comfyUISettings || {},
+            aspectRatio: safeAspectRatio
           });
           
           console.log(`✅ Generación de imágenes completada: ${imageGenerationResult.successful} imágenes generadas`);
@@ -8497,7 +10118,15 @@ Si te piden N prompts, tu respuesta debe tener exactamente (N-1) delimitadores "
             console.log(`⚠️ No se recibió configuración ComfyUI, usando valores por defecto`);
           }
           
-          localAIImages = await generateLocalAIImages(imagePrompts, additionalInstructions, folderStructure.sectionDir, section, comfyUISettings);
+          localAIImages = await generateLocalAIImages(
+            imagePrompts,
+            additionalInstructions,
+            folderStructure.sectionDir,
+            section,
+            comfyUISettings,
+            false,
+            safeAspectRatio
+          );
           
           if (localAIImages.length > 0) {
             console.log(`✅ ${localAIImages.length} imágenes generadas con IA Local exitosamente`);
@@ -8928,8 +10557,8 @@ Si te piden N prompts, tu respuesta debe tener exactamente (N-1) delimitadores "
         const enhancedPrompt = prompt.trim();
         console.log(`✅ Las instrucciones adicionales ya están integradas en el prompt por el LLM`);
         
-        console.log(`📝 Prompt completo para imagen ${index + 1}: ${enhancedPrompt}`);
-        console.log(`🤖 Usando modelo: ${selectedImageModel === 'gemini2' ? 'Gemini 2.0 Flash (nativo)' : 'Imagen 4.0'}`);
+  console.log(`📝 Prompt completo para imagen ${index + 1}: ${enhancedPrompt}`);
+  console.log(`🤖 Usando modelo: ${selectedImageModelLabel}`);
 
         const imageResponse = await generateImageWithModel(ai, enhancedPrompt, selectedImageModel);
 
@@ -8948,7 +10577,7 @@ Si te piden N prompts, tu respuesta debe tener exactamente (N-1) delimitadores "
             
             fs.writeFileSync(imageFilePath, imageBuffer);
             console.log(`💾 Imagen ${index + 1} guardada en: ${imageFilePath}`);
-            console.log(`🤖 Generada con: ${selectedImageModel === 'gemini2' ? 'Gemini 2.0 Flash' : 'Imagen 4.0'}`);
+            console.log(`🤖 Generada con: ${selectedImageModelLabel}`);
             
             // Retornar ruta relativa para acceso web
             const relativePath = path.relative('./public', imageFilePath).replace(/\\/g, '/');
@@ -8960,7 +10589,7 @@ Si te piden N prompts, tu respuesta debe tener exactamente (N-1) delimitadores "
               image: imageData,
               imagePath: relativePath,
               prompt: enhancedPrompt,
-              model: selectedImageModel === 'gemini2' ? 'Gemini 2.0 Flash' : 'Imagen 4.0'
+              model: selectedImageModelLabel
             });
           }
           
@@ -9235,11 +10864,12 @@ app.post('/regenerate-image', async (req, res) => {
       return res.status(400).json({ error: 'Tema y sección requeridos para organizar archivos' });
     }
 
-    const selectedImageModel = 'gemini2'; // TEMPORAL: Forzar Gemini 2.0 para depuración
-    console.log(`🔄 Regenerando imagen ${imageIndex + 1} con nuevo prompt...`);
-    console.log(`🤖 Forzando uso de Gemini 2.0 Flash para depuración...`);
-    console.log(`🔍 Modelo recibido del frontend: ${imageModel}`);
-    console.log(`🔍 Modelo que se usará: ${selectedImageModel}`);
+  const normalizedImageModel = normalizeImageModel(imageModel);
+  const selectedImageModel = normalizedImageModel;
+  const selectedImageModelLabel = getImageModelLabel(selectedImageModel);
+  console.log(`🔄 Regenerando imagen ${imageIndex + 1} con nuevo prompt...`);
+  console.log(`🔍 Modelo recibido del frontend: ${imageModel || 'no especificado'}`);
+  console.log(`🔍 Modelo que se usará: ${selectedImageModelLabel} (${selectedImageModel})`);
     
     // Crear estructura de carpetas
     const folderStructure = createProjectStructure(topic, currentSection, folderName);
@@ -9253,7 +10883,7 @@ app.post('/regenerate-image', async (req, res) => {
       console.log(`🔍 DEBUG REGENERACION - Enhanced prompt: ${enhancedPrompt.substring(0, 50)}...`);
       console.log(`🔍 DEBUG REGENERACION - Llamando a generateImageWithModel con modelo: ${selectedImageModel}`);
 
-      const imageResponse = await generateImageWithModel(ai, enhancedPrompt, selectedImageModel);
+  const imageResponse = await generateImageWithModel(ai, enhancedPrompt, selectedImageModel);
       console.log(`🔍 DEBUG REGENERACION - Respuesta recibida:`, !!imageResponse);
 
       if (imageResponse.generatedImages && imageResponse.generatedImages.length > 0) {
@@ -9272,7 +10902,7 @@ app.post('/regenerate-image', async (req, res) => {
           
           fs.writeFileSync(imageFilePath, imageBuffer);
           console.log(`💾 Imagen regenerada ${imageIndex + 1} guardada en: ${imageFilePath}`);
-          console.log(`🤖 Regenerada con: ${selectedImageModel === 'gemini2' ? 'Gemini 2.0 Flash' : 'Imagen 4.0'}`);
+          console.log(`🤖 Regenerada con: ${selectedImageModelLabel}`);
           
           // Retornar ruta relativa para acceso web
           const relativePath = path.relative('./public', imageFilePath).replace(/\\/g, '/');
@@ -9281,7 +10911,7 @@ app.post('/regenerate-image', async (req, res) => {
             image: imageData,
             imagePath: relativePath,
             variationIndex: varIndex,
-            model: selectedImageModel === 'gemini2' ? 'Gemini 2.0 Flash' : 'Imagen 4.0'
+            model: selectedImageModelLabel
           });
         }
         
@@ -9290,7 +10920,7 @@ app.post('/regenerate-image', async (req, res) => {
           images: regeneratedImages,
           prompt: enhancedPrompt,
           imageIndex: imageIndex,
-          model: selectedImageModel === 'gemini2' ? 'Gemini 2.0 Flash' : 'Imagen 4.0'
+          model: selectedImageModelLabel
         });
         return;
       }
@@ -9324,17 +10954,32 @@ app.post('/generate-comfyui-image', async (req, res) => {
     
     try {
       // Configurar opciones (usar las del frontend si están disponibles)
+    const aspectInfo = describeAspectRatio(options?.aspectRatio, '16:9');
+    const safeAspectRatio = aspectInfo.ratio;
+    console.log(`📐 [PRUEBA COMFYUI] Aspect ratio solicitado: ${aspectInfo.label}`);
+      const { width: defaultWidth, height: defaultHeight } = resolveComfyDefaultResolution(safeAspectRatio);
+      const parsedSteps = Number.parseInt(options.steps, 10);
+      const steps = Number.isFinite(parsedSteps) && parsedSteps > 0
+        ? parsedSteps
+        : comfyDefaultConfig.steps;
+      const cfg = Number.isFinite(Number.parseFloat(options.cfg))
+        ? Number.parseFloat(options.cfg)
+        : comfyDefaultConfig.cfg;
+      const guidance = Number.isFinite(Number.parseFloat(options.guidance))
+        ? Number.parseFloat(options.guidance)
+        : comfyDefaultConfig.guidance;
       const comfyOptions = {
-        width: parseInt(options.width) || 1280,
-        height: parseInt(options.height) || 720,
-        steps: parseInt(options.steps) || 25,
-        cfg: options.cfg || 1.8,
-        guidance: parseFloat(options.guidance) || 3.5,
+        width: parseInt(options.width) || defaultWidth,
+        height: parseInt(options.height) || defaultHeight,
+        steps,
+        cfg,
+        guidance,
         sampler: options.sampler || "euler",
         scheduler: options.scheduler || "simple",
         model: options.model || "flux1-dev-fp8.safetensors",
         negativePrompt: options.negativePrompt || "low quality, blurry, distorted",
-        timeout: Math.max(180, parseInt(options.steps) * 6) || 180
+        timeout: Math.max(180, steps * 6),
+        aspectRatio: safeAspectRatio
       };
       
       console.log(`⚙️ [PRUEBA COMFYUI] Configuración final que se enviará a ComfyUI:`, {
@@ -9343,6 +10988,8 @@ app.post('/generate-comfyui-image', async (req, res) => {
         guidance: comfyOptions.guidance,
         sampler: comfyOptions.sampler,
         scheduler: comfyOptions.scheduler,
+        cfg: comfyOptions.cfg,
+        aspectRatio: safeAspectRatio,
         timeout: comfyOptions.timeout
       });
       
@@ -9947,30 +11594,81 @@ app.post('/transcribe-audio', async (req, res) => {
   }
 });
 
-// Endpoint para generar títulos, descripción y etiquetas para YouTube
-app.post('/generate-youtube-metadata', async (req, res) => {
-  try {
-    const { topic, allSections, folderName, thumbnailStyle } = req.body;
+// Funciones auxiliares para generación de metadata de YouTube
+function buildYouTubeMetadataPrompt({ topic, fullScript, thumbnailInstructions, targetLanguage }) {
+  if (targetLanguage === 'en') {
+   return `
+Based on the following topic and complete video script, generate YouTube metadata in ENGLISH.
 
-    if (!topic || !allSections || allSections.length === 0) {
-      return res.status(400).json({ error: 'Tema y secciones requeridos' });
-    }
+IMPORTANT:
+- Write absolutely all metadata in ENGLISH (titles, description, tags, thumbnail prompts).
+- Keep the exact output format provided below (headings remain in Spanish to match the client parser).
 
-    console.log(`🎬 Generando metadata de YouTube para: ${topic}`);
-    console.log(`📝 Número de secciones: ${allSections.length}`);
-    console.log(`🖼️ Estilo de miniatura: ${thumbnailStyle || 'default'}`);
+**TOPIC:** ${topic}
 
-    // Combinar todas las secciones en un resumen
-    const fullScript = allSections.join('\n\n--- SECCIÓN ---\n\n');
+**FULL SCRIPT:**
+${fullScript}
 
-    // Obtener instrucciones de estilo de miniatura
-    const thumbnailInstructions = getThumbnailStyleInstructions(thumbnailStyle || 'default');
-    
-    console.log(`🎨 thumbnailStyle recibido:`, thumbnailStyle);
-    console.log(`📝 thumbnailInstructions generadas:`, thumbnailInstructions);
+Please generate:
 
-    const prompt = `
-Basándote en el siguiente tema y guión completo del video, genera metadata optimizada para YouTube:
+1. **10 CLICKBAIT TITLES** (one per line, numbered):
+  - Use curiosity driven phrases like "WHAT HAPPENS WHEN", "WHY", "I DID THIS AND THIS HAPPENED", "YOU WON'T BELIEVE", "THIS CHANGED EVERYTHING"
+  - They must be provocative but always related to the content
+  - Maximum 15 words, minimum 10
+
+2. **VIDEO DESCRIPTION** (SEO optimised):
+  - Between 150-300 words
+  - Include relevant keywords from the topic
+  - Mention the main content of the video
+  - Add a call-to-action to subscribe
+  - Engaging format with emojis
+
+3. **25 TAGS** (comma-separated):
+  - Keywords related to the topic
+  - Popular tags for the niche
+  - Relevant search terms
+  - No spaces in compound tags (use hyphens or camelCase)
+
+4. **5 PROMPTS FOR YOUTUBE THUMBNAILS** (one per line, numbered):
+
+  MANDATORY FORMAT - FOLLOW THIS EXACT STRUCTURE FOR EACH OF THE 5 PROMPTS:
+
+  "YouTube thumbnail 16:9 showing [very detailed visual description of the content related to the topic, minimum 25 words] with overlaid text '[specific clickbait phrase related to the content]' with the text applying the following style: ${thumbnailInstructions}"
+
+  STRICT RULES - DO NOT GENERATE SHORT OR INCOMPLETE PROMPTS:
+  - EACH prompt must have at least 25 words of visual description
+  - EACH prompt must include a specific clickbait phrase between quotation marks
+  - EACH prompt must end with the complete style sentence provided above
+  - NEVER generate prompts similar to "the text with black outline and very shiny text" - THAT IS FORBIDDEN
+  - ALL prompts must strictly follow the full format
+
+OUTPUT FORMAT (use these exact Spanish headings):
+**TÍTULOS CLICKBAIT:**
+1. [título]
+2. [título]
+...
+
+**DESCRIPCIÓN:**
+[descripción completa]
+
+**ETIQUETAS:**
+tag1, tag2, tag3, ...
+
+**PROMPTS PARA MINIATURAS:**
+1. [prompt completo para miniatura]
+2. [prompt completo para miniatura]
+3. [prompt completo para miniatura]
+4. [prompt completo para miniatura]
+5. [prompt completo para miniatura]
+   `;
+  }
+
+  return `
+Basándote en el siguiente tema y guión completo del video, genera metadata optimizada para YouTube en ESPAÑOL.
+
+IMPORTANTE:
+- Usa español para absolutamente todo el contenido (títulos, descripción, etiquetas y prompts).
+- Mantén el formato de salida exactamente como se indica a continuación.
 
 **TEMA:** ${topic}
 
@@ -9980,38 +11678,38 @@ ${fullScript}
 Por favor genera:
 
 1. **10 TÍTULOS CLICKBAIT** (cada uno en una línea, numerados):
-   - Usa palabras que generen curiosidad como "QUE PASA CUANDO", "POR QUE", "HICE ESTO Y PASO ESTO", "NO VAS A CREER", "ESTO CAMBIÓ TODO"
-   - Que sean polémicos pero relacionados al contenido
-   - maximo 15 palabras, minimo 10.
+  - Usa palabras que generen curiosidad como "QUE PASA CUANDO", "POR QUE", "HICE ESTO Y PASO ESTO", "NO VAS A CREER", "ESTO CAMBIÓ TODO"
+  - Que sean polémicos pero relacionados al contenido
+  - maximo 15 palabras, minimo 10.
 
 2. **DESCRIPCIÓN PARA VIDEO** (optimizada para SEO):
-   - Entre 150-300 palabras
-   - Incluye palabras clave relevantes del tema
-   - Menciona el contenido principal del video
-   - Incluye call-to-action para suscribirse
-   - Formato atractivo con emojis
+  - Entre 150-300 palabras
+  - Incluye palabras clave relevantes del tema
+  - Menciona el contenido principal del video
+  - Incluye call-to-action para suscribirse
+  - Formato atractivo con emojis
 
 3. **25 ETIQUETAS** (separadas por comas):
-   - Palabras clave relacionadas al tema
-   - Tags populares del nicho correspondiente
-   - Términos de búsqueda relevantes
-   - Sin espacios en tags compuestos (usar guiones o camelCase)
+  - Palabras clave relacionadas al tema
+  - Tags populares del nicho correspondiente
+  - Términos de búsqueda relevantes
+  - Sin espacios en tags compuestos (usar guiones o camelCase)
 
 4. **5 PROMPTS PARA MINIATURAS DE YOUTUBE** (cada uno en una línea, numerados):
    
-   FORMATO OBLIGATORIO - DEBES SEGUIR ESTA ESTRUCTURA EXACTA PARA CADA UNO DE LOS 5 PROMPTS:
+  FORMATO OBLIGATORIO - DEBES SEGUIR ESTA ESTRUCTURA EXACTA PARA CADA UNO DE LOS 5 PROMPTS:
    
-   "Miniatura de YouTube 16:9 mostrando [descripción visual muy detallada del contenido relacionado al tema, mínimo 15 palabras] con texto superpuesto '[frase clickbait específica relacionada al contenido]' con el texto aplicando el siguiente estilo: ${thumbnailInstructions}"
+  "Miniatura de YouTube 16:9 mostrando [descripción visual muy detallada del contenido relacionado al tema, mínimo 25 palabras] con texto superpuesto '[frase clickbait específica relacionada al contenido]' con el texto aplicando el siguiente estilo: ${thumbnailInstructions}"
    
-   REGLAS ESTRICTAS - NO GENERAR PROMPTS CORTOS O INCOMPLETOS:
-   - CADA prompt debe tener mínimo 25 palabras de descripción visual
-   - CADA prompt debe incluir una frase clickbait específica entre comillas
-   - CADA prompt debe terminar con la frase completa del estilo
-   - NO generar prompts como "el texto con contorno negro" - ESO ESTÁ PROHIBIDO
-   - TODOS los prompts deben seguir el formato completo
+  REGLAS ESTRICTAS - NO GENERAR PROMPTS CORTOS O INCOMPLETOS:
+  - CADA prompt debe tener mínimo 25 palabras de descripción visual
+  - CADA prompt debe incluir una frase clickbait específica entre comillas
+  - CADA prompt debe terminar con la frase completa del estilo
+  - NO generar prompts como "el texto con contorno negro" - ESO ESTÁ PROHIBIDO
+  - TODOS los prompts deben seguir el formato completo
    
-   EJEMPLO DE FORMATO CORRECTO (SEGUIR EXACTAMENTE ESTA ESTRUCTURA):
-   1. Miniatura de YouTube 16:9 mostrando a Link adulto con expresión de shock mirando directamente a la cámara mientras sostiene la Master Sword brillante, con el Castillo de Hyrule destruido de fondo y llamas rojas. El rostro de Link debe mostrar sorpresa extrema con ojos muy abiertos con texto superpuesto "¡ZELDA ESTÁ MUERTA!" con el texto aplicando el siguiente estilo: ${thumbnailInstructions}
+  EJEMPLO DE FORMATO CORRECTO (SEGUIR EXACTAMENTE ESTA ESTRUCTURA):
+  1. Miniatura de YouTube 16:9 mostrando a Link adulto con expresión de shock mirando directamente a la cámara mientras sostiene la Master Sword brillante, con el Castillo de Hyrule destruido de fondo y llamas rojas. El rostro de Link debe mostrar sorpresa extrema con ojos muy abiertos con texto superpuesto "¡ZELDA ESTÁ MUERTA!" con el texto aplicando el siguiente estilo: ${thumbnailInstructions}
 
 REGLAS ESTRICTAS:
 - EXACTAMENTE 5 prompts numerados del 1 al 5
@@ -10026,7 +11724,6 @@ IMPORTANTE:
 - NO generar prompts cortos como "el texto con contorno negro" - ESTO ESTÁ PROHIBIDO
 - VERIFICA que cada prompt tenga: descripción visual + frase clickbait + estilo completo
 - Si un prompt sale corto, reescríbelo completo
-
 
 Formato de respuesta:
 **TÍTULOS CLICKBAIT:**
@@ -10046,9 +11743,83 @@ tag1, tag2, tag3, ...
 3. [prompt completo para miniatura]
 4. [prompt completo para miniatura]
 5. [prompt completo para miniatura]
-    `;
+   `;
+}
 
-    const { model } = await getGoogleAI("gemini-2.0-flash-exp");
+function buildThumbnailRegenerationPrompt({ topic, thumbnailInstructions, targetLanguage }) {
+  if (targetLanguage === 'en') {
+   return `
+Generate EXACTLY 5 complete YouTube thumbnail prompts in ENGLISH about: ${topic}
+
+MANDATORY FORMAT for each prompt:
+"YouTube thumbnail 16:9 showing [very detailed description, minimum 25 words] with overlaid text '[specific clickbait phrase]' with the text applying the following style: ${thumbnailInstructions}"
+
+STRICT RULES:
+- Each prompt must have at least 30 words
+- NEVER generate "the text with black outline and very shiny text"
+- ALL prompts must end with the complete style sentence above
+- Number them from 1 to 5
+
+1. [full prompt]
+2. [full prompt]
+3. [full prompt]
+4. [full prompt]
+5. [full prompt]
+   `;
+  }
+
+  return `
+Genera EXACTAMENTE 5 prompts completos para miniaturas de YouTube sobre: ${topic}
+
+FORMATO OBLIGATORIO para cada prompt:
+"Miniatura de YouTube 16:9 mostrando [descripción visual muy detallada, mínimo 20 palabras] con texto superpuesto '[frase clickbait específica]' con el texto aplicando el siguiente estilo: ${thumbnailInstructions}"
+
+REGLAS ESTRICTAS:
+- Cada prompt debe tener mínimo 30 palabras
+- NUNCA generar "el texto con contorno negro y muy brillante el texto"
+- TODOS deben incluir la frase completa del estilo al final
+- Numerar del 1 al 5
+
+1. [prompt completo]
+2. [prompt completo]
+3. [prompt completo]
+4. [prompt completo]
+5. [prompt completo]
+   `;
+}
+
+// Endpoint para generar títulos, descripción y etiquetas para YouTube
+app.post('/generate-youtube-metadata', async (req, res) => {
+  try {
+    const { topic, allSections, folderName, thumbnailStyle, language } = req.body;
+    const targetLanguage = language === 'en' ? 'en' : 'es';
+
+    if (!topic || !allSections || allSections.length === 0) {
+      return res.status(400).json({ error: 'Tema y secciones requeridos' });
+    }
+
+    console.log(`🎬 Generando metadata de YouTube para: ${topic}`);
+    console.log(`📝 Número de secciones: ${allSections.length}`);
+    console.log(`🖼️ Estilo de miniatura: ${thumbnailStyle || 'default'}`);
+    console.log(`🌐 Idioma objetivo de metadata: ${targetLanguage}`);
+
+    // Combinar todas las secciones en un resumen
+    const fullScript = allSections.join('\n\n--- SECCIÓN ---\n\n');
+
+    // Obtener instrucciones de estilo de miniatura
+    const thumbnailInstructions = getThumbnailStyleInstructions(thumbnailStyle || 'default');
+    
+    console.log(`🎨 thumbnailStyle recibido:`, thumbnailStyle);
+    console.log(`📝 thumbnailInstructions generadas:`, thumbnailInstructions);
+
+    const prompt = buildYouTubeMetadataPrompt({
+      topic,
+      fullScript,
+      thumbnailInstructions,
+      targetLanguage
+    });
+
+  const { model } = await getGoogleAI("gemini-2.0-flash-exp", { context: 'llm' });
     
     const response = await model.generateContent([{ text: prompt }]);
     const responseText = response.response.text();
@@ -10071,30 +11842,16 @@ tag1, tag2, tag3, ...
         console.log('Prompts problemáticos:', incompletePrompts);
         
         // Regenerar solo la sección de prompts
-        const regeneratePrompt = `
-Genera EXACTAMENTE 5 prompts completos para miniaturas de YouTube sobre: ${topic}
-
-FORMATO OBLIGATORIO para cada prompt:
-"Miniatura de YouTube 16:9 mostrando [descripción visual muy detallada, mínimo 20 palabras] con texto superpuesto '[frase clickbait específica]' con el texto aplicando el siguiente estilo: ${thumbnailInstructions}"
-
-REGLAS ESTRICTAS:
-- Cada prompt debe tener mínimo 30 palabras
-- NUNCA generar "el texto con contorno negro y muy brillante el texto"
-- TODOS deben incluir la frase completa del estilo al final
-- Numerar del 1 al 5
-
-1. [prompt completo]
-2. [prompt completo]
-3. [prompt completo]
-4. [prompt completo]
-5. [prompt completo]
-        `;
+        const regeneratePrompt = buildThumbnailRegenerationPrompt({
+          topic,
+          thumbnailInstructions,
+          targetLanguage
+        });
         
-        const { model: regenerateModel } = await getGoogleAI("gemini-2.0-flash-exp");
-        const regenerateResponse = await regenerateModel.generateContent([{
-          role: "user",
-          parts: [{ text: regeneratePrompt }]
-        }]);
+  const { model: regenerateModel } = await getGoogleAI("gemini-2.0-flash-exp", { context: 'llm' });
+        const regenerateResponse = await regenerateModel.generateContent([
+          { text: regeneratePrompt }
+        ]);
         
         // Reemplazar la sección de prompts en la respuesta original
         const newThumbnailPrompts = regenerateResponse.response.text().trim();
@@ -10129,6 +11886,7 @@ REGLAS ESTRICTAS:
 Tema: ${topic}
 Número de secciones: ${allSections.length}
 ${folderName ? `Nombre del proyecto: ${folderName}` : ''}
+Idioma de metadata: ${targetLanguage === 'en' ? 'Inglés' : 'Español'}
 Fecha de generación: ${new Date().toLocaleString()}
 
 CONTENIDO DE METADATA:
@@ -10148,7 +11906,8 @@ Generado automáticamente por el sistema de creación de contenido
         return res.json({ 
           success: true, 
           metadata: updatedResponse,
-          message: 'Metadata generada exitosamente (con prompts corregidos)' 
+          message: 'Metadata generada exitosamente (con prompts corregidos)',
+          language: targetLanguage
         });
       }
     }
@@ -10182,6 +11941,7 @@ Generado automáticamente por el sistema de creación de contenido
 Tema: ${topic}
 Número de secciones: ${allSections.length}
 ${folderName ? `Nombre del proyecto: ${folderName}` : ''}
+Idioma de metadata: ${targetLanguage === 'en' ? 'Inglés' : 'Español'}
 Fecha de generación: ${new Date().toLocaleString()}
 
 CONTENIDO DE METADATA:
@@ -10203,7 +11963,8 @@ Generado automáticamente por el sistema de creación de contenido
       success: true,
       metadata: responseText,
       topic: topic,
-      sectionsCount: allSections.length
+      sectionsCount: allSections.length,
+      language: targetLanguage
     });
 
   } catch (error) {

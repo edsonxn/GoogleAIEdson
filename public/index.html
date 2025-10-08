@@ -428,22 +428,41 @@
     </div>
     
     <div class="main-form">
-      <!-- Campos principales (topic y folder) -->
+      <!-- Campos principales (topics y carpetas) -->
       <div class="primary-fields">
-        <div class="field-group">
-          <label for="folderName" class="field-label">
-            <i class="fas fa-folder"></i>
-            Carpeta:
-          </label>
-          <input type="text" id="folderName" class="field-input" placeholder="Ej: lore_de_los_kokiri" />
-        </div>
-        
-        <div class="field-group topic-group">
-          <label for="prompt" class="field-label">
-            <i class="fas fa-edit"></i>
-            Tema del Guión:
-          </label>
-          <textarea id="prompt" class="topic-textarea" rows="3" placeholder="Describe tu guión... Ej: 'Lore de Saria en Zelda Ocarina of Time'"></textarea>
+        <div class="project-list-card">
+          <div class="project-list-header">
+            <div class="project-list-title">
+              <i class="fas fa-folder-tree"></i>
+              <span>Carpetas y temas</span>
+            </div>
+            <div class="project-header-actions">
+              <button id="addProjectEntryBtn" type="button" class="project-add-btn">
+                <i class="fas fa-plus"></i>
+                <span>Agregar tema</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="project-entry primary-project" data-project-index="0">
+            <div class="field-group">
+              <label for="folderName" class="field-label">
+                <i class="fas fa-folder"></i>
+                Carpeta:
+              </label>
+              <input type="text" id="folderName" class="field-input project-folder-input" placeholder="Ej: lore_de_los_kokiri" data-project-role="folder" />
+            </div>
+
+            <div class="field-group topic-group">
+              <label for="prompt" class="field-label">
+                <i class="fas fa-edit"></i>
+                Tema del Guión:
+              </label>
+              <textarea id="prompt" class="topic-textarea project-topic-input" rows="3" placeholder="Describe tu guión... Ej: 'Lore de Saria en Zelda Ocarina of Time'" data-project-role="topic"></textarea>
+            </div>
+          </div>
+
+          <div id="additionalProjectsContainer" class="project-entry-list"></div>
         </div>
       </div>
 
@@ -526,6 +545,16 @@
           </div>
 
           <div class="field-group">
+            <label for="imageModelSelect" class="field-label">
+              <i class="fas fa-robot"></i> Modelo de Imagen:
+            </label>
+            <select id="imageModelSelect" class="field-select">
+              <option value="gemini2" selected>Gemini 2.0 Flash</option>
+              <option value="gemini25">Gemini 2.5 Flash (Nuevo)</option>
+            </select>
+          </div>
+
+          <div class="field-group">
             <label for="llmModelSelect" class="field-label">
               <i class="fas fa-brain"></i> Modelo LLM:
             </label>
@@ -592,6 +621,16 @@
               </select>
             </div>
 
+            <div class="checkbox-group nested-checkbox" style="margin-top: 4px;">
+              <label class="checkbox-label" for="randomGoogleVoice">
+                <input type="checkbox" id="randomGoogleVoice" class="checkbox-input">
+                <span class="checkbox-custom"></span>
+                <i class="fas fa-random"></i>
+                Voz aleatoria por proyecto
+              </label>
+              <p class="checkbox-hint">Asigna una voz distinta de la lista para cada guión generado.</p>
+            </div>
+
             <div class="field-group">
               <label for="narrationStyle" class="field-label">
                 <i class="fas fa-theater-masks"></i> Estilo:
@@ -626,6 +665,10 @@
               <select id="applioModelSelect" class="field-select">
                 <option value="fr-FR-RemyMultilingualNeural" selected>fr-FR-RemyMultilingualNeural</option>
                 <option value="es-VE-SebastianNeural">es-VE-SebastianNeural</option>
+                <option value="en-US-AndrewNeural">en-US-AndrewNeural</option>
+                <option value="en-GB-RyanNeural">en-GB-RyanNeural</option>
+
+
               </select>
             </div>
             
