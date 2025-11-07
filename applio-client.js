@@ -27,9 +27,10 @@ class ApplioClient {
 
         console.log(`\n🎬 Iniciando TTS: «${text.substring(0, 100)}...»`);
         console.log(`🎛️ Modelo: ${model}`);
-        console.log(`🎤 Voz: ${voicePath}`);
-        console.log(`🎵 Pitch: ${pitch}`);
-        console.log(`🔑 Session: ${this.sessionHash}\n`);
+            console.log(`🎤 Voz: ${voicePath}`);
+            console.log(`🚀 Velocidad: ${speed}`);
+            console.log(`🎵 Pitch: ${pitch}`);
+            console.log(`🔑 Session: ${this.sessionHash}\n`);
 
         try {
             // Obtener timestamp del archivo antes de la solicitud
@@ -41,8 +42,8 @@ class ApplioClient {
                 "",                             // speaker_wav
                 text,                           // input_text
                 model,                          // model_name  
+                speed,                          // speed
                 pitch,                          // pitch
-                0,                              // filter_radius
                 0.75,                           // index_rate
                 1,                              // volume_envelope
                 0.5,                            // protect
@@ -61,7 +62,7 @@ class ApplioClient {
                 "WAV",                          // export_format
                 "contentvec",                   // embedder_model
                 null,                           // custom_model
-                speed                           // speed
+                0                               // legacy placeholder (UI expects fixed value)
             ];
 
             const joinPayload = {

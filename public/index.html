@@ -521,6 +521,7 @@
               <option value="3">3 Imágenes</option>
               <option value="4">4 Imágenes</option>
               <option value="5">5 Imágenes</option>
+              <option value="8">8 Imágenes</option>
               <option value="10"selected>10 Imágenes</option>
               <option value="15">15 Imágenes</option>
               <option value="20">20 Imágenes</option>
@@ -667,11 +668,25 @@
                 <option value="es-VE-SebastianNeural">es-VE-SebastianNeural</option>
                 <option value="en-US-AndrewNeural">en-US-AndrewNeural</option>
                 <option value="en-GB-RyanNeural">en-GB-RyanNeural</option>
+                <option value="en-US-AndrewMultilingualNeural">en-US-AndrewMultilingualNeural</option>
 
 
               </select>
             </div>
             
+            <!-- Control de Velocidad -->
+            <div class="field-group" style="margin-top: 15px;">
+              <label for="applioSpeed" class="field-label">
+                <i class="fas fa-tachometer-alt"></i> Velocidad: <span id="speedValue">0</span>
+              </label>
+              <input type="range" id="applioSpeed" class="pitch-slider" min="-20" max="20" value="0" step="1">
+              <div class="pitch-labels">
+                <span>-20</span>
+                <span>0</span>
+                <span>+20</span>
+              </div>
+            </div>
+
             <!-- Control de Pitch -->
             <div class="field-group" style="margin-top: 15px;">
               <label for="applioPitch" class="field-label">
@@ -724,7 +739,7 @@
             <label for="promptModifier" class="field-label">
               <i class="fas fa-magic"></i> Instrucciones para Imágenes:
             </label>
-            <textarea id="promptModifier" class="field-textarea" rows="4" placeholder="Personaliza el estilo visual de las imágenes generadas...">Cartoonish, dramatic 2D, with a hand-drawn appearance, bold lines, flat shading with painted textures, visible pencil strokes, and imperfect coloring. A dark and melancholic atmosphere, inspired by graphic novels, with chiaroscuro effects and cinematic compositing</textarea>
+            <textarea id="promptModifier" class="field-textarea" rows="4" placeholder="Personaliza el estilo visual de las imágenes generadas...">Low poly style, Dark, Oscuro</textarea>
           </div>
 
           <div class="field-group">
@@ -757,11 +772,6 @@
           <span>Generar Sección 1</span>
         </button>
 
-        <button id="continueBtn" class="btn btn-secondary" style="display: none;">
-          <i class="fas fa-forward"></i>
-          <span>Continuar Sección 2</span>
-        </button>
-
         <button id="generateAudioBtn" class="btn btn-audio" style="display: none;">
           <i class="fas fa-microphone"></i>
           <span>Generar Audio</span>
@@ -787,8 +797,8 @@
         </div>
 
         <div class="progress-bar-wrapper">
-          <div class="progress-bar" id="progressBar">
-            <div class="progress-fill" id="progressFill" style="width: 0%;"></div>
+          <div class="progress-capsules" id="progressCapsules">
+            <!-- Cápsulas se generarán dinámicamente -->
           </div>
         </div>
 
@@ -867,6 +877,17 @@
             <!-- Botones dinámicos por sección -->
           </div>
         </div>
+
+        <div id="clipProgressContainer" class="clip-progress-container" style="display: none;">
+          <div class="clip-progress-header">
+            <i class="fas fa-chart-bar"></i>
+            <span>Progreso de clips por sección</span>
+          </div>
+          <div id="clipProgressSummary" class="clip-progress-summary">Preparando progreso...</div>
+          <div id="clipProgressColumns" class="clip-progress-columns">
+            <!-- Columnas de progreso dinámicas -->
+          </div>
+        </div>
         
         <button id="regenerateApplioAudiosBtn" class="regenerate-audio-btn" style="display: none;">
           <i class="fas fa-microphone-alt"></i>
@@ -910,6 +931,17 @@
           </div>
           <div id="sectionImagesButtons" class="section-images-grid">
             <!-- Botones dinámicos por sección -->
+          </div>
+        </div>
+
+        <div id="sectionImagesProgressContainer" class="section-images-progress" style="display: none;">
+          <div class="section-images-progress-header">
+            <i class="fas fa-bars-progress"></i>
+            <span>Progreso de imágenes por sección</span>
+            <span id="sectionImagesProgressSummary" class="section-images-progress-summary">Sin datos</span>
+          </div>
+          <div id="sectionImagesProgressBars" class="section-images-progress-bars">
+            <!-- Barras de progreso por sección -->
           </div>
         </div>
         
@@ -1240,7 +1272,7 @@
     </div>
   </div>
 
-  <script src="script.js?v=20250917_1"></script>
+  <script src="script.js?v=20251012_4"></script>
   
   <!-- Script inline para forzar eventos de proyectos -->
   <script>

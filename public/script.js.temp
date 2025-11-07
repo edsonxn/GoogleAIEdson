@@ -76,18 +76,6 @@ const clipProgressUiState = {
 let isGeneratingImages = false;
 let isCancellingImages = false;
 
-const sectionImageProgressState = {
-  container: null,
-  barsWrapper: null,
-  summary: null,
-  updateToken: 0,
-  activeSection: null,
-  lastRenderedStats: []
-};
-
-let sectionImageProgressPollInterval = null;
-const SECTION_IMAGE_PROGRESS_POLL_MS = 1500;
-
 // ================================
 // GESTOR DE PROYECTOS MÚLTIPLES
 // ================================
@@ -237,20 +225,24 @@ function collectProjectEntries() {
   return projects;
 }
 
-function createSafeFolderName(topic) {
-  if (!topic || typeof topic !== 'string') {
-    console.warn('⚠️ createSafeFolderName recibió valor inválido:', topic);
-    return 'proyecto_sin_nombre';
+function createSafeFolderName(input) {
+  const normalized = (input || '')
+    .toString()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+
+  const cleaned = normalized
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_|_$/g, '')
+    .substring(0, 60);
+
+  if (cleaned.length > 0) {
+    return cleaned;
   }
-  
-  const safeName = topic
-    .toLowerCase()
-    .replace(/[^a-z0-9\s_]/g, '') // Remover caracteres especiales, mantener guiones bajos
-    .replace(/\s+/g, '_') // Reemplazar espacios con guiones bajos
-    .substring(0, 50); // Limitar longitud
-    
-  console.log(`📁 createSafeFolderName: "${topic}" → "${safeName}"`);
-  return safeName;
+
+  return `project_${Date.now()}`;
 }
 
 function normalizeProjectEntries(rawEntries = []) {
@@ -294,10 +286,10 @@ function normalizeProjectEntries(rawEntries = []) {
 
 function triggerParallelProjectGeneration(projects, sharedConfig) {
   if (!Array.isArray(projects) || !projects.length) {
-    return Promise.resolve();
+    return;
   }
 
-  return (async () => {
+  (async () => {
     try {
       console.log('🚀 Lanzando generación paralela para proyectos adicionales:', {
         proyectos: projects,
@@ -329,16 +321,6 @@ function triggerParallelProjectGeneration(projects, sharedConfig) {
 
       if (!response.ok || !result?.success) {
         throw new Error(result?.error || 'Error iniciando proyectos adicionales');
-      }
-
-      // Actualizar las claves de proyecto con las correctas del backend
-      if (result.projects && Array.isArray(result.projects)) {
-        result.projects.forEach((backendProject, index) => {
-          if (projects[index] && backendProject.projectKey) {
-            projects[index].projectKey = backendProject.projectKey;
-            console.log(`🔑 Actualizada clave de proyecto ${index + 1}: ${projects[index].folderName} → ${backendProject.projectKey}`);
-          }
-        });
       }
 
       const folderSummary = projects.map(project => {
@@ -1229,26 +1211,6 @@ function initializeAudioCapsules(containerId, totalSections) {
   }
 }
 
-function initializeImageCapsules(projectKey, totalSections, imagesPerSection) {
-  for (let section = 1; section <= totalSections; section++) {
-    const containerId = `imageCapsules-${projectKey}-section${section}`;
-    const imageCapsules = document.getElementById(containerId);
-    if (!imageCapsules) continue;
-    
-    // Limpiar cápsulas existentes
-    imageCapsules.innerHTML = '';
-    
-    // Crear cápsulas para cada imagen en la sección
-    for (let i = 0; i < imagesPerSection; i++) {
-      const capsule = document.createElement('div');
-      capsule.className = 'capsule image-capsule';
-      capsule.dataset.sectionIndex = section - 1;
-      capsule.dataset.imageIndex = i;
-      imageCapsules.appendChild(capsule);
-    }
-  }
-}
-
 // Actualizar cápsulas de audio
 function updateAudioCapsules(currentStep, totalSteps, containerId) {
   const audioCapsules = document.getElementById(containerId);
@@ -1266,32 +1228,11 @@ function updateAudioCapsules(currentStep, totalSteps, containerId) {
   });
 }
 
-// Actualizar cápsulas de imágenes para una sección específica
-function updateImageCapsules(projectKey, sectionIndex, completedImages, totalImages) {
-  const containerId = `imageCapsules-${projectKey}-section${sectionIndex + 1}`;
-  const imageCapsules = document.getElementById(containerId);
-  if (!imageCapsules) return;
-  
-  const capsules = imageCapsules.querySelectorAll('.image-capsule');
-  
-  // Marcar cápsulas completadas
-  capsules.forEach((capsule, index) => {
-    if (index < completedImages) {
-      capsule.classList.add('completed');
-    } else {
-      capsule.classList.remove('completed');
-    }
-  });
-}
-
 // Contenedores de progreso por proyecto
 let projectProgressContainers = new Map();
 
-// Mapa para almacenar projectData por projectKey
-let projectDataMap = new Map();
-
 // Crear contenedor de progreso para un proyecto específico
-function createProjectProgressContainer(projectKey, projectName, totalSections, includeAudioProgress = false, includeImagesProgress = false, imagesPerSection = 10, projectData = null) {
+function createProjectProgressContainer(projectKey, projectName, totalSections, includeAudioProgress = false) {
   const container = document.createElement('div');
   container.className = 'project-progress-container';
   container.id = `progress-${projectKey}`;
@@ -1310,40 +1251,6 @@ function createProjectProgressContainer(projectKey, projectName, totalSections, 
       </div>
       <div class="audio-progress-info">
         <span class="audio-current-task">Esperando generación de guiones...</span>
-      </div>
-    </div>
-    `;
-  }
-  
-  let imagesProgressHTML = '';
-  if (includeImagesProgress) {
-    let imagesBarsHTML = '';
-    for (let section = 1; section <= totalSections; section++) {
-      imagesBarsHTML += `
-        <div class="image-section-bar">
-          <div class="image-section-header">
-            <i class="fas fa-image"></i>
-            <span>Sección ${section}</span>
-          </div>
-          <div class="progress-capsules image-capsules" id="imageCapsules-${projectKey}-section${section}" data-section="${section}">
-            <!-- Cápsulas de imágenes se generarán dinámicamente -->
-          </div>
-        </div>
-      `;
-    }
-    
-    imagesProgressHTML = `
-    <div class="images-progress-wrapper">
-      <div class="images-progress-header">
-        <i class="fas fa-images"></i>
-        <span>Progreso de Imágenes</span>
-        <span class="images-percentage">0%</span>
-      </div>
-      <div class="images-sections-container">
-        ${imagesBarsHTML}
-      </div>
-      <div class="images-progress-info">
-        <span class="images-current-task">Esperando generación de guiones...</span>
       </div>
     </div>
     `;
@@ -1369,16 +1276,6 @@ function createProjectProgressContainer(projectKey, projectName, totalSections, 
       <span class="project-current-task">Preparando...</span>
     </div>
     ${audioProgressHTML}
-    ${imagesProgressHTML}
-    <div class="project-section-images-container" id="sectionImagesContainer-${projectKey}" style="display: none;">
-      <div class="section-images-header">
-        <i class="fas fa-images"></i>
-        <span>Generar imágenes por sección</span>
-      </div>
-      <div id="sectionImagesButtons-${projectKey}" class="section-images-grid">
-        <!-- Botones de sección se generarán dinámicamente -->
-      </div>
-    </div>
   `;
 
   // Agregar al DOM
@@ -1393,15 +1290,9 @@ function createProjectProgressContainer(projectKey, projectName, totalSections, 
     if (includeAudioProgress) {
       initializeAudioCapsules(`audioCapsules-${projectKey}`, totalSections);
     }
-    if (includeImagesProgress) {
-      initializeImageCapsules(projectKey, totalSections, imagesPerSection);
-    }
   }, 100);
 
   projectProgressContainers.set(projectKey, container);
-  if (projectData) {
-    projectDataMap.set(projectKey, projectData);
-  }
   return container;
 }
 
@@ -1414,7 +1305,7 @@ function updateProjectProgress(projectKey, data) {
     return;
   }
 
-  const { percentage, phase, currentStep, totalSteps, currentTask, audioProgress, imagesProgress } = data;
+  const { percentage, phase, currentStep, totalSteps, currentTask, audioProgress } = data;
 
   // Actualizar porcentaje principal
   const percentageElement = container.querySelector('.project-percentage');
@@ -1438,21 +1329,6 @@ function updateProjectProgress(projectKey, data) {
     }
   }
 
-  // Actualizar porcentaje de imágenes si existe
-  if (imagesProgress) {
-    const imagesPercentageElement = container.querySelector('.images-percentage');
-    if (imagesPercentageElement) {
-      const normalizedImagesPercentage = Math.round(clampPercentage(imagesProgress.percentage) || 0);
-      imagesPercentageElement.textContent = `${normalizedImagesPercentage}%`;
-    }
-
-    // Actualizar tarea de imágenes
-    const imagesTaskElement = container.querySelector('.images-current-task');
-    if (imagesTaskElement) {
-      imagesTaskElement.textContent = imagesProgress.currentTask || 'Generando imágenes...';
-    }
-  }
-
   // Actualizar fase
   const phaseElement = container.querySelector('.project-phase');
   if (phaseElement) {
@@ -1463,37 +1339,6 @@ function updateProjectProgress(projectKey, data) {
       completed: 'Completado'
     };
     phaseElement.textContent = phaseNames[phase] || 'Procesando...';
-  }
-
-  // Mostrar botones de sección cuando el proyecto esté completado o cuando los audios estén terminados
-  const sectionImagesContainer = container.querySelector(`#sectionImagesContainer-${projectKey}`);
-  const sectionImagesButtons = container.querySelector(`#sectionImagesButtons-${projectKey}`);
-  if (sectionImagesContainer && sectionImagesButtons) {
-    const shouldShowButtons = phase === 'completed' || (phase === 'audio' && audioProgress && audioProgress.percentage >= 100);
-    if (shouldShowButtons) {
-      const projectData = projectDataMap.get(projectKey);
-      const sectionNumbers = getAvailableSectionNumbers(projectData);
-      if (sectionNumbers.length > 0) {
-        sectionImagesContainer.style.display = 'block';
-        sectionImagesButtons.innerHTML = '';
-        sectionNumbers.forEach((sectionNumber) => {
-          const button = document.createElement('button');
-          button.className = 'section-image-btn';
-          button.dataset.sectionNumber = sectionNumber.toString();
-          button.innerHTML = `
-            <i class="fas fa-images"></i>
-            <span>Sección ${sectionNumber}</span>
-          `;
-          button.disabled = !!isGeneratingImages;
-          button.addEventListener('click', (event) => handleProjectSectionImageButtonClick(event, projectKey, sectionNumber));
-          sectionImagesButtons.appendChild(button);
-        });
-      } else {
-        sectionImagesContainer.style.display = 'none';
-      }
-    } else {
-      sectionImagesContainer.style.display = 'none';
-    }
   }
 
   // Actualizar tarea actual
@@ -1521,13 +1366,6 @@ function updateProjectProgress(projectKey, data) {
   // Actualizar cápsulas de audio si tenemos progreso de audio específico
   if (audioProgress && audioProgress.currentStep !== undefined) {
     updateAudioCapsules(audioProgress.currentStep, audioProgress.totalSteps || totalSteps, `audioCapsules-${projectKey}`);
-  }
-
-  // Actualizar cápsulas de imágenes si tenemos progreso de imágenes específico
-  if (imagesProgress && imagesProgress.sections) {
-    imagesProgress.sections.forEach((sectionProgress, sectionIndex) => {
-      updateImageCapsules(projectKey, sectionIndex, sectionProgress.completedImages, sectionProgress.totalImages);
-    });
   }
 }
 
@@ -2027,28 +1865,11 @@ document.addEventListener('DOMContentLoaded', function() {
     console.error('❌ No se encontró la casilla de Applio');
   }
 
-  // Inicializar control de velocidad
-  const speedSlider = document.getElementById('applioSpeed');
-  const speedValue = document.getElementById('speedValue');
-
-  if (speedSlider && speedValue) {
-    speedValue.textContent = speedSlider.value;
-    speedSlider.addEventListener('input', function() {
-      speedValue.textContent = this.value;
-      console.log(`🚀 Velocidad ajustada a: ${this.value}`);
-    });
-
-    console.log('✅ Control de velocidad inicializado');
-  } else {
-    console.error('❌ No se encontraron elementos del control de velocidad');
-  }
-
   // Inicializar control de pitch
   const pitchSlider = document.getElementById('applioPitch');
   const pitchValue = document.getElementById('pitchValue');
   
   if (pitchSlider && pitchValue) {
-    pitchValue.textContent = pitchSlider.value;
     pitchSlider.addEventListener('input', function() {
       pitchValue.textContent = this.value;
       console.log(`🎵 Pitch ajustado a: ${this.value}`);
@@ -2315,11 +2136,10 @@ async function runAutoGeneration() {
   console.log("  - Skip Images:", skipImages);
   
   const generateAudio = document.getElementById("autoGenerateAudio").checked;
-  let generateApplioAudio = document.getElementById("autoGenerateApplioAudio").checked;
+  const generateApplioAudio = document.getElementById("autoGenerateApplioAudio").checked;
   const selectedApplioVoice = document.getElementById("applioVoiceSelect").value;
   const selectedApplioModel = document.getElementById("applioModelSelect").value;
   const applioPitch = parseInt(document.getElementById("applioPitch").value) || 0;
-  const applioSpeed = parseInt(document.getElementById("applioSpeed").value) || 0;
 
   const applioQueueRunId = generateApplioAudio
     ? `applio-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`
@@ -2373,12 +2193,6 @@ async function runAutoGeneration() {
   // Prioridad: Si está activada IA Local, usar ComfyUI; si está Google Images, usar APIs de Google
   console.log(`🔊 Generación de audio Google: ${generateAudio ? 'ACTIVADA' : 'DESACTIVADA'}`);
   console.log(`🎤 Generación de audio Applio: ${generateApplioAudio ? 'ACTIVADA' : 'DESACTIVADA'}`);
-  if (generateApplioAudio) {
-    console.log(`🎙️ Voz Applio seleccionada: ${selectedApplioVoice}`);
-    console.log(`🎚️ Modelo Applio: ${selectedApplioModel}`);
-    console.log(`🚀 Velocidad Applio: ${applioSpeed}`);
-    console.log(`🎵 Pitch Applio: ${applioPitch}`);
-  }
   console.log(`🎭 Estilo de narración solicitado: ${narrationStyle || 'Sin estilo personalizado'}`);
   console.log(`🖼️ Imágenes de Google: ${googleImages ? 'ACTIVADA' : 'DESACTIVADA'}`);
   console.log(`🧠 Imágenes IA Local: ${localAIImages ? 'ACTIVADA' : 'DESACTIVADA'}`);
@@ -2446,21 +2260,17 @@ async function runAutoGeneration() {
   // Determinar si incluir barra de progreso de audio
   const includeAudioProgress = generateAudio || generateApplioAudio;
   
-  // Determinar si incluir barra de progreso de imágenes
-  const includeImagesProgress = !skipImages && (googleImages || localAIImages);
-  const imagesPerSection = imageCount || 10;
-  
   // Crear contenedor para el proyecto principal
   createProjectProgressContainer(primaryProject.folderName, primaryProject.topic.length > 50 ? 
-    `${primaryProject.topic.slice(0, 47)}...` : primaryProject.topic, totalSections, includeAudioProgress, includeImagesProgress, imagesPerSection, primaryProject);
+    `${primaryProject.topic.slice(0, 47)}...` : primaryProject.topic, totalSections, includeAudioProgress);
   
   // Crear contenedores para proyectos paralelos
   parallelProjectsWithVoices.forEach((project, index) => {
-    const projectKey = project.projectKey || createSafeFolderName(project.folderName || project.topic);
+    const projectKey = project.folderName || createSafeFolderName(project.topic);
     const displayName = project.topic.length > 50 ? 
       `${project.topic.slice(0, 47)}...` : project.topic;
     console.log(`📦 Creando contenedor para proyecto paralelo ${index + 1}/${parallelProjectsWithVoices.length}: ${projectKey} (${displayName})`);
-    createProjectProgressContainer(projectKey, displayName, totalSections, includeAudioProgress, includeImagesProgress, imagesPerSection, project);
+    createProjectProgressContainer(projectKey, displayName, totalSections, includeAudioProgress);
   });
   
   // Mostrar el contenedor de progreso principal (opcional, ya que ahora tenemos individuales)
@@ -2507,13 +2317,11 @@ async function runAutoGeneration() {
         applioVoice: selectedApplioVoice,
         applioModel: selectedApplioModel,
         applioPitch,
-        applioSpeed,
         applioQueueRunId,
         applioQueueOffset: generateApplioAudio ? 1 : 0
       };
 
-      // Esperar a que se complete la inicialización de proyectos paralelos
-      await triggerParallelProjectGeneration(parallelProjectsWithVoices, sharedParallelConfig);
+      triggerParallelProjectGeneration(parallelProjectsWithVoices, sharedParallelConfig);
     }
     
     // ===============================================================
@@ -2525,7 +2333,7 @@ async function runAutoGeneration() {
     console.log('📊 Iniciando seguimiento de progreso para todos los proyectos...');
     
     // Iniciar polling para el proyecto principal
-    const primaryProjectKey = (primaryProject.folderName || '').trim() || createSafeFolderName(primaryProject.topic);
+    const primaryProjectKey = primaryProject.folderName || createSafeFolderName(primaryProject.topic);
     
     // Actualizar progreso inicial del proyecto principal
     updateProjectProgress(primaryProjectKey, {
@@ -2541,18 +2349,14 @@ async function runAutoGeneration() {
       updateProjectProgress(primaryProjectKey, progressData);
     });
     
-    // Iniciar polling para proyectos paralelos con un pequeño delay para dar tiempo a que se guarden los archivos
+    // Iniciar polling para proyectos paralelos
     parallelProjectsWithVoices.forEach((project, index) => {
-      const projectKey = project.projectKey || (project.folderName || '').trim() || createSafeFolderName(project.topic);
+      const projectKey = project.folderName || createSafeFolderName(project.topic);
       console.log(`🚀 Iniciando polling para proyecto paralelo ${index + 1}/${parallelProjectsWithVoices.length}: ${projectKey} (topic: ${project.topic})`);
-      
-      // Agregar delay progresivo para evitar sobrecargar el servidor
-      setTimeout(() => {
-        startProgressPolling(projectKey, (progressData) => {
-          console.log(`📊 Callback ejecutado para proyecto ${projectKey}:`, progressData);
-          updateProjectProgress(projectKey, progressData);
-        });
-      }, index * 1000); // 1 segundo de delay por proyecto
+      startProgressPolling(projectKey, (progressData) => {
+        console.log(`📊 Callback ejecutado para proyecto ${projectKey}:`, progressData);
+        updateProjectProgress(projectKey, progressData);
+      });
     });
     
     const phase1Response = await fetch("/generate-batch-automatic", {
@@ -2579,7 +2383,6 @@ async function runAutoGeneration() {
         applioVoice: selectedApplioVoice,
         applioModel: selectedApplioModel,
         applioPitch: applioPitch,
-        applioSpeed: applioSpeed,
         useApplio: generateApplioAudio
       })
     });
@@ -2598,9 +2401,12 @@ async function runAutoGeneration() {
     // El polling ya se inició antes de la generación
     console.log('📊 Polling ya activo para proyecto:', projectData.projectKey);
     
-    // IMPORTANTE: Para el proceso automático, determinar qué tipo de audio generar
+    // IMPORTANTE: Para el proceso automático, forzar generación de audio si useApplio era true
     const shouldGenerateAudio = generateAudio || generateApplioAudio || (selectedApplioVoice && selectedApplioVoice !== '');
-    // No forzar generateApplioAudio=true, respetar la selección del usuario
+    if (!generateApplioAudio && shouldGenerateAudio) {
+      console.log('🔧 Activando generación automática de audio para proceso automático');
+      generateApplioAudio = true;
+    }
     
     // Mostrar los guiones generados en la UI
     allSections = projectData.sections.map(section => {
@@ -2695,8 +2501,7 @@ async function runAutoGeneration() {
   randomGoogleVoice: useRandomVoices,
       applioVoice: selectedApplioVoice,
       applioModel: selectedApplioModel,
-    applioPitch: applioPitch,
-    applioSpeed: applioSpeed,
+      applioPitch: applioPitch,
       applioQueueRunId,
       googleImages,
       localAIImages,
@@ -2711,9 +2516,7 @@ async function runAutoGeneration() {
     };
 
     updateSectionClipButtons(window.currentProject);
-    syncSectionImageProgressFromProject(window.currentProject);
     updateSectionImageButtons(window.currentProject);
-    startSectionImageProgressPolling(window.currentProject);
     updateYouTubeMetadataButtonState();
     
     // =============================================================== 
@@ -2858,7 +2661,6 @@ async function runAutoGeneration() {
           applioVoice: selectedApplioVoice,
           applioModel: selectedApplioModel,
           applioPitch: applioPitch,
-          applioSpeed: applioSpeed,
           narrationStyle: narrationStyle,
           scriptStyle: projectData.scriptStyle,
           customStyleInstructions: projectData.customStyleInstructions,
@@ -2899,7 +2701,6 @@ async function runAutoGeneration() {
             applioVoice: selectedApplioVoice,
             applioModel: selectedApplioModel,
             applioPitch: applioPitch,
-            applioSpeed: applioSpeed,
             narrationStyle: narrationStyle,
             scriptStyle: projectData.scriptStyle,
             customStyleInstructions: projectData.customStyleInstructions,
@@ -3033,8 +2834,7 @@ async function runAutoGeneration() {
               currentSection: sectionNum,
               applioVoice: project.applioVoice,
               applioModel: project.applioModel,
-              applioPitch: project.applioPitch,
-              applioSpeed: project.applioSpeed
+              applioPitch: project.applioPitch
             } : {
               script: scriptContent,
               voice: project.voice,
@@ -3293,7 +3093,6 @@ async function generateSectionContent(section, params) {
         applioVoice: params.selectedApplioVoice,
         applioModel: params.selectedApplioModel,
         applioPitch: params.applioPitch,
-        applioSpeed: params.applioSpeed,
         allSections: allSections
       })
     });
@@ -3347,11 +3146,9 @@ async function generateSectionApplioAudio(section) {
     const selectedApplioVoice = document.getElementById("applioVoiceSelect").value;
     const selectedApplioModel = document.getElementById("applioModelSelect").value;
     const applioPitch = parseInt(document.getElementById("applioPitch").value) || 0;
-    const applioSpeed = parseInt(document.getElementById("applioSpeed").value) || 0;
     console.log(`🎤 Usando voz de Applio: ${selectedApplioVoice}`);
     console.log(`🎛️ Usando modelo de Applio: ${selectedApplioModel}`);
     console.log(`🎵 Usando pitch: ${applioPitch}`);
-    console.log(`🚀 Usando velocidad: ${applioSpeed}`);
     
     const response = await fetch("/generate-section-audio", {
       method: "POST",
@@ -3364,8 +3161,7 @@ async function generateSectionApplioAudio(section) {
         voice: "fr-FR-RemyMultilingualNeural", // Voz de TTS (se mantiene)
         applioVoice: selectedApplioVoice, // Voz del modelo de Applio
         applioModel: selectedApplioModel, // Modelo TTS de Applio
-        applioPitch: applioPitch, // Pitch para Applio
-        applioSpeed: applioSpeed
+        applioPitch: applioPitch // Pitch para Applio
       })
     });
 
@@ -3552,46 +3348,6 @@ async function displaySectionContent(data, section) {
           allSections[section - 1].imageMode = 'prompts';
           console.log(`💾 Datos de prompts guardados para sección ${section}`);
         }
-      }
-
-      const sectionNumber = Number(section);
-      if (Number.isInteger(sectionNumber) && sectionNumber > 0) {
-        const primaryPrompts = Array.isArray(data.imagePrompts) ? data.imagePrompts : [];
-        const secondaryPrompts = !primaryPrompts.length && Array.isArray(data.prompts) ? data.prompts : [];
-        const keywordPrompts = !primaryPrompts.length && !secondaryPrompts.length && Array.isArray(data.imageKeywords)
-          ? data.imageKeywords
-          : [];
-
-        const normalizedPrompts = (primaryPrompts.length ? primaryPrompts : secondaryPrompts.length ? secondaryPrompts : keywordPrompts)
-          .filter((item) => typeof item === 'string' && item.trim().length > 0);
-
-        const candidateImageSets = [
-          Array.isArray(localAIImagesData) ? localAIImagesData : null,
-          Array.isArray(downloadedImages) ? downloadedImages : null,
-          Array.isArray(data.images) ? data.images : null,
-          Array.isArray(data.imageUrls) ? data.imageUrls : null,
-          Array.isArray(data.localAIImages) ? data.localAIImages : null,
-          Array.isArray(data.generatedImages) ? data.generatedImages : null
-        ];
-
-        let imageCount = 0;
-        candidateImageSets.forEach((collection) => {
-          if (Array.isArray(collection) && collection.length > imageCount) {
-            imageCount = collection.length;
-          }
-        });
-
-        updateProjectSectionImageData(sectionNumber, {
-          prompts: normalizedPrompts,
-          imageUrls: Array.isArray(data.imageUrls) ? data.imageUrls : undefined,
-          imageCount,
-          googleImagesMode: Boolean(bingImages || data.googleImagesMode)
-        });
-
-        updateSectionImageProgressStat(sectionNumber, {
-          promptCount: normalizedPrompts.length,
-          imageCount
-        });
       }
       resolve();
     }, 500);
@@ -4859,7 +4615,6 @@ generateBtn.addEventListener("click", async () => {
   const selectedApplioVoice = document.getElementById("applioVoiceSelect").value;
   const selectedApplioModel = document.getElementById("applioModelSelect").value;
   const applioPitch = parseInt(document.getElementById("applioPitch").value) || 0;
-  const applioSpeed = parseInt(document.getElementById("applioSpeed").value) || 0;
   
   console.log("Topic:", topic);
   console.log("Folder Name:", folderName);
@@ -4874,7 +4629,6 @@ generateBtn.addEventListener("click", async () => {
   console.log("Applio Voice:", selectedApplioVoice);
   console.log("Applio Model:", selectedApplioModel);
   console.log("Applio Pitch:", applioPitch);
-  console.log("Applio Speed:", applioSpeed);
   
   if (!topic) {
     console.log("Tema vacío, mostrando error");
@@ -4947,8 +4701,7 @@ generateBtn.addEventListener("click", async () => {
         localAIImages: localAIImages,
         applioVoice: selectedApplioVoice,
         applioModel: selectedApplioModel,
-        applioPitch: applioPitch,
-        applioSpeed: applioSpeed
+        applioPitch: applioPitch
       })
     });
 
@@ -5093,8 +4846,8 @@ generateBtn.addEventListener("click", async () => {
         
         // Mostrar botón correspondiente
         if (!data.isComplete) {
-          continueBtn.style.display = "inline-flex";
-          continueBtn.querySelector('span').textContent = `Continuar con Sección ${data.currentSection + 1}`;
+          // continueBtn.style.display = "inline-flex"; // REMOVED: Botón eliminado
+          // continueBtn.querySelector('span').textContent = `Continuar con Sección ${data.currentSection + 1}`; // REMOVED: Botón eliminado
         }
       }, 1500);
       
@@ -5112,231 +4865,6 @@ generateBtn.addEventListener("click", async () => {
       <span>Generar Sección 1</span>
     `;
   }
-});
-
-// Event listener para el botón de generar audio
-/* COMENTADO: Función del botón continueBtn eliminado
-  console.log('📊 Variables de estado actual:', {
-    currentTopic,
-    currentSectionNumber,
-    totalSections,
-    'window.currentProject?.completedSections?.length': window.currentProject?.completedSections?.length
-  });
-
-  if (!currentTopic || currentSectionNumber >= totalSections) {
-    showError("No se puede continuar. Genera primero una sección o ya has completado todas las secciones.");
-    return;
-  }
-
-  const nextSection = currentSectionNumber + 1;
-  console.log('🎯 Sección que se va a generar:', nextSection);
-  
-  const imageCount = parseInt(document.getElementById("imagesSelect").value);
-  const aspectRatio = document.getElementById("aspectRatioSelect").value;
-  // 🔧 FIX: Usar el folderName del proyecto cargado si existe, sino el del input
-  const folderName = window.currentProject ? window.currentProject.folderName : document.getElementById("folderName").value.trim();
-  console.log('📁 Usando folderName:', folderName, 'desde proyecto cargado:', !!window.currentProject);
-  const selectedStyle = document.getElementById("styleSelect").value;
-  const promptModifier = document.getElementById("promptModifier").value.trim();
-  const selectedImageModel = getSelectedImageModel();
-  const selectedLlmModel = document.getElementById("llmModelSelect").value;
-  let skipImages = document.getElementById("skipImages").checked;
-  let googleImages = document.getElementById("googleImages").checked;
-  
-  // 🔧 VALIDACIÓN: No se puede omitir imágenes Y usar Google Images al mismo tiempo
-  // PERO solo aplicar esta validación si NO estamos cargando un proyecto
-  if (skipImages && googleImages && !isLoadingProject) {
-    console.warn('⚠️ Configuración contradictoria detectada en CONTINUAR: skipImages=true y googleImages=true');
-    console.warn('🔧 Corrigiendo: Desactivando skipImages porque googleImages tiene prioridad');
-    skipImages = false;
-    document.getElementById("skipImages").checked = false;
-    showNotification('⚠️ Corrección automática: No puedes omitir imágenes si usas Google Images', 'warning');
-  } else if (skipImages && googleImages && isLoadingProject) {
-    console.log('📂 Continuando proyecto: Permitiendo skipImages=true y googleImages=true (solo guión + keywords)');
-  }
-  
-  // Deshabilitar botón y mostrar estado de carga
-  continueBtn.disabled = true;
-  continueBtn.innerHTML = `
-    <i class="fas fa-spinner loading"></i>
-    <span>Generando Sección ${nextSection}...</span>
-  `;
-  
-  generateAudioBtn.style.display = "none";
-  
-  showLoadingStages(nextSection, imageCount, skipImages, googleImages, localAIImages);
-
-  try {
-    console.log(`Enviando llamada API para sección ${nextSection}`);
-    const skipImages = document.getElementById("skipImages").checked;
-    const googleImages = document.getElementById("googleImages").checked;
-    const localAIImages = document.getElementById("localAIImages").checked;
-    const currentApplioVoice = document.getElementById("applioVoiceSelect").value;
-    console.log(`Omitir imágenes: ${skipImages}`);
-    const customStyleInstructions = getCustomStyleInstructions(selectedStyle);
-    
-    const response = await fetch("/generate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ 
-        topic: currentTopic, 
-        folderName: folderName,
-        voice: currentVoice,
-        totalSections: totalSections,
-        currentSection: nextSection,
-        scriptStyle: selectedStyle,
-        customStyleInstructions: customStyleInstructions,
-        imageCount: imageCount,
-        aspectRatio: aspectRatio,
-        promptModifier: promptModifier,
-        imageModel: selectedImageModel,
-        llmModel: selectedLlmModel,
-        skipImages: skipImages,
-        googleImages: googleImages,
-        localAIImages: localAIImages,
-        applioVoice: currentApplioVoice
-      })
-    });
-
-    const data = await response.json();
-
-    if (data.script) {
-      // Actualizar etapas completadas (con pequeño delay para asegurar que los elementos existen)
-      setTimeout(() => {
-        updateStage('stage-script', 'completed');
-      }, 100);
-      
-      // Usar los datos del servidor en lugar de leer los checkboxes
-      const serverSkipImages = data.imagesSkipped || false;
-      const serverGoogleImages = data.googleImagesMode || false;
-      
-      console.log(`🔍 DEBUG continueGeneration - skipImages: ${skipImages}`);
-      console.log(`🔍 DEBUG continueGeneration - googleImages: ${googleImages}`);
-      console.log(`🔍 DEBUG continueGeneration - serverSkipImages: ${serverSkipImages}`);
-      console.log(`🔍 DEBUG continueGeneration - serverGoogleImages: ${serverGoogleImages}`);
-      console.log(`🔍 DEBUG continueGeneration - data.imagesSkipped: ${data.imagesSkipped}`);
-      console.log(`🔍 DEBUG continueGeneration - data.googleImagesMode: ${data.googleImagesMode}`);
-      console.log(`🔍 DEBUG continueGeneration - data.images: ${data.images ? data.images.length : 'null'}`);
-      console.log(`🔍 DEBUG continueGeneration - data.imagePrompts: ${data.imagePrompts ? data.imagePrompts.length : 'null'}`);
-      console.log(`🔍 DEBUG continueGeneration - data.downloadedImages: ${data.downloadedImages ? data.downloadedImages.length : 'null'}`);
-      
-      if (!serverSkipImages && !serverGoogleImages && ((data.images && data.images.length > 0) || (data.downloadedImages && data.downloadedImages.length > 0))) {
-        // Con imágenes (IA generadas o descargadas de Bing)
-        console.log(`📷 continueGeneration - Mostrando carrusel de imágenes ${data.downloadedImages ? 'Bing' : 'IA'}`);
-        setTimeout(() => {
-          updateStage('stage-prompt', 'completed');
-          updateStage('stage-image', 'completed');
-        }, 200);
-        
-        // Actualizar número de sección actual
-        currentSectionNumber = data.currentSection;
-        
-        // Mostrar guión de la nueva sección
-        setTimeout(() => {
-          showScript(data.script, data.currentSection, data.totalSections, data.voice, data.scriptFile);
-        }, 500);
-        
-        // Mostrar carrusel de imágenes
-        setTimeout(() => {
-          if (data.downloadedImages && data.downloadedImages.length > 0) {
-            // Imágenes de Bing descargadas
-            console.log(`🖼️ continueGeneration - Creando carrusel con ${data.downloadedImages.length} imágenes de Bing`);
-            
-            // Almacenar las keywords para el botón de refresh
-            if (data.imageKeywords && data.imageKeywords.length > 0) {
-              currentImageKeywords = data.imageKeywords;
-              console.log(`🎯 Keywords almacenadas para refresh (continueGeneration):`, currentImageKeywords);
-            } else {
-              console.warn(`⚠️ No se recibieron keywords para refresh (continueGeneration)`);
-              currentImageKeywords = [];
-            }
-            
-            createCarousel(data.downloadedImages, data.currentSection, []);
-            
-            // Guardar datos de imágenes en la sección para navegación (continueGeneration)
-            if (allSections[data.currentSection - 1]) {
-              allSections[data.currentSection - 1].images = data.downloadedImages;
-              allSections[data.currentSection - 1].imageKeywords = data.imageKeywords || [];
-              allSections[data.currentSection - 1].imageMode = 'bing';
-              console.log(`💾 Datos de imágenes Bing guardados para sección ${data.currentSection} (continueGeneration)`);
-            }
-          } else if (data.images && data.images.length > 0) {
-            // Imágenes generadas con IA
-            console.log(`📷 continueGeneration - Creando carrusel con ${data.images.length} imágenes IA`);
-            createCarousel(data.images, data.currentSection, data.imagePrompts);
-            
-            // Guardar datos de imágenes en la sección para navegación (continueGeneration)
-            if (allSections[data.currentSection - 1]) {
-              allSections[data.currentSection - 1].images = data.images;
-              allSections[data.currentSection - 1].imagePrompts = data.imagePrompts || [];
-              allSections[data.currentSection - 1].imageMode = 'ai';
-              console.log(`💾 Datos de imágenes AI guardados para sección ${data.currentSection} (continueGeneration)`);
-            }
-          }
-        }, 1000);
-      } else if (!skipImages && serverGoogleImages && data.imagePrompts && data.imagePrompts.length > 0) {
-        // Modo Google Images (solo si no se omiten imágenes)
-        console.log(`🔗🔗🔗 continueGeneration - EJECUTANDO createGoogleImageLinks 🔗🔗🔗`);
-        setTimeout(() => {
-          updateStage('stage-prompt', 'completed');
-        }, 200);
-        
-        // Actualizar número de sección actual
-        currentSectionNumber = data.currentSection;
-        
-        // Mostrar guión
-        setTimeout(() => {
-          showScript(data.script, data.currentSection, data.totalSections, data.voice, data.scriptFile);
-          // Ocultar el carrusel de imágenes
-          document.getElementById("carousel-container").style.display = "none";
-          
-          // Crear enlaces de Google Images
-          createGoogleImageLinks(data.imagePrompts, data.currentSection);
-        }, 500);
-      } else {
-        // Sin imágenes (omitidas)
-        console.log(`📋 continueGeneration - Mostrando prompts en panel lateral (modo skipImages)`);
-        // Actualizar número de sección actual
-        currentSectionNumber = data.currentSection;
-        
-        // Mostrar solo el guión
-        setTimeout(() => {
-          showScript(data.script, data.currentSection, data.totalSections, data.voice, data.scriptFile);
-          // Ocultar el carrusel de imágenes
-          document.getElementById("carousel-container").style.display = "none";
-          
-          // Mostrar prompts de imágenes en el panel lateral solo si no se omiten imágenes
-          if (!skipImages && data.imagePrompts && data.imagePrompts.length > 0) {
-            addPromptsToSidebar(data.imagePrompts, data.currentSection);
-          } else if (skipImages) {
-            console.log(`⏭️ DEBUG FRONTEND (continuar) - Omitiendo prompts de imagen porque skipImages está activado`);
-          }
-        }, 500);
-      }
-      
-      // Mostrar mensaje de finalización
-      setTimeout(() => {
-        showCompletionMessage(data.currentSection, data.totalSections, data.isComplete);
-        
-        // Mostrar u ocultar botón de continuar
-        if (data.isComplete) {
-          continueBtn.style.display = "none";
-        } else {
-          continueBtn.style.display = "inline-flex";
-          continueBtn.querySelector('span').textContent = `Continuar con Sección ${data.currentSection + 1}`;
-        }
-      }, 1500);
-      
-    } else {
-      showError(data.error || "No se pudo generar la siguiente sección. Intenta nuevamente.");
-    }
-  } catch (error) {
-    showError("Error generando la siguiente sección. Verifica tu conexión e intenta nuevamente.");
-    console.error("Error:", error);
-// Event listener para el botón de generar audio
-*/ 
-// Event listener para el botón de generar audio
-generateAudioBtn.addEventListener("click", async () => {
   if (!currentScript) {
     showError("Primero genera un guión antes de crear el audio.");
     return;
@@ -5539,11 +5067,6 @@ document.getElementById("regenerateMissingScriptsBtn").addEventListener("click",
 
 // Event listener para el botón de generar imágenes faltantes
 document.getElementById("generateMissingImagesBtn").addEventListener("click", async () => {
-  const btn = document.getElementById("generateMissingImagesBtn");
-  const originalHtml = btn.innerHTML;
-  btn.disabled = true;
-  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Generando Imágenes...</span>';
-  
   console.log('🖼️ Click en botón de generar imágenes faltantes');
   
   try {
@@ -5551,9 +5074,6 @@ document.getElementById("generateMissingImagesBtn").addEventListener("click", as
   } catch (error) {
     console.error("❌ Error generando imágenes:", error);
     showError(`Error generando imágenes: ${error.message}`);
-  } finally {
-    btn.disabled = false;
-    btn.innerHTML = originalHtml;
   }
 });
 
@@ -8286,62 +7806,18 @@ function downloadAsText(text, filename) {
 }
 
 // Helpers para detección de idioma del guión
-function extractTextFromSection(section) {
-  if (!section) return '';
-
-  if (typeof section === 'string') {
-    return section;
-  }
-
-  if (typeof section === 'object') {
-    const candidateKeys = [
-      'cleanedScript',
-      'script',
-      'content',
-      'text',
-      'body',
-      'summary'
-    ];
-
-    for (const key of candidateKeys) {
-      const value = section[key];
-      if (typeof value === 'string' && value.trim().length > 0) {
-        return value;
-      }
-    }
-  }
-
-  return '';
-}
-
 function getSectionsForLanguageDetection() {
   if (Array.isArray(allSections) && allSections.length > 0) {
-    const normalizedSections = allSections
-      .map(extractTextFromSection)
-      .filter(text => typeof text === 'string' && text.trim().length > 0)
-      .map(text => text.trim());
-
-    if (normalizedSections.length > 0) {
-      return normalizedSections;
-    }
+    return allSections.filter(section => typeof section === 'string' && section.trim().length > 0);
   }
 
-  if (window.currentProject) {
-    const candidateCollections = [
-      window.currentProject.completedSections,
-      window.currentProject.sections,
-      window.currentProject.generatedSections
-    ].filter(collection => Array.isArray(collection));
+  if (window.currentProject && Array.isArray(window.currentProject.completedSections)) {
+    const scripts = window.currentProject.completedSections
+      .map(section => section?.script || section?.cleanedScript || section?.content || '')
+      .filter(text => typeof text === 'string' && text.trim().length > 0);
 
-    for (const collection of candidateCollections) {
-      const scripts = collection
-        .map(extractTextFromSection)
-        .filter(text => typeof text === 'string' && text.trim().length > 0)
-        .map(text => text.trim());
-
-      if (scripts.length > 0) {
-        return scripts;
-      }
+    if (scripts.length > 0) {
+      return scripts;
     }
   }
 
@@ -9678,24 +9154,6 @@ async function refreshProjectsList() {
 }
 
 // Función para renderizar lista de proyectos
-function getProjectTopicPreview(topic, maxWords = 5) {
-  if (typeof topic !== 'string') {
-    return '';
-  }
-
-  const words = topic.trim().split(/\s+/).filter(Boolean);
-
-  if (words.length === 0) {
-    return '';
-  }
-
-  if (words.length <= maxWords) {
-    return words.join(' ');
-  }
-
-  return `${words.slice(0, maxWords).join(' ')}…`;
-}
-
 function renderProjectsList(container, mode = 'load') {
   // Usar window.availableProjects como fuente principal
   const projectsToRender = window.availableProjects || [];
@@ -9716,7 +9174,6 @@ function renderProjectsList(container, mode = 'load') {
     const isComplete = project.sectionsCompleted >= project.totalSections;
     const isUserMarkedComplete = Boolean(window.userProjectCompletion?.[project.folderName]);
     const cardClasses = ['project-card'];
-    const topicPreview = getProjectTopicPreview(project.topic, 5);
 
     if (isUserMarkedComplete) {
       cardClasses.push('user-complete');
@@ -9738,25 +9195,11 @@ function renderProjectsList(container, mode = 'load') {
         <div class="project-info">
           <div class="project-info-item">
             <span class="project-info-label">Tema:</span>
-            <span class="project-info-value">${topicPreview}</span>
+            <span class="project-info-value">${project.topic}</span>
           </div>
           <div class="project-info-item">
             <span class="project-info-label">Secciones:</span>
             <span class="project-info-value">${project.sectionsCompleted}/${project.totalSections}</span>
-          </div>
-          <div class="project-info-item">
-            <span class="project-info-label">Estado de imágenes:</span>
-            <span class="project-info-value">
-              ${project.imagesPerSection ? project.imagesPerSection.map(s => 
-                `<span class="status-square status-${s.status}" title="${s.section.replace('seccion_', 'Sección ')}: ${s.images} imágenes, ${s.prompts} prompts"></span>`
-              ).join('') : 'N/A'}
-            </span>
-          </div>
-          <div class="project-info-item">
-            <span class="project-info-label">Estado de audios:</span>
-            <span class="project-info-value">
-              <span class="status-square status-${project.audioStatus || 'red'}" title="Audios: ${project.totalAudios || 0}/${project.totalSections || 0} secciones"></span>
-            </span>
           </div>
           <div class="project-info-item">
             <span class="project-info-label">Última modificación:</span>
@@ -10111,16 +9554,6 @@ async function loadProject(folderName) {
         }
         console.log('🎵 Pitch de Applio cargado:', window.currentProject.applioPitch);
       }
-
-      const applioSpeedElement = document.getElementById('applioSpeed');
-      const speedValueElement = document.getElementById('speedValue');
-      if (applioSpeedElement && typeof window.currentProject.applioSpeed !== 'undefined') {
-        applioSpeedElement.value = window.currentProject.applioSpeed;
-        if (speedValueElement) {
-          speedValueElement.textContent = window.currentProject.applioSpeed;
-        }
-        console.log('🚀 Velocidad de Applio cargada:', window.currentProject.applioSpeed);
-      }
       
       // Cargar modificador de prompts (instrucciones para imágenes)
       const promptModifierElement = document.getElementById('promptModifier');
@@ -10196,9 +9629,6 @@ async function loadProject(folderName) {
         // Cargar prompts al panel lateral si existen
         loadProjectPrompts(window.currentProject);
       }
-
-        syncSectionImageProgressFromProject(window.currentProject);
-        startSectionImageProgressPolling(window.currentProject);
       
       // 🎬 VERIFICAR Y MOSTRAR METADATOS DE YOUTUBE SI EXISTEN
       if (window.currentProject.youtubeMetadata && !isMetadataShown) {
@@ -10396,12 +9826,6 @@ async function loadSectionImages(sectionNumber) {
       carouselContainer.style.display = "none";
     }
   }
-
-  if (shouldRefreshSectionImageProgress()) {
-    refreshSectionImageProgress().catch((error) => {
-      console.warn('⚠️ Error actualizando progreso de imágenes tras cargar sección:', error);
-    });
-  }
 }
 
 // Función para cargar prompts del proyecto al panel lateral
@@ -10467,7 +9891,6 @@ function loadProjectPrompts(project) {
   });
   
   console.log(`✅ Total de prompts cargados en el panel: ${totalPrompts}`);
-  syncSectionImageProgressFromProject(project);
 }
 
 // Función para mostrar detalles del proyecto
@@ -10591,11 +10014,6 @@ function showProjectDetails(project) {
               Activar Proyecto Completo
             </button>
             
-            <button class="btn btn-secondary btn-open-folder" data-folder="${project.folderName}">
-              <i class="fas fa-folder-open"></i>
-              Abrir Carpeta
-            </button>
-            
             ${isComplete ? `
               <button class="btn btn-secondary btn-youtube-metadata" data-folder="${project.folderName}" data-topic="${project.topic}" data-has-metadata="${!!project.youtubeMetadata}">
                 <i class="fas fa-youtube"></i>
@@ -10670,37 +10088,6 @@ function showProjectDetails(project) {
         }
         
         activateFullProject(projectObj);
-      });
-    }
-    
-    // Event listener para el botón de abrir carpeta
-    const openFolderButton = content.querySelector('.btn-open-folder');
-    if (openFolderButton) {
-      const folder = openFolderButton.getAttribute('data-folder');
-      
-      openFolderButton.addEventListener('click', async function(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        console.log('📂 Abriendo carpeta del proyecto:', folder);
-        
-        try {
-          const response = await fetch('/api/open-folder', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ folderName: folder })
-          });
-          
-          const result = await response.json();
-          
-          if (result.success) {
-            showNotification(`📂 Carpeta abierta: ${folder}`, 'success');
-          } else {
-            showNotification('❌ Error al abrir la carpeta: ' + result.error, 'error');
-          }
-        } catch (error) {
-          console.error('❌ Error al abrir carpeta:', error);
-          showNotification('❌ Error al abrir la carpeta', 'error');
-        }
       });
     }
     
@@ -12604,649 +11991,37 @@ function handleSectionClipButtonClick(event) {
   });
 }
 
-function getSectionImageProgressElements() {
-  if (!sectionImageProgressState.container) {
-    sectionImageProgressState.container = document.getElementById('sectionImagesProgressContainer');
-    sectionImageProgressState.barsWrapper = document.getElementById('sectionImagesProgressBars');
-    sectionImageProgressState.summary = document.getElementById('sectionImagesProgressSummary');
-  }
-  return sectionImageProgressState;
-}
-
-function resolveProjectFolderName(projectData = null) {
-  const project = projectData || window.currentProject;
-  if (project?.folderName) {
-    return project.folderName;
-  }
-
-  if (project?.projectKey) {
-    return project.projectKey;
-  }
-
-  if (project?.safeFolderName) {
-    return project.safeFolderName;
-  }
-
-  const folderInput = document.getElementById('folderName');
-  if (folderInput) {
-    const rawValue = folderInput.dataset.safeFolderName || folderInput.value?.trim();
-    if (rawValue) {
-      return createSafeFolderName(rawValue);
-    }
-  }
-
-  return null;
-}
-
-function getCachedSectionData(sectionNumber, projectData = null) {
-  const project = projectData || window.currentProject;
-  const response = {
-    promptCount: 0,
-    imageCount: 0
-  };
-
-  if (!project) {
-    return response;
-  }
-
-  const targetSection = Array.isArray(project.completedSections)
-    ? project.completedSections.find(section => {
-        const sectionId = section?.section ?? section?.sectionNumber ?? section?.id;
-        return Number(sectionId) === Number(sectionNumber);
-      })
-    : null;
-
-  if (targetSection) {
-    if (Array.isArray(targetSection.imagePrompts)) {
-      response.promptCount = targetSection.imagePrompts.length;
-    } else if (Array.isArray(targetSection.prompts)) {
-      response.promptCount = targetSection.prompts.length;
-    }
-
-    if (Array.isArray(targetSection.imageUrls)) {
-      response.imageCount = targetSection.imageUrls.length;
-    } else if (Array.isArray(targetSection.imageFiles)) {
-      response.imageCount = targetSection.imageFiles.length;
-    } else if (typeof targetSection.imageCount === 'number') {
-      response.imageCount = targetSection.imageCount;
-    } else if (targetSection.hasImages) {
-      response.imageCount = Math.max(response.promptCount, 1);
-    }
-  }
-
-  if (!response.promptCount && Array.isArray(project.imagePrompts)) {
-    const promptsEntry = project.imagePrompts.find(entry => {
-      const sectionId = entry?.section ?? entry?.sectionNumber ?? entry?.id ?? entry?.sectionIndex;
-      return Number(sectionId) === Number(sectionNumber);
-    });
-
-    if (promptsEntry && Array.isArray(promptsEntry.prompts)) {
-      response.promptCount = promptsEntry.prompts.length;
-    }
-  }
-
-  return response;
-}
-
-function updateProjectSectionImageData(sectionNumber, updates = {}, projectOverride = null) {
-  const projectData = projectOverride || window.currentProject || null;
-  const normalizedSection = Number(sectionNumber);
-
-  if (!projectData || !Number.isInteger(normalizedSection) || normalizedSection <= 0) {
-    return;
-  }
-
-  if (!Array.isArray(projectData.completedSections)) {
-    projectData.completedSections = [];
-  }
-
-  let target = projectData.completedSections.find((sectionEntry) => {
-    const entryNumber = Number(sectionEntry?.section ?? sectionEntry?.sectionNumber ?? sectionEntry?.id ?? sectionEntry?.index);
-    return Number.isInteger(entryNumber) && entryNumber === normalizedSection;
-  });
-
-  if (!target) {
-    target = {
-      section: normalizedSection,
-      sectionNumber: normalizedSection,
-      script: '',
-      imagePrompts: [],
-      prompts: [],
-      imageUrls: [],
-      imageCount: 0,
-      hasImages: false
-    };
-    projectData.completedSections.push(target);
-    projectData.completedSections.sort((a, b) => {
-      const aNumber = Number(a?.section ?? a?.sectionNumber ?? a?.id ?? 0);
-      const bNumber = Number(b?.section ?? b?.sectionNumber ?? b?.id ?? 0);
-      return aNumber - bNumber;
-    });
-  }
-
-  if (Array.isArray(updates.prompts)) {
-    const normalizedPrompts = updates.prompts.filter((item) => typeof item === 'string' && item.trim().length > 0);
-    target.imagePrompts = normalizedPrompts.slice();
-    target.prompts = normalizedPrompts.slice();
-  }
-
-  if (Array.isArray(updates.imageUrls)) {
-    target.imageUrls = updates.imageUrls.slice();
-  }
-
-  if (typeof updates.imageCount === 'number' && Number.isFinite(updates.imageCount)) {
-    const normalizedImageCount = Math.max(0, Math.floor(updates.imageCount));
-    target.imageCount = normalizedImageCount;
-    target.hasImages = normalizedImageCount > 0;
-  }
-
-  if (typeof updates.googleImagesMode === 'boolean') {
-    target.googleImagesMode = updates.googleImagesMode;
-  }
-
-  if (typeof updates.promptCount === 'number' && updates.promptCount <= 0 && !Array.isArray(updates.prompts)) {
-    target.imagePrompts = [];
-    target.prompts = [];
-  }
-}
-
-function syncSectionImageProgressFromProject(projectOverride = null) {
-  const projectData = projectOverride || window.currentProject || null;
-  const { container } = getSectionImageProgressElements();
-
-  if (!projectData) {
-    return;
-  }
-
-  const sectionNumbers = getAvailableSectionNumbers(projectData);
-
-  if (!sectionNumbers.length) {
-    return;
-  }
-
-  const stats = sectionNumbers.map((sectionNumber) => {
-    const cached = getCachedSectionData(sectionNumber, projectData);
-    const previous = sectionImageProgressState.lastRenderedStats.find((stat) => stat.sectionNumber === sectionNumber);
-
-    const promptCountRaw = Number(cached.promptCount);
-    const promptCount = Number.isFinite(promptCountRaw) && promptCountRaw > 0 ? Math.floor(promptCountRaw) : 0;
-
-    const imageCountRaw = Number(cached.imageCount);
-    const imageCount = Number.isFinite(imageCountRaw) && imageCountRaw > 0 ? Math.floor(imageCountRaw) : 0;
-
-    const previousCapsules = previous && Number.isFinite(previous.totalCapsules) ? previous.totalCapsules : 0;
-    const totalCapsulesCandidate = promptCount > 0
-      ? promptCount
-      : previousCapsules > 0
-        ? previousCapsules
-        : imageCount > 0
-          ? imageCount
-          : 10;
-    const totalCapsules = Math.max(1, Math.floor(totalCapsulesCandidate));
-    const filledCount = Math.min(imageCount, totalCapsules);
-
-    return {
-      sectionNumber,
-      promptCount,
-      totalCapsules,
-      imageCount,
-      filledCount
-    };
-  });
-
-  renderSectionImageProgressColumns(stats);
-
-  if (container) {
-    container.style.display = 'block';
-  }
-}
-
-function updateSectionImageProgressStat(sectionNumber, updates = {}) {
-  const normalizedSection = Number(sectionNumber);
-
-  if (!Number.isInteger(normalizedSection) || normalizedSection <= 0) {
-    return;
-  }
-
-  const { container } = getSectionImageProgressElements();
-
-  const stats = sectionImageProgressState.lastRenderedStats.length
-    ? sectionImageProgressState.lastRenderedStats.map((stat) => ({ ...stat }))
-    : [];
-
-  let target = stats.find((stat) => stat.sectionNumber === normalizedSection);
-
-  if (!target) {
-    const baseCapsules = typeof updates.totalCapsules === 'number' && updates.totalCapsules > 0
-      ? Math.floor(updates.totalCapsules)
-      : typeof updates.promptCount === 'number' && updates.promptCount > 0
-        ? Math.floor(updates.promptCount)
-        : 10;
-
-    target = {
-      sectionNumber: normalizedSection,
-      promptCount: 0,
-      totalCapsules: Math.max(1, baseCapsules),
-      imageCount: 0,
-      filledCount: 0
-    };
-    stats.push(target);
-    stats.sort((a, b) => a.sectionNumber - b.sectionNumber);
-  }
-
-  let hasChanges = false;
-
-  if (typeof updates.promptCount === 'number' && updates.promptCount >= 0) {
-    const normalizedPrompt = Math.floor(updates.promptCount);
-    if (target.promptCount !== normalizedPrompt) {
-      target.promptCount = normalizedPrompt;
-      hasChanges = true;
-    }
-  }
-
-  if (typeof updates.imageCount === 'number' && updates.imageCount >= 0) {
-    const normalizedImages = Math.floor(updates.imageCount);
-    if (target.imageCount !== normalizedImages) {
-      target.imageCount = normalizedImages;
-      hasChanges = true;
-    }
-  }
-
-  let desiredCapsules;
-
-  if (typeof updates.totalCapsules === 'number' && updates.totalCapsules >= 0) {
-    desiredCapsules = Math.floor(updates.totalCapsules);
-  } else if (typeof updates.promptCount === 'number' && updates.promptCount > 0) {
-    desiredCapsules = Math.floor(updates.promptCount);
-  } else if (target.promptCount > 0) {
-    desiredCapsules = target.promptCount;
-  } else if (target.imageCount > target.totalCapsules) {
-    desiredCapsules = target.imageCount;
-  } else {
-    desiredCapsules = target.totalCapsules;
-  }
-
-  if (!Number.isFinite(desiredCapsules) || desiredCapsules <= 0) {
-    desiredCapsules = Math.max(target.promptCount, target.imageCount, 10);
-  }
-
-  desiredCapsules = Math.max(1, desiredCapsules);
-
-  if (target.totalCapsules !== desiredCapsules) {
-    target.totalCapsules = desiredCapsules;
-    hasChanges = true;
-  }
-
-  const computedFilled = Math.min(target.imageCount, target.totalCapsules);
-  if (target.filledCount !== computedFilled) {
-    target.filledCount = computedFilled;
-    hasChanges = true;
-  }
-
-  if (!hasChanges) {
-    return;
-  }
-
-  renderSectionImageProgressColumns(stats);
-
-  if (container) {
-    container.style.display = 'block';
-  }
-}
-
-function renderSectionImageProgressColumns(sectionsStats) {
-  const { container, barsWrapper, summary } = getSectionImageProgressElements();
-  if (!container || !barsWrapper) {
-    return;
-  }
-
-  let sanitizedStats = Array.isArray(sectionsStats)
-    ? sectionsStats.map((stat) => {
-        const sectionNumber = Number.isFinite(Number(stat?.sectionNumber))
-          ? Number(stat.sectionNumber)
-          : 0;
-        const promptCount = Number.isFinite(Number(stat?.promptCount)) && Number(stat.promptCount) >= 0
-          ? Math.floor(Number(stat.promptCount))
-          : 0;
-        const totalCapsulesRaw = Number.isFinite(Number(stat?.totalCapsules)) && Number(stat.totalCapsules) > 0
-          ? Math.floor(Number(stat.totalCapsules))
-          : 1;
-        const imageCount = Number.isFinite(Number(stat?.imageCount)) && Number(stat.imageCount) >= 0
-          ? Math.floor(Number(stat.imageCount))
-          : 0;
-        const filledCountRaw = Number.isFinite(Number(stat?.filledCount)) && Number(stat.filledCount) >= 0
-          ? Math.floor(Number(stat.filledCount))
-          : 0;
-
-        const totalCapsules = Math.max(1, totalCapsulesRaw);
-        const filledCount = Math.min(filledCountRaw, totalCapsules, imageCount);
-
-        return {
-          sectionNumber,
-          promptCount,
-          totalCapsules,
-          imageCount,
-          filledCount
-        };
-      })
-      .filter((stat) => stat.sectionNumber > 0)
-    : [];
-
-  sanitizedStats.sort((a, b) => a.sectionNumber - b.sectionNumber);
-
-  const previousStats = Array.isArray(sectionImageProgressState.lastRenderedStats)
-    ? sectionImageProgressState.lastRenderedStats
-    : [];
-
-  const statsChanged =
-    sanitizedStats.length !== previousStats.length ||
-    sanitizedStats.some((stat, index) => {
-      const previous = previousStats[index];
-      if (!previous) {
-        return true;
-      }
-
-      return (
-        previous.sectionNumber !== stat.sectionNumber ||
-        previous.promptCount !== stat.promptCount ||
-        previous.totalCapsules !== stat.totalCapsules ||
-        previous.imageCount !== stat.imageCount ||
-        previous.filledCount !== stat.filledCount
-      );
-    });
-
-  if (!statsChanged) {
-    return;
-  }
-
-  sectionImageProgressState.lastRenderedStats = sanitizedStats.map((stat) => ({ ...stat }));
-
-  barsWrapper.innerHTML = '';
-
-  const totalSections = sanitizedStats.length;
-  let totalCapsules = 0;
-  let totalFilled = 0;
-
-  sanitizedStats.forEach((sectionStat) => {
-    const { sectionNumber, totalCapsules: capsules, filledCount } = sectionStat;
-    totalCapsules += capsules;
-    totalFilled += filledCount;
-
-    const column = document.createElement('div');
-    column.className = 'image-progress-column';
-    column.dataset.sectionNumber = sectionNumber.toString();
-
-    const title = document.createElement('div');
-    title.className = 'image-progress-column__title';
-
-    const name = document.createElement('span');
-    name.textContent = `Sección ${sectionNumber}`;
-
-    const count = document.createElement('span');
-    count.className = 'image-progress-column__count';
-    count.textContent = `${filledCount}/${capsules}`;
-
-    title.append(name, count);
-
-    const capsulesWrapper = document.createElement('div');
-    capsulesWrapper.className = 'image-progress-capsules';
-
-    for (let capsuleIndex = 0; capsuleIndex < capsules; capsuleIndex += 1) {
-      const capsule = document.createElement('div');
-      capsule.className = 'image-progress-capsule';
-      capsule.dataset.index = (capsules - capsuleIndex).toString();
-
-      if (capsuleIndex < filledCount) {
-        capsule.classList.add('image-progress-capsule--filled');
-      }
-
-      capsulesWrapper.appendChild(capsule);
-    }
-
-    if (!capsulesWrapper.children.length) {
-      const emptyCapsule = document.createElement('div');
-      emptyCapsule.className = 'image-progress-capsule';
-      capsulesWrapper.appendChild(emptyCapsule);
-    }
-
-    column.append(title, capsulesWrapper);
-
-    const actions = document.createElement('div');
-    actions.className = 'image-progress-column__actions';
-
-    const button = document.createElement('button');
-    button.className = 'section-image-btn section-image-btn--inline';
-    button.dataset.sectionNumber = sectionNumber.toString();
-
-    const isActive = sectionImageProgressState.activeSection === sectionNumber && isGeneratingImages;
-    if (isActive) {
-      button.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Generando...</span>';
-      button.disabled = true;
-    } else {
-      button.innerHTML = `<i class="fas fa-images"></i><span>Sección ${sectionNumber}</span>`;
-      button.disabled = !!isGeneratingImages;
-    }
-
-    button.addEventListener('click', handleSectionImageButtonClick);
-    actions.appendChild(button);
-
-    column.appendChild(actions);
-    barsWrapper.appendChild(column);
-  });
-
-  if (summary) {
-    if (!totalSections) {
-      summary.textContent = 'Sin datos';
-    } else {
-      summary.textContent = `${totalSections} secciones · ${totalFilled}/${totalCapsules || 1} imágenes listas`;
-    }
-  }
-}
-
-async function refreshSectionImageProgress(projectOverride = null) {
-  const elements = getSectionImageProgressElements();
-  if (!elements.container || !elements.barsWrapper) {
-    return;
-  }
-
-  const projectData = projectOverride || window.currentProject || null;
-  const sectionNumbers = getAvailableSectionNumbers(projectData);
-
-  if (!sectionNumbers.length) {
-    elements.container.style.display = 'none';
-    elements.barsWrapper.innerHTML = '';
-    if (elements.summary) {
-      elements.summary.textContent = 'Sin datos';
-    }
-    return;
-  }
-
-  const folderName = resolveProjectFolderName(projectData);
-  if (!folderName) {
-    elements.container.style.display = 'none';
-    elements.barsWrapper.innerHTML = '';
-    if (elements.summary) {
-      elements.summary.textContent = 'Sin datos';
-    }
-    return;
-  }
-
-  elements.container.style.display = 'block';
-
-  const fallbackStats = sectionNumbers.map((sectionNumber) => {
-    const cached = getCachedSectionData(sectionNumber, projectData);
-    const previous = Array.isArray(sectionImageProgressState.lastRenderedStats)
-      ? sectionImageProgressState.lastRenderedStats.find((stat) => stat.sectionNumber === sectionNumber)
-      : null;
-
-    const cachedPrompt = Number.isFinite(Number(cached.promptCount)) ? Math.max(0, Math.floor(Number(cached.promptCount))) : 0;
-    const previousPrompt = previous && Number.isFinite(Number(previous.promptCount))
-      ? Math.max(0, Math.floor(Number(previous.promptCount)))
-      : 0;
-    const promptCount = cachedPrompt > 0 ? cachedPrompt : previousPrompt;
-
-    const previousTotal = previous && Number.isFinite(Number(previous.totalCapsules))
-      ? Math.max(1, Math.floor(Number(previous.totalCapsules)))
-      : 0;
-    const resolvedPromptCapsules = promptCount > 0 ? promptCount : previousTotal;
-
-    let totalCapsules = Number.isFinite(resolvedPromptCapsules) && resolvedPromptCapsules > 0
-      ? Math.floor(resolvedPromptCapsules)
-      : 10;
-    totalCapsules = Math.max(1, totalCapsules);
-
-    const cachedImages = Number.isFinite(Number(cached.imageCount)) ? Math.max(0, Math.floor(Number(cached.imageCount))) : 0;
-    const previousImages = previous && Number.isFinite(Number(previous.imageCount))
-      ? Math.max(0, Math.floor(Number(previous.imageCount)))
-      : 0;
-    const imageCount = cachedImages > 0 ? cachedImages : previousImages;
-
-    const filledCount = Math.min(imageCount, totalCapsules);
-
-    return {
-      sectionNumber,
-      promptCount,
-      totalCapsules,
-      imageCount,
-      filledCount
-    };
-  });
-
-  renderSectionImageProgressColumns(fallbackStats);
-
-  const updateToken = sectionImageProgressState.updateToken + 1;
-  sectionImageProgressState.updateToken = updateToken;
-
-  try {
-    const resolvedStats = await Promise.all(sectionNumbers.map(async (sectionNumber) => {
-      const fallback = fallbackStats.find(stat => stat.sectionNumber === sectionNumber) || {
-        sectionNumber,
-        promptCount: 0,
-        totalCapsules: 10,
-        imageCount: 0,
-        filledCount: 0
-      };
-
-      try {
-        const response = await fetch(`/api/project-images/${encodeURIComponent(folderName)}/${sectionNumber}`, {
-          method: 'GET',
-          cache: 'no-store'
-        });
-
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
-        }
-
-        const data = await response.json();
-        const promptsArray = Array.isArray(data?.prompts)
-          ? data.prompts.filter(line => typeof line === 'string' && line.trim())
-          : [];
-        const promptCount = promptsArray.length > 0 ? promptsArray.length : fallback.promptCount;
-        const fallbackTotal = Number.isFinite(fallback?.totalCapsules) && fallback.totalCapsules > 0
-          ? Math.max(1, Math.floor(fallback.totalCapsules))
-          : 10;
-        const totalCapsules = promptCount > 0 ? promptCount : fallbackTotal;
-        const imageCount = Array.isArray(data?.images)
-          ? data.images.length
-          : Number.isFinite(data?.imageCount)
-            ? data.imageCount
-            : fallback.imageCount;
-        const filledCount = Math.min(imageCount, totalCapsules);
-
-        return {
-          sectionNumber,
-          promptCount,
-          totalCapsules,
-          imageCount,
-          filledCount
-        };
-      } catch (error) {
-        console.warn(`⚠️ No se pudo actualizar progreso de imágenes para sección ${sectionNumber}:`, error);
-        return fallback;
-      }
-    }));
-
-    if (sectionImageProgressState.updateToken !== updateToken) {
-      return;
-    }
-
-    renderSectionImageProgressColumns(resolvedStats);
-  } catch (error) {
-    console.warn('⚠️ Error refrescando progreso de imágenes:', error);
-  }
-}
-
-function shouldRefreshSectionImageProgress(projectOverride = null) {
-  if (!window.currentProject) {
-    return true;
-  }
-
-  if (!projectOverride) {
-    return true;
-  }
-
-  const currentName = window.currentProject.folderName || window.currentProject.projectKey || window.currentProject.safeFolderName;
-  const overrideName = projectOverride.folderName || projectOverride.projectKey || projectOverride.safeFolderName;
-
-  if (!currentName || !overrideName) {
-    return true;
-  }
-
-  return currentName === overrideName;
-}
-
-function startSectionImageProgressPolling(projectOverride = null) {
-  if (!shouldRefreshSectionImageProgress(projectOverride)) {
-    return;
-  }
-
-  stopSectionImageProgressPolling();
-
-  const pollImagesProgress = () => {
-    refreshSectionImageProgress(projectOverride).catch((error) => {
-      console.warn('⚠️ Error actualizando barras de imágenes durante el polling:', error);
-    });
-  };
-
-  pollImagesProgress();
-
-  sectionImageProgressPollInterval = setInterval(pollImagesProgress, SECTION_IMAGE_PROGRESS_POLL_MS);
-}
-
-function stopSectionImageProgressPolling() {
-  if (sectionImageProgressPollInterval) {
-    clearInterval(sectionImageProgressPollInterval);
-    sectionImageProgressPollInterval = null;
-  }
-}
-
 function updateSectionImageButtons(projectOverride = null) {
   const container = document.getElementById('sectionImagesContainer');
   const buttonsWrapper = document.getElementById('sectionImagesButtons');
 
-  const sectionNumbers = getAvailableSectionNumbers(projectOverride);
-
-  if (container) {
-    container.style.display = 'none';
-  }
-  if (buttonsWrapper) {
-    buttonsWrapper.innerHTML = '';
-  }
-
-  if (!sectionNumbers.length) {
-    if (sectionImageProgressState.lastRenderedStats.length) {
-      renderSectionImageProgressColumns([]);
-    }
+  if (!container || !buttonsWrapper) {
     return;
   }
 
-  if (shouldRefreshSectionImageProgress(projectOverride)) {
-    refreshSectionImageProgress(projectOverride).catch((error) => {
-      console.warn('⚠️ Error actualizando barras de progreso de imágenes:', error);
-    });
-  } else if (sectionImageProgressState.lastRenderedStats.length) {
-    renderSectionImageProgressColumns(sectionImageProgressState.lastRenderedStats);
+  const sectionNumbers = getAvailableSectionNumbers(projectOverride);
+
+  if (!sectionNumbers.length) {
+    container.style.display = 'none';
+    buttonsWrapper.innerHTML = '';
+    return;
   }
+
+  container.style.display = 'block';
+  buttonsWrapper.innerHTML = '';
+
+  sectionNumbers.forEach((sectionNumber) => {
+    const button = document.createElement('button');
+    button.className = 'section-image-btn';
+    button.dataset.sectionNumber = sectionNumber.toString();
+    button.innerHTML = `
+      <i class="fas fa-images"></i>
+      <span>Sección ${sectionNumber}</span>
+    `;
+    button.disabled = !!isGeneratingImages;
+    button.addEventListener('click', handleSectionImageButtonClick);
+    buttonsWrapper.appendChild(button);
+  });
 }
 
 function handleSectionImageButtonClick(event) {
@@ -13292,170 +12067,6 @@ function handleSectionImageButtonClick(event) {
     sectionNumber,
     buttonElement: button
   });
-}
-
-async function generateMissingPrompts() {
-  try {
-    const projectData = window.currentProject;
-
-    // Verificar que haya un proyecto cargado
-    if (!projectData || !projectData.completedSections) {
-      showError('No hay un proyecto cargado con secciones completadas');
-      return;
-    }
-
-    const uiSelectedImageModel = getSelectedImageModel();
-    const projectImageModel = projectData?.imageModel ? normalizeImageModel(projectData.imageModel) : null;
-    const selectedImageModel = normalizeImageModel(uiSelectedImageModel || projectImageModel);
-
-    // Obtener imageCount del selector o proyecto o configuración por defecto
-    let imageCount = parseInt(document.getElementById("imagesSelect")?.value) || projectData?.imageCount || 10;
-
-    // Actualizar el proyecto con el nuevo imageCount si cambió
-    if (projectData && imageCount !== projectData.imageCount) {
-      projectData.imageCount = imageCount;
-      if (window.currentProject === projectData) {
-        window.currentProject.imageCount = imageCount;
-      }
-    }
-
-    if (projectData && selectedImageModel && selectedImageModel !== projectImageModel) {
-      projectData.imageModel = selectedImageModel;
-      window.currentProject.imageModel = selectedImageModel;
-    }
-
-    let folderName = projectData.folderName;
-
-    if (!folderName) {
-      const folderInput = document.getElementById("folderName");
-      folderName = folderInput ? folderInput.value.trim() : '';
-
-      if (!folderName) {
-        showError('No se ha especificado el nombre del proyecto');
-        return;
-      }
-
-      folderName = folderName
-        .toLowerCase()
-        .replace(/[^a-z0-9]/g, '_')
-        .replace(/_+/g, '_')
-        .replace(/^_|_$/g, '');
-    }
-
-    console.log(`📝 Generando prompts faltantes para proyecto: ${folderName}`);
-
-    // Obtener configuraciones para imágenes
-    const imageInstructions = document.getElementById('promptModifier')?.value || '';
-
-    // Llamar al backend para generar prompts faltantes
-    const response = await fetch('/api/generate-prompts-only', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        folderName: folderName,
-        imageInstructions: imageInstructions,
-        imageCount: imageCount
-      })
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData?.error || `Error generando prompts`);
-    }
-
-    const data = await response.json();
-    if (!data.success) {
-      throw new Error(data.error || `Error desconocido generando prompts`);
-    }
-
-    console.log('✅ Prompts generados exitosamente:', data.data);
-    showNotification(`✅ Prompts generados para ${data.data.generatedPrompts.length} sección(es)`, 'success');
-
-    const generatedPrompts = Array.isArray(data?.data?.generatedPrompts) ? data.data.generatedPrompts : [];
-    generatedPrompts.forEach((entry) => {
-      const entrySection = Number(entry?.section ?? entry?.sectionNumber ?? entry?.id ?? entry?.index);
-      if (!Number.isInteger(entrySection) || entrySection <= 0) {
-        return;
-      }
-
-      const entryPrompts = Array.isArray(entry?.prompts) ? entry.prompts.filter((item) => typeof item === 'string' && item.trim().length > 0) : [];
-
-      if (entryPrompts.length) {
-        updateProjectSectionImageData(entrySection, { prompts: entryPrompts }, projectData);
-        updateSectionImageProgressStat(entrySection, { promptCount: entryPrompts.length });
-      }
-    });
-
-    if (shouldRefreshSectionImageProgress(projectData)) {
-      await refreshSectionImageProgress(projectData);
-    }
-
-  } catch (error) {
-    console.error('❌ Error generando prompts:', error);
-    throw error;
-  }
-}
-
-async function handleProjectSectionImageButtonClick(event, projectKey, sectionNumber) {
-  event.preventDefault();
-  const btn = event.currentTarget;
-
-  if (!Number.isInteger(sectionNumber) || sectionNumber <= 0) {
-    console.warn('⚠️ Número de sección inválido para generar imágenes:', sectionNumber);
-    return;
-  }
-
-  if (isGeneratingImages) {
-    showNotification('⚠️ Ya hay una generación de imágenes en progreso. Espera a que termine antes de iniciar otra.', 'info');
-    return;
-  }
-
-  const projectData = projectDataMap.get(projectKey) || window.currentProject;
-  if (!projectData) {
-    showError('No se encontró la información del proyecto');
-    return;
-  }
-
-  const uiSelectedImageModel = getSelectedImageModel();
-  const projectImageModel = projectData?.imageModel ? normalizeImageModel(projectData.imageModel) : null;
-  const selectedImageModel = normalizeImageModel(uiSelectedImageModel || projectImageModel);
-
-  // Usar imageCount del proyecto o 10 por defecto
-  const imageCount = projectData?.imageCount || 10;
-
-  try {
-    isGeneratingImages = true;
-    btn.disabled = true;
-    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Generando...</span>';
-
-    // Verificar si la sección ya tiene imágenes
-    const hasImages = await checkIfSectionHasImages(projectKey, sectionNumber, imageCount);
-    if (hasImages) {
-      showNotification(`✅ La sección ${sectionNumber} ya tiene suficientes imágenes generadas (${imageCount}).`, 'success');
-      return;
-    }
-
-    console.log(`🖼️ Generando ${imageCount} imágenes para sección ${sectionNumber} del proyecto ${projectKey} usando APIs gratuitas de Google...`);
-
-    await generateMissingImagesForSection({
-      folderName: projectKey,
-      sectionNumber,
-      projectData,
-      selectedImageModel,
-      imageCount
-    });
-
-    showNotification(`✅ Imágenes generadas exitosamente para la sección ${sectionNumber}.`, 'success');
-  } catch (error) {
-    console.error(`❌ Error generando imágenes para sección ${sectionNumber}:`, error);
-    showError(`Error generando imágenes: ${error.message}`);
-  } finally {
-    isGeneratingImages = false;
-    btn.disabled = false;
-    btn.innerHTML = `<i class="fas fa-images"></i><span>Sección ${sectionNumber}</span>`;
-  }
 }
 
 // Función para mostrar el botón de generación manual de video
@@ -14125,9 +12736,8 @@ async function regenerateAllAudios() {
       showNotification('🔍 Verificando audios de Applio...', 'info');
 
       const selectedApplioVoice = document.getElementById('applioVoiceSelect')?.value;
-    const selectedApplioModel = document.getElementById('applioModelSelect')?.value;
-    const applioPitch = parseInt(document.getElementById('applioPitch')?.value) || 0;
-    const applioSpeed = parseInt(document.getElementById('applioSpeed')?.value) || 0;
+      const selectedApplioModel = document.getElementById('applioModelSelect')?.value;
+      const applioPitch = parseInt(document.getElementById('applioPitch')?.value) || 0;
 
       const response = await fetch('/generate-missing-applio-audios', {
         method: 'POST',
@@ -14137,7 +12747,6 @@ async function regenerateAllAudios() {
           applioVoice: selectedApplioVoice,
           applioModel: selectedApplioModel,
           applioPitch,
-          applioSpeed,
           totalSections: window.currentProject.completedSections.length,
           scriptStyle,
           customStyleInstructions,
@@ -14265,7 +12874,6 @@ async function regenerateAllAudiosForProject(folderName) {
       const selectedApplioVoice = document.getElementById('applioVoiceSelect')?.value;
       const selectedApplioModel = document.getElementById('applioModelSelect')?.value;
       const applioPitch = parseInt(document.getElementById('applioPitch')?.value) || 0;
-      const applioSpeed = parseInt(document.getElementById('applioSpeed')?.value) || 0;
 
       const response = await fetch('/generate-missing-applio-audios', {
         method: 'POST',
@@ -14275,7 +12883,6 @@ async function regenerateAllAudiosForProject(folderName) {
           applioVoice: selectedApplioVoice,
           applioModel: selectedApplioModel,
           applioPitch,
-          applioSpeed,
           totalSections: 5, // Asumir 5 secciones por defecto, el backend lo calculará
           scriptStyle,
           customStyleInstructions,
@@ -14575,19 +13182,6 @@ function getComfyDefaultGuidance() {
   return comfyUIDefaults.guidance;
 }
 
-function getComfyUISettings() {
-  return {
-    steps: parseInt(document.getElementById('comfyUISteps')?.value, 10) || getComfyDefaultSteps(),
-    guidance: parseFloat(document.getElementById('comfyUIGuidance')?.value) || getComfyDefaultGuidance(),
-    cfg: getComfyDefaultCfg(),
-    width: parseInt(document.getElementById('comfyUIWidth')?.value, 10) || resolveComfyUIResolution('9:16').width,
-    height: parseInt(document.getElementById('comfyUIHeight')?.value, 10) || resolveComfyUIResolution('9:16').height,
-    model: document.getElementById('comfyUIModel')?.value || 'flux1-dev-fp8.safetensors',
-    sampler: document.getElementById('comfyUISampler')?.value || 'euler',
-    scheduler: document.getElementById('comfyUIScheduler')?.value || 'simple'
-  };
-}
-
 // Función para generar imágenes faltantes
 async function generateMissingImages(options = {}) {
   const {
@@ -14612,17 +13206,6 @@ async function generateMissingImages(options = {}) {
     const uiSelectedImageModel = getSelectedImageModel();
     const projectImageModel = projectData?.imageModel ? normalizeImageModel(projectData.imageModel) : null;
     const selectedImageModel = normalizeImageModel(uiSelectedImageModel || projectImageModel);
-
-    // Obtener imageCount del selector o proyecto o configuración por defecto
-    let imageCount = parseInt(document.getElementById("imagesSelect")?.value) || projectData?.imageCount || 10;
-
-    // Actualizar el proyecto con el nuevo imageCount si cambió
-    if (projectData && imageCount !== projectData.imageCount) {
-      projectData.imageCount = imageCount;
-      if (window.currentProject === projectData) {
-        window.currentProject.imageCount = imageCount;
-      }
-    }
 
     if (projectData && selectedImageModel && selectedImageModel !== projectImageModel) {
       projectData.imageModel = selectedImageModel;
@@ -14666,13 +13249,13 @@ async function generateMissingImages(options = {}) {
         if (section && section.script) {
           // Verificar si esta sección tiene imágenes generadas
           const sectionFolder = `${folderName}/seccion_${i + 1}`;
-          const hasImages = await checkIfSectionHasImages(folderName, i + 1, imageCount);
+          const hasImages = await checkIfSectionHasImages(folderName, i + 1);
 
           if (!hasImages) {
             sectionsNeedingImages.push(i + 1);
-            console.log(`📋 Sección ${i + 1} necesita imágenes (${imageCount} requeridas)`);
+            console.log(`📋 Sección ${i + 1} necesita imágenes`);
           } else {
-            console.log(`✅ Sección ${i + 1} ya tiene suficientes imágenes (${imageCount})`);
+            console.log(`✅ Sección ${i + 1} ya tiene imágenes`);
           }
         }
       }
@@ -14684,94 +13267,43 @@ async function generateMissingImages(options = {}) {
 
       console.log(`🎯 Secciones que necesitan imágenes: ${sectionsNeedingImages.join(', ')}`);
 
-      // Generar imágenes para todas las secciones en paralelo (máximo 10 concurrentes)
-      // Solo usar APIs de Google gratis
-      console.log('🎯 Generando imágenes en paralelo (máximo 10 concurrentes) usando solo APIs de Google gratis...');
-      
-      const imageGenerationPromises = [];
-      const maxConcurrent = 10;
-      let completedImages = 0;
-      const totalImagesToGenerate = sectionsNeedingImages.length * imageCount;
-      
-      // Variables para tracking de resultados
+      // Generar imágenes para cada sección que las necesite
       let successCount = 0;
       let errorCount = 0;
       const failedSections = [];
-      
-      // Obtener configuraciones para imágenes
-      const imageInstructions = document.getElementById('promptModifier')?.value || '';
-      const aspectRatio = document.getElementById('aspectRatioSelect')?.value || '9:16';
-      
-      // Obtener APIs de Google disponibles
-      const selectedGoogleApis = getSelectedGoogleApis();
-      
-      // Función para procesar una sección
-      const processSection = async (sectionNum) => {
+
+      for (const sectionNum of sectionsNeedingImages) {
         try {
-          console.log(`🖼️ Generando ${imageCount} imágenes para sección ${sectionNum}...`);
-          
-          // Llamar al backend para generar imágenes de esta sección
-          const response = await fetch('/api/generate-missing-images', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              folderName: folderName,
-              imageInstructions: imageInstructions,
-              imageCount: imageCount,
-              aspectRatio: aspectRatio,
-              useLocalAI: false, // Solo APIs de Google gratis
-              comfyUIConfig: {},
-              allowComfyFallback: false,
-              comfyOnlyMode: false,
-              sectionNumber: sectionNum,
-              selectedApis: selectedGoogleApis.length > 0 ? selectedGoogleApis : ['GRATIS', 'GRATIS2', 'GRATIS3', 'GRATIS4', 'GRATIS5'], // APIs gratuitas por defecto
-              imageModel: selectedImageModel,
-              projectKey: folderName
-            })
+          console.log(`🖼️ Generando imágenes para sección ${sectionNum}...`);
+          showNotification(`🖼️ Generando imágenes para sección ${sectionNum} de ${sectionsNeedingImages.length}...`, 'info');
+
+          await generateMissingImagesForSection({
+            folderName: folderName,
+            sectionNumber: sectionNum,
+            projectData: projectData,
+            selectedImageModel: selectedImageModel
           });
-          
-          if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData?.error || `Error en sección ${sectionNum}`);
-          }
-          
-          const data = await response.json();
-          if (!data.success) {
-            throw new Error(data.error || `Error desconocido en sección ${sectionNum}`);
-          }
-          
+
+          successCount++;
           console.log(`✅ Imágenes generadas exitosamente para sección ${sectionNum}`);
-          return { sectionNum, success: true };
         } catch (error) {
-          console.error(`❌ Error en sección ${sectionNum}:`, error);
-          return { sectionNum, success: false, error: error.message };
-        }
-      };
-      
-      // Procesar secciones en lotes de máximo 5 concurrentes
-      for (let i = 0; i < sectionsNeedingImages.length; i += maxConcurrent) {
-        const batch = sectionsNeedingImages.slice(i, i + maxConcurrent);
-        console.log(`🔄 Procesando lote ${Math.floor(i/maxConcurrent) + 1}: secciones ${batch.join(', ')}`);
-        
-        const batchPromises = batch.map(sectionNum => processSection(sectionNum));
-        const batchResults = await Promise.all(batchPromises);
-        
-        // Procesar resultados del lote
-        batchResults.forEach(result => {
-          if (result.success) {
-            successCount++;
+          console.error(`❌ Error generando imágenes para sección ${sectionNum}:`, error);
+          errorCount++;
+          failedSections.push(sectionNum);
+
+          // Mostrar error específico pero continuar con otras secciones
+          const errorMessage = error.message || 'Error desconocido';
+          if (errorMessage.includes('Failed to parse stream') || errorMessage.includes('GoogleGenerativeAI')) {
+            console.warn(`⚠️ Error de Google Gemini en sección ${sectionNum}, continuando con otras secciones...`);
+            showNotification(`⚠️ Sección ${sectionNum}: Error de API de Google, omitiendo...`, 'warning');
           } else {
-            errorCount++;
-            failedSections.push(result.sectionNum);
-            showNotification(`❌ Sección ${result.sectionNum}: ${result.error}`, 'error');
+            showNotification(`❌ Sección ${sectionNum}: ${errorMessage}`, 'error');
           }
-        });
-        
-        // Pequeña pausa entre lotes
-        if (i + maxConcurrent < sectionsNeedingImages.length) {
-          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+
+        // Pequeña pausa entre secciones para no sobrecargar
+        if (sectionsNeedingImages.length > 1) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
         }
       }
 
@@ -14793,7 +13325,7 @@ async function generateMissingImages(options = {}) {
   await loadComfyDefaultsFromServer();
 
   const imageInstructions = document.getElementById('promptModifier')?.value || '';
-  imageCount = parseInt(document.getElementById('imagesSelect')?.value) || 5;
+  const imageCount = parseInt(document.getElementById('imagesSelect')?.value) || 5;
     const aspectRatio = document.getElementById('aspectRatioSelect')?.value || '9:16';
     const { width: defaultWidth, height: defaultHeight } = resolveComfyUIResolution(aspectRatio);
     const defaultSteps = getComfyDefaultSteps();
@@ -14899,7 +13431,6 @@ async function generateMissingImages(options = {}) {
 
     isGeneratingImages = true;
     isCancellingImages = false;
-  startSectionImageProgressPolling(projectData);
     updateSectionImageButtons(projectData);
     
     console.log('📤 ENVIANDO AL SERVIDOR:', {
@@ -15001,51 +13532,6 @@ async function generateMissingImages(options = {}) {
       if (data.data.generatedImages && data.data.generatedImages.length > 0) {
         console.log('🖼️ Imágenes generadas para secciones:', data.data.generatedImages);
       }
-
-      const generatedPrompts = Array.isArray(data?.data?.generatedPrompts) ? data.data.generatedPrompts : [];
-      generatedPrompts.forEach((entry) => {
-        const entrySection = Number(entry?.section ?? entry?.sectionNumber ?? entry?.id ?? entry?.index);
-        if (!Number.isInteger(entrySection) || entrySection <= 0) {
-          return;
-        }
-
-        const entryPrompts = Array.isArray(entry?.prompts) ? entry.prompts.filter((item) => typeof item === 'string' && item.trim().length > 0) : [];
-
-        if (entryPrompts.length) {
-          updateProjectSectionImageData(entrySection, { prompts: entryPrompts }, projectData);
-          updateSectionImageProgressStat(entrySection, { promptCount: entryPrompts.length });
-        }
-      });
-
-      const generatedImages = Array.isArray(data?.data?.generatedImages) ? data.data.generatedImages : [];
-      generatedImages.forEach((entry) => {
-        const entrySection = Number(entry?.section ?? entry?.sectionNumber ?? entry?.id ?? entry?.index);
-        if (!Number.isInteger(entrySection) || entrySection <= 0) {
-          return;
-        }
-
-        const entryPrompts = Array.isArray(entry?.prompts) ? entry.prompts.filter((item) => typeof item === 'string' && item.trim().length > 0) : [];
-        const entryImages = Array.isArray(entry?.images) ? entry.images : Array.isArray(entry?.imageUrls) ? entry.imageUrls : [];
-        const entryImageCountValue = Number(entry?.imageCount);
-        const entryImageCount = entryImages.length
-          ? entryImages.length
-          : Number.isFinite(entryImageCountValue) && entryImageCountValue >= 0
-            ? Math.floor(entryImageCountValue)
-            : 0;
-
-        updateProjectSectionImageData(entrySection, {
-          prompts: entryPrompts.length ? entryPrompts : undefined,
-          imageUrls: Array.isArray(entry?.imageUrls) ? entry.imageUrls : undefined,
-          imageCount: entryImageCount
-        }, projectData);
-
-        const statUpdates = { imageCount: entryImageCount };
-        if (entryPrompts.length) {
-          statUpdates.promptCount = entryPrompts.length;
-        }
-
-        updateSectionImageProgressStat(entrySection, statUpdates);
-      });
       
     } else {
       throw new Error(data.error || 'Error desconocido generando imágenes');
@@ -15061,7 +13547,6 @@ async function generateMissingImages(options = {}) {
   } finally {
     isGeneratingImages = false;
     isCancellingImages = false;
-    stopSectionImageProgressPolling();
     updateSectionImageButtons(projectOverride || window.currentProject);
 
     // Restaurar botón
@@ -15157,12 +13642,12 @@ async function cancelMissingImagesGeneration() {
 }
 
 // Función auxiliar para verificar si una sección ya tiene imágenes generadas
-async function checkIfSectionHasImages(folderName, sectionNumber, expectedCount = 1) {
+async function checkIfSectionHasImages(folderName, sectionNumber) {
   try {
     const response = await fetch(`/api/check-section-images?folderName=${encodeURIComponent(folderName)}&sectionNumber=${sectionNumber}`);
     if (response.ok) {
       const data = await response.json();
-      return (data.imageCount || 0) >= expectedCount;
+      return data.hasImages || false;
     }
     return false;
   } catch (error) {
@@ -15173,63 +13658,98 @@ async function checkIfSectionHasImages(folderName, sectionNumber, expectedCount 
 
 // Función auxiliar para generar imágenes para una sección específica
 async function generateMissingImagesForSection(options) {
-  const { folderName, sectionNumber, projectData, selectedImageModel, imageCount: overrideImageCount } = options;
+  const { folderName, sectionNumber, projectData, selectedImageModel } = options;
 
-  const pollingProject = projectData || window.currentProject || null;
-  startSectionImageProgressPolling(pollingProject);
+  // Obtener configuraciones para imágenes
+  await loadComfyDefaultsFromServer();
 
-  try {
-    // Obtener configuraciones para imágenes
-    await loadComfyDefaultsFromServer();
+  const imageInstructions = document.getElementById('promptModifier')?.value || '';
+  const imageCount = parseInt(document.getElementById('imagesSelect')?.value) || 5;
+  const aspectRatio = document.getElementById('aspectRatioSelect')?.value || '9:16';
+  const { width: defaultWidth, height: defaultHeight } = resolveComfyUIResolution(aspectRatio);
+  const defaultSteps = getComfyDefaultSteps();
+  const defaultGuidance = getComfyDefaultGuidance();
+  const defaultCfg = getComfyDefaultCfg();
 
-    const imageInstructions = document.getElementById('promptModifier')?.value || '';
-    const imageCount = overrideImageCount || parseInt(document.getElementById('imagesSelect')?.value) || 10;
-    const aspectRatio = document.getElementById('aspectRatioSelect')?.value || '9:16';
-    const { width: defaultWidth, height: defaultHeight } = resolveComfyUIResolution(aspectRatio);
-    const defaultSteps = getComfyDefaultSteps();
-    const defaultGuidance = getComfyDefaultGuidance();
-    const defaultCfg = getComfyDefaultCfg();
+  // Verificar si se debe usar IA local (ComfyUI)
+  let useLocalAI = document.getElementById('localAIImages')?.checked || false;
+  const attemptComfyCheckbox = document.getElementById('attemptComfyCheckbox');
+  const comfyOnlyMode = attemptComfyCheckbox ? attemptComfyCheckbox.checked : false;
+  const allowComfyFallback = comfyOnlyMode;
 
-    // Verificar si se debe usar IA local (ComfyUI)
-    let useLocalAI = document.getElementById('localAIImages')?.checked || false;
-    const attemptComfyCheckbox = document.getElementById('attemptComfyCheckbox');
-    const comfyOnlyMode = attemptComfyCheckbox ? attemptComfyCheckbox.checked : false;
-    const allowComfyFallback = comfyOnlyMode;
+  if (comfyOnlyMode && !useLocalAI) {
+    useLocalAI = true;
+  }
 
-    if (comfyOnlyMode && !useLocalAI) {
-      useLocalAI = true;
+  let selectedGoogleApis = [];
+  if (!comfyOnlyMode) {
+    const selectionReady = await ensureGoogleApiSelectionReady();
+    if (!selectionReady) {
+      throw new Error('No se pudieron cargar las APIs de Google.');
     }
 
-    let selectedGoogleApis = [];
-    if (!comfyOnlyMode) {
-      const selectionReady = await ensureGoogleApiSelectionReady();
-      if (!selectionReady) {
-        throw new Error('No se pudieron cargar las APIs de Google.');
-      }
-
-      selectedGoogleApis = getSelectedGoogleApis();
-      if (!selectedGoogleApis.length) {
-        throw new Error('Selecciona al menos una API de Google disponible.');
-      }
+    selectedGoogleApis = getSelectedGoogleApis();
+    if (!selectedGoogleApis.length) {
+      throw new Error('Selecciona al menos una API de Google disponible.');
     }
+  }
 
-    // Obtener configuraciones de ComfyUI si está habilitado
-    let comfyUIConfig = {};
-    if (useLocalAI) {
-      comfyUIConfig = {
-        steps: parseInt(document.getElementById('comfyUISteps')?.value, 10) || defaultSteps,
-        guidance: parseFloat(document.getElementById('comfyUIGuidance')?.value) || defaultGuidance,
-        cfg: defaultCfg,
-        width: parseInt(document.getElementById('comfyUIWidth')?.value, 10) || defaultWidth,
-        height: parseInt(document.getElementById('comfyUIHeight')?.value, 10) || defaultHeight,
-        model: document.getElementById('comfyUIModel')?.value || 'flux1-dev-fp8.safetensors',
-        sampler: document.getElementById('comfyUISampler')?.value || 'euler',
-        scheduler: document.getElementById('comfyUIScheduler')?.value || 'simple'
-      };
-    }
+  // Obtener configuraciones de ComfyUI si está habilitado
+  let comfyUIConfig = {};
+  if (useLocalAI) {
+    comfyUIConfig = {
+      steps: parseInt(document.getElementById('comfyUISteps')?.value, 10) || defaultSteps,
+      guidance: parseFloat(document.getElementById('comfyUIGuidance')?.value) || defaultGuidance,
+      cfg: defaultCfg,
+      width: parseInt(document.getElementById('comfyUIWidth')?.value, 10) || defaultWidth,
+      height: parseInt(document.getElementById('comfyUIHeight')?.value, 10) || defaultHeight,
+      model: document.getElementById('comfyUIModel')?.value || 'flux1-dev-fp8.safetensors',
+      sampler: document.getElementById('comfyUISampler')?.value || 'euler',
+      scheduler: document.getElementById('comfyUIScheduler')?.value || 'simple'
+    };
+  }
 
-    // PRIMERA INTENTO: Con la configuración actual
-    let response = await fetch('/api/generate-missing-images', {
+  // PRIMERA INTENTO: Con la configuración actual
+  let response = await fetch('/api/generate-missing-images', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      folderName: folderName,
+      imageInstructions: imageInstructions,
+      imageCount: imageCount,
+      aspectRatio: aspectRatio,
+      useLocalAI: useLocalAI,
+      comfyUIConfig: comfyUIConfig,
+      allowComfyFallback: allowComfyFallback,
+      comfyOnlyMode: comfyOnlyMode,
+      sectionNumber: sectionNumber,
+      selectedApis: selectedGoogleApis,
+      imageModel: selectedImageModel
+    })
+  });
+
+  let data = await response.json();
+
+  // Si falla por cuota, error de stream, o cualquier error de Google Gemini, intentar con ComfyUI
+  if (!response.ok && !comfyOnlyMode && data?.error &&
+      (data.error.includes('quota') || data.error.includes('429') ||
+       data.error.includes('Too Many Requests') || data.error.includes('Failed to parse stream') ||
+       data.error.includes('GoogleGenerativeAI'))) {
+
+    console.log(`🚨 Sección ${sectionNumber} - Error detectado (${data.error}). Cambiando automáticamente a ComfyUI...`);
+
+    // Cambiar configuración para usar ComfyUI
+    useLocalAI = true;
+    comfyOnlyMode = true;
+    allowComfyFallback = true;
+    selectedGoogleApis = []; // No usar APIs de Google
+
+    // Reintentar con ComfyUI
+    console.log(`🔄 Sección ${sectionNumber} - Reintentando con ComfyUI...`);
+
+    response = await fetch('/api/generate-missing-images', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -15249,84 +13769,22 @@ async function generateMissingImagesForSection(options) {
       })
     });
 
-    let data = await response.json();
-
-    // Si falla por cuota, error de stream, o cualquier error de Google Gemini, intentar con ComfyUI
-    if (!response.ok && !comfyOnlyMode && data?.error &&
-        (data.error.includes('quota') || data.error.includes('429') ||
-         data.error.includes('Too Many Requests') || data.error.includes('Failed to parse stream') ||
-         data.error.includes('GoogleGenerativeAI'))) {
-
-      console.log(`🚨 Sección ${sectionNumber} - Error detectado (${data.error}). Cambiando automáticamente a ComfyUI...`);
-
-      // Cambiar configuración para usar ComfyUI
-      useLocalAI = true;
-      comfyOnlyMode = true;
-      allowComfyFallback = true;
-      selectedGoogleApis = []; // No usar APIs de Google
-
-      // Reintentar con ComfyUI
-      console.log(`🔄 Sección ${sectionNumber} - Reintentando con ComfyUI...`);
-
-      response = await fetch('/api/generate-missing-images', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          folderName: folderName,
-          imageInstructions: imageInstructions,
-          imageCount: imageCount,
-          aspectRatio: aspectRatio,
-          useLocalAI: useLocalAI,
-          comfyUIConfig: comfyUIConfig,
-          allowComfyFallback: allowComfyFallback,
-          comfyOnlyMode: comfyOnlyMode,
-          sectionNumber: sectionNumber,
-          selectedApis: selectedGoogleApis,
-          imageModel: selectedImageModel
-        })
-      });
-
-      data = await response.json();
-    }
-
-    if (!response.ok) {
-      throw new Error(data?.error || data?.message || 'Error generando imágenes');
-    }
-
-    if (data.cancelled) {
-      throw new Error(`Sección ${sectionNumber}: ${data.message || 'La generación fue cancelada.'}`);
-    }
-
-    if (!data.success) {
-      throw new Error(data.error || 'Error desconocido generando imágenes');
-    }
-
-    return data;
-  } finally {
-    stopSectionImageProgressPolling();
+    data = await response.json();
   }
+
+  if (!response.ok) {
+    throw new Error(data?.error || data?.message || 'Error generando imágenes');
+  }
+
+  if (data.cancelled) {
+    throw new Error(`Sección ${sectionNumber}: ${data.message || 'La generación fue cancelada.'}`);
+  }
+
+  if (!data.success) {
+    throw new Error(data.error || 'Error desconocido generando imágenes');
+  }
+
+  return data;
 }
 
 // Función auxiliar para verificar si una sección ya tiene imágenes generadas
-
-// Validación para minWords y maxWords
-document.addEventListener('DOMContentLoaded', function() {
-  const minWordsInput = document.getElementById('minWords');
-  const maxWordsInput = document.getElementById('maxWords');
-
-  if (minWordsInput && maxWordsInput) {
-    function validateWordsRange() {
-      const minVal = parseInt(minWordsInput.value) || 0;
-      const maxVal = parseInt(maxWordsInput.value) || 0;
-
-      if (maxVal < minVal + 300) {
-        maxWordsInput.value = minVal + 300;
-      }
-    }
-
-    minWordsInput.addEventListener('input', validateWordsRange);
-    maxWordsInput.addEventListener('input', validateWordsRange);
-  }
-});
