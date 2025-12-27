@@ -6,6 +6,7 @@ class ApplioClient {
     constructor(applioUrl = 'http://127.0.0.1:6969') {
         this.applioUrl = applioUrl;
         this.sessionHash = this._generateSessionHash();
+        this.queue = Promise.resolve(); // Cola de ejecución secuencial
     }
 
     _generateSessionHash() {
@@ -18,6 +19,18 @@ class ApplioClient {
     }
 
     async textToSpeech(text, outputPath, options = {}) {
+        // Encadenar a la cola para asegurar ejecución secuencial estricta
+        const task = this.queue.then(() => this._executeTextToSpeech(text, outputPath, options));
+        
+        // Actualizar la cola, manejando errores para no bloquear futuras tareas
+        this.queue = task.catch(err => {
+            console.error('❌ Error en cola de Applio:', err.message);
+        });
+
+        return task;
+    }
+
+    async _executeTextToSpeech(text, outputPath, options) {
         const {
             model = "fr-FR-RemyMultilingualNeural",
             speed = 0,
@@ -25,7 +38,7 @@ class ApplioClient {
             voicePath = "logs\\VOCES\\RemyOriginal.pth"
         } = options;
 
-        console.log(`\n🎬 Iniciando TTS: «${text.substring(0, 100)}...»`);
+        console.log(`\n🎬 Iniciando TTS (En cola): «${text.substring(0, 100)}...»`);
         console.log(`🎛️ Modelo: ${model}`);
             console.log(`🎤 Voz: ${voicePath}`);
             console.log(`🚀 Velocidad: ${speed}`);
@@ -127,8 +140,9 @@ class ApplioClient {
                     if (current.mtime > beforeTimestamp.mtime) {
                         console.log('🎯 ¡Archivo nuevo detectado!');
                         
-                        // Esperar un poco para que termine de escribirse
-                        await new Promise(r => setTimeout(r, 1000));
+                        // Esperar un poco para que termine de escribirse completamente (evitar archivos corruptos o incompletos)
+                        console.log('⏳ Esperando 3s para asegurar escritura completa...');
+                        await new Promise(r => setTimeout(r, 3000));
                         
                         // Verificar que el archivo existe y tiene contenido
                         if (fs.existsSync(current.path)) {

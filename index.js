@@ -1937,12 +1937,17 @@ Por favor genera:
    - Incluye call-to-action para suscribirse
    - Formato atractivo con emojis
 
-3. **25 ETIQUETAS** (separadas por comas):
+3. **CAPÍTULOS / LÍNEA DE TIEMPO** (timestamps):
+   - Genera una lista de tiempos estimados y títulos para los capítulos del video.
+   - IMPORTANTE: Los títulos deben ser MUY CORTOS (máximo 5 palabras).
+   - Usa el formato "00:00 Título".
+
+4. **25 ETIQUETAS** (separadas por comas):
    - Palabras clave relacionadas al tema
    - Tags populares del nicho correspondiente
    - Términos de búsqueda relevantes
 
-4. **5 PROMPTS PARA MINIATURAS DE YOUTUBE** (cada uno en una línea, numerados):
+5. **5 PROMPTS PARA MINIATURAS DE YOUTUBE** (cada uno en una línea, numerados):
    
    FORMATO OBLIGATORIO - DEBES SEGUIR ESTA ESTRUCTURA EXACTA PARA CADA UNO DE LOS 5 PROMPTS:
    
@@ -1962,7 +1967,7 @@ REGLAS ESTRICTAS:
 `;
 
     // Llamar a la IA para generar metadatos
-  const { model } = await getGoogleAI('gemini-2.5-flash', { context: 'llm', forcePrimary: true });
+  const { model } = await getGoogleAI('gemini-3-pro-preview', { context: 'llm', forcePrimary: true });
     
     console.log(`🤖 Enviando request a Gemini para generar metadatos...`);
     const result = await model.generateContent([{ text: prompt }]);
@@ -4807,10 +4812,13 @@ function buildScriptFileContent({
   projectKey,
   scriptText
 }) {
+  // Truncar el tema a las primeras 10 palabras
+  const truncatedTopic = topic ? topic.split(/\s+/).slice(0, 10).join(' ') + (topic.split(/\s+/).length > 10 ? '...' : '') : '';
+
   const headerLines = [
     `GUIÓN DE SECCIÓN ${sectionNumber}`,
     '===============================',
-    `Tema: ${topic}`,
+    `Tema: ${truncatedTopic}`,
     `Sección: ${sectionNumber} de ${totalSections}`,
     `Capítulo: ${chapterTitle || `Sección ${sectionNumber}`}`,
     `Proyecto: ${projectKey}`,
@@ -5116,7 +5124,7 @@ async function performBatchAudioGeneration(params = {}) {
         } catch (ttsError) {
           console.log(`⚠️ [${projectKey}] Google TTS falló, usando Applio como fallback: ${ttsError.message}`);
 
-          await applioClient.ensureConnection();
+          await applioClient.checkConnection();
           const audioResponse = await applioClient.generateTTS(
             section.cleanScript,
             applioVoice || 'RemyOriginal',
@@ -5471,6 +5479,21 @@ app.post('/generate-batch-automatic', async (req, res) => {
     // Generar estructura de capítulos primero
     console.log(`📋 Generando estructura de ${sections} capítulos...`);
     
+    // Inicializar Applio si se va a usar para audio inmediato
+    if (useApplio) {
+      console.log('🔄 Iniciando Applio para generación de audio en tiempo real...');
+      try {
+        const applioStarted = await startApplio();
+        if (!applioStarted) {
+          console.warn('⚠️ No se pudo iniciar Applio, se intentará durante la generación');
+        } else {
+          console.log('✅ Applio iniciado correctamente');
+        }
+      } catch (applioError) {
+        console.error('❌ Error iniciando Applio:', applioError);
+      }
+    }
+    
     let chapterPrompt;
     if (selectedStyle && selectedStyle.startsWith('custom_') && customStyleInstructions) {
       chapterPrompt = `Eres un experto en crear estructuras narrativas personalizadas.
@@ -5591,7 +5614,7 @@ RESPONDE SOLO CON LOS TÍTULOS SEPARADOS POR "||CAPITULO||", NADA MÁS.`;
           
           const scriptContent = `GUIÓN DE SECCIÓN ${section}
 ===============================
-Tema: ${topic}
+Tema: ${topic ? topic.split(/\s+/).slice(0, 10).join(' ') + (topic.split(/\s+/).length > 10 ? '...' : '') : ''}
 Sección: ${section} de ${sections}
 Capítulo: ${chapterStructure[section - 1] || `Sección ${section}`}
 Longitud: ${scriptText.length} caracteres
@@ -5731,6 +5754,72 @@ VERIFICACIÓN FINAL: Tu respuesta debe contener exactamente ${numImages - 1} ocu
             console.log(`✅ ${sectionImagePrompts.length} keywords de búsqueda generados para sección ${section}`);
           }
         }
+
+        // ===============================================================
+        // GENERACIÓN DE AUDIO INMEDIATA (NUEVO)
+        // ===============================================================
+        let audioPath = null;
+        try {
+          console.log(`🎵 Generando audio inmediato para sección ${section}...`);
+          const sectionFolderStructure = createProjectStructure(topic, section, projectKey);
+          const cleanScript = scriptText.replace(/[*_#]/g, '').trim();
+          
+          if (useApplio) {
+            const selectedApplioVoice = applioVoice || 'es-ES-ElviraNeural.pth';
+            const selectedApplioModel = applioModel || 'rmvpe';
+            const selectedPitch = Number.isFinite(Number(applioPitch)) ? Number(applioPitch) : 0;
+            const selectedSpeed = Number.isFinite(Number(applioSpeed)) ? Number(applioSpeed) : 0;
+
+            const fileName = `${createSafeFolderName(chapterStructure[section - 1] || `Sección ${section}`)}_seccion_${section}_${Date.now()}.wav`;
+            const filePath = path.join(sectionFolderStructure.sectionDir, fileName);
+
+            console.log(`🎙️ Generando con Applio: ${selectedApplioVoice} (Pitch: ${selectedPitch}, Speed: ${selectedSpeed})`);
+            
+            // Asegurar conexión
+            const isConnected = await applioClient.checkConnection();
+            if (!isConnected) {
+              console.warn('⚠️ Applio no responde al check de conexión, intentando generar de todas formas...');
+            }
+            
+            const result = await applioClient.textToSpeech(cleanScript, filePath, {
+              voice: selectedApplioVoice,
+              model: selectedApplioModel,
+              pitch: selectedPitch,
+              speed: selectedSpeed
+            });
+            
+            if (result.success) {
+              audioPath = path.relative('./public', filePath).replace(/\\/g, '/');
+              console.log(`✅ Audio Applio generado: ${audioPath}`);
+            } else {
+              console.error('❌ Falló generación Applio:', result.error);
+            }
+          } else {
+            // Google TTS
+            const fileName = `${createSafeFolderName(chapterStructure[section - 1] || `Sección ${section}`)}_seccion_${section}_${Date.now()}.mp3`;
+            const filePath = path.join(sectionFolderStructure.sectionDir, fileName);
+            
+            audioPath = await generateStoryAudio(
+              cleanScript,
+              selectedVoice,
+              sectionFolderStructure.sectionDir,
+              chapterStructure[section - 1] || `Sección ${section}`,
+              section,
+              selectedStyle
+            );
+            console.log(`✅ Audio Google TTS generado: ${audioPath}`);
+          }
+        } catch (audioError) {
+          console.error(`❌ Error generando audio inmediato para sección ${section}:`, audioError);
+        }
+        
+        // Actualizar allSections con el audio generado
+        if (audioPath) {
+          const currentSectionIndex = allSections.findIndex(s => s.section === section);
+          if (currentSectionIndex !== -1) {
+            allSections[currentSectionIndex].audioPath = audioPath;
+          }
+        }
         
         // ===============================================================
         // GUARDADO PROGRESIVO Y ACTUALIZACIÓN DE PROGRESO
@@ -5784,6 +5873,11 @@ VERIFICACIÓN FINAL: Tu respuesta debe contener exactamente ${numImages - 1} ocu
           script: allSections[section - 1].script,
           imagePrompts: allImagePrompts.find(ip => ip.section === section)?.prompts || [],
           completedAt: new Date().toISOString(),
+          audio: audioPath ? {
+            path: audioPath,
+            filename: path.basename(audioPath),
+            saved: true
+          } : null,
           scriptFile: {
             path: `outputs/${projectKey}/seccion_${section}/${projectKey}_seccion_${section}_guion.txt`,
             filename: `${projectKey}_seccion_${section}_guion.txt`,
@@ -5804,6 +5898,11 @@ VERIFICACIÓN FINAL: Tu respuesta debe contener exactamente ${numImages - 1} ocu
             script: sec.script,
             imagePrompts: allImagePrompts.find(ip => ip.section === sec.section)?.prompts || [],
             completedAt: new Date().toISOString(),
+            audio: sec.audioPath ? {
+              path: sec.audioPath,
+              filename: path.basename(sec.audioPath),
+              saved: true
+            } : null,
             scriptFile: {
               path: `outputs/${projectKey}/seccion_${sec.section}/${projectKey}_seccion_${sec.section}_guion.txt`,
               filename: `${projectKey}_seccion_${sec.section}_guion.txt`,
@@ -10445,7 +10544,7 @@ RESPONDE SOLO CON LOS TÍTULOS SEPARADOS POR "||CAPITULO||", NADA MÁS.`;
       
       const scriptContent = `GUIÓN DE LA SECCIÓN ${section}
 ===============================
-Tema: ${topic}
+Tema: ${topic ? topic.split(/\s+/).slice(0, 10).join(' ') + (topic.split(/\s+/).length > 10 ? '...' : '') : ''}
 Sección: ${section} de ${sections}
 Fecha de generación: ${new Date().toLocaleString()}
 ${folderName ? `Nombre del proyecto: ${folderName}` : ''}
@@ -12534,6 +12633,729 @@ REGLAS ESTRICTAS:
 }
 
 // Endpoint para generar títulos, descripción y etiquetas para YouTube
+// Función auxiliar para traducir una sección
+async function translateSectionScript(folderName, sectionNum, targetLang, projectDir) {
+  const sectionDir = path.join(projectDir, `seccion_${sectionNum}`);
+  if (!fs.existsSync(sectionDir)) return null;
+
+  // Verificar si ya existe la traducción antes de generar
+  const translatedFileName = `${folderName}_seccion_${sectionNum}_guion_${targetLang}.txt`;
+  const translatedFilePath = path.join(sectionDir, translatedFileName);
+  
+  if (fs.existsSync(translatedFilePath)) {
+    console.log(`⏩ Traducción ya existe para sección ${sectionNum} (${targetLang}), omitiendo...`);
+    return true;
+  }
+
+  const scriptFiles = fs.readdirSync(sectionDir).filter(f => f.endsWith('_guion.txt') && !f.includes('_translated_'));
+  if (scriptFiles.length === 0) return null;
+
+  const originalScriptPath = path.join(sectionDir, scriptFiles[0]);
+  const originalContent = fs.readFileSync(originalScriptPath, 'utf8');
+  
+  // Extraer solo el contenido del guion
+  const scriptContent = extractScriptContent(originalContent)?.content || originalContent;
+
+  const langNames = {
+    'en': 'English', 'fr': 'French', 'de': 'German', 
+    'ko': 'Korean', 'ru': 'Russian', 'pt': 'Portuguese'
+  };
+  const targetLangName = langNames[targetLang] || targetLang;
+
+  let additionalInstructions = "";
+  if (targetLang === 'ko') {
+    additionalInstructions = `
+    IMPORTANT: Summarize and condense the content by approximately 30% while translating.
+    Korean text tends to be longer or slower to read, so please be concise.
+    Keep the core message and key details, but remove redundancy and shorten sentences where possible.
+    `;
+  } else if (targetLang === 'de') {
+    additionalInstructions = `
+    IMPORTANT: Summarize and condense the content by approximately 20% while translating.
+    German text tends to be longer, so please be concise.
+    Keep the core message and key details, but remove redundancy and shorten sentences where possible.
+    `;
+  }
+
+  const prompt = `
+    Translate the following video script content to ${targetLangName}.
+    Maintain the tone, style, and formatting.
+    Do NOT translate technical terms that should remain in English/Spanish if applicable.
+    ${additionalInstructions}
+    
+    SCRIPT TO TRANSLATE:
+    ${scriptContent}
+    
+    OUTPUT ONLY THE TRANSLATED TEXT.
+  `;
+
+  const { model } = await getGoogleAI("gemini-2.5-flash", { context: 'llm' });
+  const result = await model.generateContent(prompt);
+  const translatedText = result.response.text();
+
+  const translatedFileContent = `GUIÓN TRADUCIDO (${targetLangName.toUpperCase()}) - SECCIÓN ${sectionNum}
+===============================
+Original: ${scriptFiles[0]}
+Idioma: ${targetLangName}
+Fecha: ${new Date().toLocaleString()}
+
+CONTENIDO DEL GUIÓN:
+${translatedText}
+
+===============================
+Traducción generada por Gemini 2.5 Flash
+`;
+
+  fs.writeFileSync(translatedFilePath, translatedFileContent, 'utf8');
+  return true;
+}
+
+app.post('/translate-project', async (req, res) => {
+  const { folderName, targetLang, totalSections } = req.body;
+  
+  // Configurar headers para SSE (Server-Sent Events)
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  try {
+    const projectDir = path.join('./public/outputs', folderName);
+    const langNames = {
+      'en': 'English', 'fr': 'French', 'de': 'German', 
+      'ko': 'Korean', 'ru': 'Russian', 'pt': 'Portuguese'
+    };
+    const targetLangName = langNames[targetLang];
+
+    console.log(`🌍 Iniciando traducción de proyecto ${folderName} a ${targetLangName}`);
+
+    for (let i = 1; i <= totalSections; i++) {
+      await translateSectionScript(folderName, i, targetLang, projectDir);
+      
+      // Enviar progreso al cliente
+      res.write(`data: ${JSON.stringify({ progress: true, current: i, total: totalSections })}\n\n`);
+    }
+
+    res.write(`data: ${JSON.stringify({ complete: true })}\n\n`);
+    res.end();
+
+  } catch (error) {
+    console.error('❌ Error en traducción:', error);
+    res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
+    res.end();
+  }
+});
+
+app.post('/translate-project-all', async (req, res) => {
+  const { folderName, totalSections } = req.body;
+  
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  try {
+    const projectDir = path.join('./public/outputs', folderName);
+    const languages = ['en', 'fr', 'de', 'ko', 'ru', 'pt', 'zh'];
+    
+    // Calcular total de tareas válidas (secciones que existen)
+    let totalTasks = 0;
+    for (let i = 1; i <= totalSections; i++) {
+      const sectionDir = path.join(projectDir, `seccion_${i}`);
+      if (fs.existsSync(sectionDir)) {
+        const scriptFiles = fs.readdirSync(sectionDir).filter(f => f.endsWith('_guion.txt') && !f.includes('_translated_'));
+        if (scriptFiles.length > 0) {
+          totalTasks += languages.length;
+        }
+      }
+    }
+
+    console.log(`🌍 Iniciando traducción MASIVA de proyecto ${folderName} (${totalTasks} tareas estimadas)`);
+    
+    const MAX_RETRIES = 3;
+    let currentSuccessCount = 0;
+
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      // Identificar tareas pendientes (archivos que faltan)
+      const tasks = [];
+      currentSuccessCount = 0; // Recalcular éxito actual
+
+      for (const lang of languages) {
+        for (let i = 1; i <= totalSections; i++) {
+          const sectionDir = path.join(projectDir, `seccion_${i}`);
+          if (!fs.existsSync(sectionDir)) continue;
+
+          const translatedFileName = `${folderName}_seccion_${i}_guion_${lang}.txt`;
+          const translatedFilePath = path.join(sectionDir, translatedFileName);
+
+          if (!fs.existsSync(translatedFilePath)) {
+            // Verificar si existe el origen
+            const scriptFiles = fs.readdirSync(sectionDir).filter(f => f.endsWith('_guion.txt') && !f.includes('_translated_'));
+            if (scriptFiles.length > 0) {
+              tasks.push({ lang, section: i });
+            }
+          } else {
+            currentSuccessCount++;
+          }
+        }
+      }
+
+      if (tasks.length === 0) {
+        console.log(`✅ Todas las traducciones completadas (Intento ${attempt}).`);
+        break;
+      }
+
+      console.log(`🔄 Intento ${attempt}/${MAX_RETRIES}: Procesando ${tasks.length} traducciones pendientes...`);
+      
+      const CONCURRENCY_LIMIT = 8;
+      const executing = new Set();
+      const results = [];
+
+      const processTask = async (task) => {
+        try {
+          const success = await translateSectionScript(folderName, task.section, task.lang, projectDir);
+          if (success) {
+            currentSuccessCount++;
+          }
+        } catch (err) {
+          console.error(`❌ Error traduciendo sección ${task.section} a ${task.lang} (Intento ${attempt}):`, err.message);
+        } finally {
+          res.write(`data: ${JSON.stringify({ 
+            progress: true, 
+            completedTasks: currentSuccessCount, 
+            totalTasks: totalTasks, 
+            current: currentSuccessCount 
+          })}\n\n`);
+        }
+      };
+
+      for (const task of tasks) {
+        const p = processTask(task).then(() => executing.delete(p));
+        executing.add(p);
+        results.push(p);
+
+        if (executing.size >= CONCURRENCY_LIMIT) {
+          await Promise.race(executing);
+        }
+      }
+
+      await Promise.all(results);
+
+      // Si aún faltan tareas y no es el último intento, esperar un poco
+      if (attempt < MAX_RETRIES) {
+        // Verificar si realmente fallaron cosas antes de esperar
+        const remainingTasks = tasks.filter(t => {
+           const p = path.join(projectDir, `seccion_${t.section}`, `${folderName}_seccion_${t.section}_guion_${t.lang}.txt`);
+           return !fs.existsSync(p);
+        });
+        
+        if (remainingTasks.length > 0) {
+          console.log(`⏳ Esperando 2s antes del reintento... (${remainingTasks.length} fallos)`);
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        } else {
+          break; // Todo se completó en este intento
+        }
+      }
+    }
+
+    res.write(`data: ${JSON.stringify({ complete: true })}\n\n`);
+    res.end();
+
+  } catch (error) {
+    console.error('❌ Error en traducción masiva:', error);
+    res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
+    res.end();
+  }
+});
+
+// Función auxiliar para generar audio traducido
+async function generateTranslatedAudioForSection(folderName, sectionNum, lang, projectDir, applioSettings) {
+  const sectionDir = path.join(projectDir, `seccion_${sectionNum}`);
+  const scriptFileName = `${folderName}_seccion_${sectionNum}_guion_${lang}.txt`;
+  const scriptPath = path.join(sectionDir, scriptFileName);
+  
+  if (!fs.existsSync(scriptPath)) {
+    console.log(`⚠️ No existe guion traducido para sección ${sectionNum} (${lang}), omitiendo...`);
+    return false;
+  }
+
+  // Verificar si ya existe el audio
+  const audioFileName = `${folderName}_seccion_${sectionNum}_audio_${lang}.wav`;
+  const audioPath = path.join(sectionDir, audioFileName);
+  
+  if (fs.existsSync(audioPath)) {
+    console.log(`⏩ Audio ya existe para sección ${sectionNum} (${lang}), omitiendo...`);
+    return true;
+  }
+
+  const scriptContent = fs.readFileSync(scriptPath, 'utf8');
+  const cleanScript = extractScriptContent(scriptContent)?.content || scriptContent;
+
+  console.log(`📝 [${lang}] Contenido del guion (${cleanScript.length} chars): "${cleanScript.substring(0, 50).replace(/\n/g, ' ')}..."`);
+
+  // Mapeo de voces TTS base por idioma (Edge TTS)
+  const ttsVoices = {
+    'en': 'en-US-ChristopherNeural', // Masculino neutral
+    'fr': 'fr-FR-HenriNeural',       // Masculino neutral
+    'de': 'de-DE-ConradNeural',      // Masculino neutral
+    'ko': 'ko-KR-InJoonNeural',      // Masculino neutral
+    'ru': 'ru-RU-DmitryNeural',      // Masculino neutral
+    'pt': 'pt-BR-AntonioNeural',     // Masculino neutral
+    'zh': 'zh-CN-YunxiNeural'        // Masculino neutral
+  };
+  
+  const ttsVoice = ttsVoices[lang] || 'en-US-ChristopherNeural';
+  
+  console.log(`🎤 Generando audio traducido (${lang}) con voz base ${ttsVoice} y Applio ${applioSettings.voice}...`);
+  
+  try {
+    // Asegurar que Applio esté conectado
+    await applioClient.checkConnection();
+
+    const result = await applioClient.textToSpeech(cleanScript, audioPath, {
+      model: ttsVoice,
+      voicePath: applioSettings.voice,
+      pitch: applioSettings.pitch || 0,
+      speed: applioSettings.speed || 0
+    });
+
+    return result.success;
+
+  } catch (error) {
+    console.error(`❌ Error generando audio traducido para sección ${sectionNum} (${lang}):`, error);
+    return false;
+  }
+}
+
+async function fitAudioToDuration(inputPath, outputPath, targetDurationSec) {
+  const ffmpeg = (await import('fluent-ffmpeg')).default;
+  const ffmpegPath = (await import('ffmpeg-static')).default;
+  ffmpeg.setFfmpegPath(ffmpegPath);
+  
+  // 1. Obtener duración actual
+  const currentDuration = await new Promise((resolve, reject) => {
+    ffmpeg.ffprobe(inputPath, (err, metadata) => {
+      if (err) reject(err);
+      else resolve(metadata.format.duration);
+    });
+  });
+
+  // 2. Calcular el factor de velocidad (atempo)
+  // Si dura 100s y queremos 80s: 100/80 = 1.25 (Acelerar)
+  // Si dura 80s y queremos 100s: 80/100 = 0.8 (Ralentizar)
+  let tempo = currentDuration / targetDurationSec;
+
+  // Limitación de FFmpeg: atempo solo acepta valores entre 0.5 y 2.0
+  // Si el cambio es muy drástico, hay que encadenar filtros (ej: atempo=2.0,atempo=1.5)
+  // Para tu caso de uso (ajustes leves), un solo filtro suele bastar.
+  
+  if (tempo < 0.5 || tempo > 2.0) {
+    console.warn(`⚠️ El cambio de velocidad (${tempo.toFixed(2)}x) es muy drástico y podría perder calidad.`);
+    // Clamp tempo to avoid ffmpeg error
+    tempo = Math.max(0.5, Math.min(2.0, tempo));
+  }
+
+  console.log(`⏱️ Ajustando audio: ${currentDuration.toFixed(1)}s -> ${targetDurationSec.toFixed(1)}s (Factor: ${tempo.toFixed(3)}x)`);
+
+  return new Promise((resolve, reject) => {
+    ffmpeg(inputPath)
+      .audioFilters(`atempo=${tempo}`)
+      .on('error', (err) => reject(err))
+      .on('end', () => resolve(true))
+      .save(outputPath);
+  });
+}
+
+async function concatenateTranslatedAudios(projectDir, folderName, totalSections, targetDuration = null, silencePadding = 0) {
+  const ffmpeg = (await import('fluent-ffmpeg')).default;
+  const ffmpegPath = (await import('ffmpeg-static')).default;
+  ffmpeg.setFfmpegPath(ffmpegPath);
+
+  const outputDir = path.join(projectDir, 'audios_completos');
+  if (!fs.existsSync(outputDir)) {
+    fs.mkdirSync(outputDir, { recursive: true });
+  }
+
+  const languages = ['en', 'fr', 'de', 'ko', 'ru', 'pt', 'zh'];
+  const langMap = {
+    'en': 'ingles',
+    'fr': 'frances',
+    'de': 'aleman',
+    'ko': 'coreano',
+    'ru': 'ruso',
+    'pt': 'portugues',
+    'zh': 'chino'
+  };
+
+  for (const lang of languages) {
+    const audioFiles = [];
+    for (let i = 1; i <= totalSections; i++) {
+      const sectionDir = path.join(projectDir, `seccion_${i}`);
+      const audioFileName = `${folderName}_seccion_${i}_audio_${lang}.wav`;
+      const audioPath = path.join(sectionDir, audioFileName);
+      
+      if (fs.existsSync(audioPath)) {
+        audioFiles.push(audioPath);
+      }
+    }
+
+    if (audioFiles.length > 0) {
+      const outputFileName = `${langMap[lang] || lang}.wav`;
+      const outputPath = path.join(outputDir, outputFileName);
+      
+      console.log(`🔗 Uniendo ${audioFiles.length} audios para ${langMap[lang]}...`);
+      
+      // 1. Unir audios (y ajustar duración si es necesario)
+      if (targetDuration) {
+        const tempOutputPath = path.join(outputDir, `temp_${outputFileName}`);
+        
+        await new Promise((resolve, reject) => {
+          const command = ffmpeg();
+          audioFiles.forEach(file => command.input(file));
+          command
+            .on('error', (err) => reject(err))
+            .on('end', () => resolve())
+            .mergeToFile(tempOutputPath, os.tmpdir());
+        });
+
+        // Ajustar duración
+        try {
+          await fitAudioToDuration(tempOutputPath, outputPath, targetDuration);
+          fs.unlinkSync(tempOutputPath); // Borrar temporal
+        } catch (err) {
+          console.error(`❌ Error ajustando duración para ${lang}:`, err);
+          if (fs.existsSync(tempOutputPath)) {
+             fs.renameSync(tempOutputPath, outputPath);
+          }
+        }
+
+      } else {
+        // Comportamiento normal sin ajuste de tiempo
+        await new Promise((resolve, reject) => {
+          const command = ffmpeg();
+          audioFiles.forEach(file => command.input(file));
+          command
+            .on('error', (err) => {
+              console.error(`❌ Error uniendo audios ${lang}:`, err);
+              reject(err);
+            })
+            .on('end', () => {
+              console.log(`✅ Audio unido creado: ${outputPath}`);
+              resolve();
+            })
+            .mergeToFile(outputPath, os.tmpdir());
+        });
+      }
+
+      // 2. Agregar silencio al final si se solicitó
+      if (silencePadding > 0 && fs.existsSync(outputPath)) {
+        console.log(`🔇 Agregando ${silencePadding}s de silencio a ${langMap[lang]}...`);
+        const tempWithSilence = path.join(outputDir, `temp_silence_${outputFileName}`);
+        
+        try {
+          // Obtener duración actual para calcular el total
+          const currentDuration = await new Promise((resolve, reject) => {
+            ffmpeg.ffprobe(outputPath, (err, metadata) => {
+              if (err) reject(err);
+              else resolve(metadata.format.duration);
+            });
+          });
+
+          const totalDuration = currentDuration + parseFloat(silencePadding);
+
+          await new Promise((resolve, reject) => {
+            ffmpeg(outputPath)
+              .audioFilters('apad')
+              .duration(totalDuration)
+              .on('error', reject)
+              .on('end', resolve)
+              .save(tempWithSilence);
+          });
+
+          // Reemplazar archivo original con el que tiene silencio
+          fs.unlinkSync(outputPath);
+          fs.renameSync(tempWithSilence, outputPath);
+          console.log(`✅ Silencio agregado a: ${outputPath}`);
+
+        } catch (silenceError) {
+          console.error(`❌ Error agregando silencio a ${lang}:`, silenceError);
+          if (fs.existsSync(tempWithSilence)) fs.unlinkSync(tempWithSilence);
+        }
+      }
+
+      // 3. Mezclar con música de fondo si existe "musica.wav" en la raíz del proyecto
+      const musicPath = path.join(projectDir, 'musica.wav');
+      if (fs.existsSync(musicPath) && fs.existsSync(outputPath)) {
+        console.log(`🎵 Mezclando música de fondo para ${langMap[lang]}...`);
+        const tempWithMusic = path.join(outputDir, `temp_music_${outputFileName}`);
+        
+        try {
+          // Obtener duración del audio de voz (ya con silencio si se aplicó)
+          const voiceDuration = await new Promise((resolve, reject) => {
+            ffmpeg.ffprobe(outputPath, (err, metadata) => {
+              if (err) reject(err);
+              else resolve(metadata.format.duration);
+            });
+          });
+
+          await new Promise((resolve, reject) => {
+            ffmpeg()
+              .input(outputPath) // Input 0: Voz
+              .input(musicPath)  // Input 1: Música
+              .complexFilter([
+                // Ajustar volumen de la música (ej: 0.3 para que no tape la voz)
+                `[1:a]volume=0.2,aloop=loop=-1:size=2e+09[music]`, 
+                // Recortar música a la duración exacta de la voz
+                `[music]atrim=duration=${voiceDuration}[music_trimmed]`,
+                // Mezclar voz y música
+                `[0:a][music_trimmed]amix=inputs=2:duration=first:dropout_transition=2[out]`
+              ])
+              .map('[out]')
+              .on('error', reject)
+              .on('end', resolve)
+              .save(tempWithMusic);
+          });
+
+          // Reemplazar archivo original con el mezclado
+          fs.unlinkSync(outputPath);
+          fs.renameSync(tempWithMusic, outputPath);
+          console.log(`✅ Música mezclada en: ${outputPath}`);
+
+        } catch (musicError) {
+          console.error(`❌ Error mezclando música para ${lang}:`, musicError);
+          if (fs.existsSync(tempWithMusic)) fs.unlinkSync(tempWithMusic);
+        }
+      }
+    }
+  }
+}
+
+app.post('/generate-translated-audios', async (req, res) => {
+  const { folderName, totalSections, applioVoice, applioModel, applioPitch, applioSpeed, silencePadding, targetDuration: requestedDuration } = req.body;
+  
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  try {
+    const projectDir = path.join('./public/outputs', folderName);
+    
+    // 1. Generar y medir audio en ESPAÑOL (Referencia de duración) - PRIMER PASO
+    console.log('🔗 Procesando audio base (Español)...');
+    res.write(`data: ${JSON.stringify({ progress: true, message: 'Procesando audio español...' })}\n\n`);
+    
+    let targetDuration = null;
+    let finalSilencePadding = silencePadding;
+
+    if (requestedDuration && requestedDuration > 20) {
+        targetDuration = requestedDuration - 20;
+        finalSilencePadding = 20;
+        console.log(`🎯 Duración objetivo manual: ${requestedDuration}s (Audio: ${targetDuration}s + Silencio: 20s)`);
+    }
+    
+    try {
+      const ffmpeg = (await import('fluent-ffmpeg')).default;
+      const ffmpegPath = (await import('ffmpeg-static')).default;
+      ffmpeg.setFfmpegPath(ffmpegPath);
+
+      const outputDir = path.join(projectDir, 'audios_completos');
+      if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
+
+      const spanishFiles = [];
+      for (let i = 1; i <= totalSections; i++) {
+        const sectionDir = path.join(projectDir, `seccion_${i}`);
+        if (!fs.existsSync(sectionDir)) continue;
+
+        // Buscar todos los archivos WAV
+        const files = fs.readdirSync(sectionDir);
+        const wavFiles = files.filter(f => f.toLowerCase().endsWith('.wav'));
+        
+        // Excluir los que sabemos que son traducciones (terminan en _en.wav, _fr.wav, etc.)
+        const translationSuffixes = ['_en.wav', '_fr.wav', '_de.wav', '_ko.wav', '_ru.wav', '_pt.wav', '_zh.wav'];
+        const candidates = wavFiles.filter(f => {
+            return !translationSuffixes.some(suffix => f.toLowerCase().endsWith(suffix));
+        });
+
+        let selectedFile = null;
+
+        if (candidates.length === 1) {
+            selectedFile = candidates[0];
+        } else if (candidates.length > 1) {
+            // Si hay varios candidatos, elegir el más antiguo (el original en español)
+            const candidatesWithStats = candidates.map(f => ({
+                name: f,
+                stat: fs.statSync(path.join(sectionDir, f))
+            }));
+            
+            // Ordenar por fecha de modificación (el más viejo primero)
+            candidatesWithStats.sort((a, b) => a.stat.mtimeMs - b.stat.mtimeMs);
+            selectedFile = candidatesWithStats[0].name;
+        }
+
+        if (selectedFile) {
+          const fullPath = path.join(sectionDir, selectedFile);
+          console.log(`✅ Audio español detectado (Sección ${i}): ${selectedFile}`);
+          spanishFiles.push(fullPath);
+        } else {
+          console.warn(`⚠️ No se encontró candidato para audio español en sección ${i}`);
+        }
+      }
+
+      if (spanishFiles.length > 0) {
+        const spanishOutputPath = path.join(outputDir, 'espanol.wav');
+        
+        // Verificar si ya existe el audio español unido para no regenerarlo innecesariamente
+        if (!fs.existsSync(spanishOutputPath)) {
+            console.log(`🔗 Uniendo ${spanishFiles.length} audios de Español...`);
+            
+            await new Promise((resolve, reject) => {
+              const command = ffmpeg();
+              spanishFiles.forEach(f => command.input(f));
+              command
+                .on('error', reject)
+                .on('end', resolve)
+                .mergeToFile(spanishOutputPath, os.tmpdir());
+            });
+        } else {
+            console.log(`⏩ Audio español unido ya existe, omitiendo unión.`);
+        }
+
+        // Obtener duración del español unido (siempre necesario para referencia)
+        const spanishDuration = await new Promise((resolve, reject) => {
+          ffmpeg.ffprobe(spanishOutputPath, (err, metadata) => {
+            if (err) reject(err);
+            else resolve(metadata.format.duration);
+          });
+        });
+        
+        if (!targetDuration) {
+            targetDuration = spanishDuration;
+        }
+        
+        console.log(`⏱️ Duración objetivo (Español): ${spanishDuration.toFixed(2)}s -> Usando: ${targetDuration.toFixed(2)}s`);
+      } else {
+        console.warn('⚠️ No se encontraron audios en español para usar como referencia de tiempo.');
+      }
+
+    } catch (esError) {
+      console.error('❌ Error procesando audio español:', esError);
+    }
+
+    const languages = ['en', 'fr', 'de', 'ko', 'ru', 'pt', 'zh'];
+    const tasks = [];
+
+    // Crear tareas ordenadas por SECCIÓN y luego por IDIOMA (1 por 1 de la sección 1, luego sección 2, etc.)
+    for (let i = 1; i <= totalSections; i++) {
+      for (const lang of languages) {
+        const scriptPath = path.join(projectDir, `seccion_${i}`, `${folderName}_seccion_${i}_guion_${lang}.txt`);
+        
+        // Verificar si ya existe el audio para no agregarlo a la cola
+        const audioFileName = `${folderName}_seccion_${i}_audio_${lang}.wav`;
+        const audioPath = path.join(projectDir, `seccion_${i}`, audioFileName);
+
+        if (fs.existsSync(scriptPath) && !fs.existsSync(audioPath)) {
+          tasks.push({ lang, section: i });
+        }
+      }
+    }
+
+    const totalTasks = tasks.length;
+    let completedTasks = 0;
+    
+    console.log(`🎤 Iniciando generación de AUDIOS traducidos para ${folderName} (${totalTasks} tareas pendientes)`);
+    console.log(`📋 Orden de procesamiento: Sección por Sección`);
+    
+    if (totalTasks > 0) {
+        // Iniciar Applio si no está iniciado
+        if (!applioStarted) {
+          await startApplio();
+        }
+
+        const applioSettings = {
+          voice: applioVoice,
+          model: applioModel,
+          pitch: applioPitch,
+          speed: applioSpeed
+        };
+
+        const processTask = async (task) => {
+          try {
+            await generateTranslatedAudioForSection(folderName, task.section, task.lang, projectDir, applioSettings);
+          } catch (err) {
+            console.error(`❌ Error generando audio sección ${task.section} (${task.lang}):`, err.message);
+          } finally {
+            completedTasks++;
+            res.write(`data: ${JSON.stringify({ progress: true, completedTasks, totalTasks, current: completedTasks })}\n\n`);
+          }
+        };
+
+        // Ejecución secuencial 1 por 1 para evitar sobrecarga en Applio
+        for (const task of tasks) {
+          await processTask(task);
+          // Pausa de seguridad entre audios para evitar conflictos de archivos en Applio
+          console.log('⏳ Esperando 5 segundos para enfriar Applio...');
+          await new Promise(resolve => setTimeout(resolve, 5000));
+        }
+    } else {
+        console.log('✅ Todos los audios ya existen. Saltando generación.');
+    }
+
+    // Unir audios por idioma al finalizar (usando targetDuration si existe)
+    console.log('🔗 Iniciando unión de audios traducidos...');
+    res.write(`data: ${JSON.stringify({ progress: true, message: 'Uniendo audios...' })}\n\n`);
+    
+    try {
+      await concatenateTranslatedAudios(projectDir, folderName, totalSections, targetDuration, finalSilencePadding);
+      console.log('✅ Unión de audios completada');
+    } catch (concatError) {
+      console.error('❌ Error uniendo audios:', concatError);
+      res.write(`data: ${JSON.stringify({ error: 'Error uniendo audios: ' + concatError.message })}\n\n`);
+    }
+
+    res.write(`data: ${JSON.stringify({ complete: true })}\n\n`);
+    res.end();
+
+  } catch (error) {
+    console.error('❌ Error en generación de audios:', error);
+    res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
+    res.end();
+  }
+});
+
+app.post('/translate-title', async (req, res) => {
+  try {
+    const { title } = req.body;
+    if (!title) return res.status(400).json({ error: 'Título requerido' });
+
+    console.log(`🌍 Traduciendo título: "${title}"`);
+
+    const prompt = `
+      Translate the following YouTube video title into these languages: 
+      English (en), French (fr), German (de), Korean (ko), Russian (ru), Portuguese (pt), and Chinese Simplified (zh).
+      
+      Title: "${title}"
+      
+      Return ONLY a valid JSON object with the language codes as keys and the translated titles as values. 
+      Example format:
+      {
+        "en": "Title in English",
+        "fr": "Title in French",
+        ...
+      }
+      Do not include markdown formatting or explanations.
+    `;
+
+    const { model } = await getGoogleAI("gemini-2.5-flash", { context: 'llm', forcePrimary: true });
+    const result = await model.generateContent(prompt);
+    const responseText = result.response.text().replace(/```json|```/g, '').trim();
+    
+    const translations = JSON.parse(responseText);
+    res.json(translations);
+
+  } catch (error) {
+    console.error('❌ Error traduciendo título:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.post('/generate-youtube-metadata', async (req, res) => {
   try {
     const { topic, allSections, folderName, thumbnailStyle, language } = req.body;
@@ -12615,7 +13437,7 @@ app.post('/generate-youtube-metadata', async (req, res) => {
       chaptersTimestamps
     });
 
-  const { model } = await getGoogleAI("gemini-2.5-flash", { context: 'llm', forcePrimary: true });
+  const { model } = await getGoogleAI("gemini-3-pro-preview", { context: 'llm', forcePrimary: true });
     
     const response = await model.generateContent([{ text: prompt }]);
     const responseText = response.response.text();
@@ -15926,26 +16748,28 @@ app.listen(PORT, '0.0.0.0', async () => {
 // Manejadores para cerrar ComfyUI y Applio cuando la aplicación se cierre
 process.on('SIGINT', async () => {
   console.log('\n🛑 Cerrando aplicación...');
-  console.log('🔄 Cerrando ventana CMD de ComfyUI...');
-  await stopComfyUI();
-  console.log('🔄 Cerrando ventana CMD de Applio...');
-  await stopApplio();
+  // Comentado para mantener servicios activos
+  // console.log('🔄 Cerrando ventana CMD de ComfyUI...');
+  // await stopComfyUI();
+  // console.log('🔄 Cerrando ventana CMD de Applio...');
+  // await stopApplio();
   process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
   console.log('\n🛑 Terminando aplicación...');
-  console.log('🔄 Cerrando ventana CMD de ComfyUI...');
-  await stopComfyUI();
-  console.log('🔄 Cerrando ventana CMD de Applio...');
-  await stopApplio();
+  // Comentado para mantener servicios activos
+  // console.log('🔄 Cerrando ventana CMD de ComfyUI...');
+  // await stopComfyUI();
+  // console.log('🔄 Cerrando ventana CMD de Applio...');
+  // await stopApplio();
   process.exit(0);
 });
 
 process.on('beforeExit', async () => {
-  console.log('🔄 Cerrando ventanas CMD antes de salir...');
-  await stopComfyUI();
-  await stopApplio();
+  // console.log('🔄 Cerrando ventanas CMD antes de salir...');
+  // await stopComfyUI();
+  // await stopApplio();
 });
 
 // Endpoint para obtener el estado de un proyecto

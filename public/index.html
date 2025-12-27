@@ -560,6 +560,7 @@
               <i class="fas fa-brain"></i> Modelo LLM:
             </label>
             <select id="llmModelSelect" class="field-select">
+              <option value="gemini-3-pro-preview">Gemini 3 Pro (Preview)</option>
               <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
               <option value="gemini-2.5-flash" selected>Gemini 2.5 Flash</option>
               <option value="gpt-5">GPT-5</option>
@@ -646,6 +647,15 @@
               <span class="checkbox-custom"></span>
               <i class="fas fa-microphone"></i>
               Incluir audio Applio
+            </label>
+          </div>
+
+          <div class="checkbox-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="includeTranslations" class="checkbox-input">
+              <span class="checkbox-custom"></span>
+              <i class="fas fa-language"></i>
+              Incluir Traducciones
             </label>
           </div>
 
@@ -855,40 +865,6 @@
     <!-- Botón de Generación de Video Manual -->
     <div id="videoGenerationContainer" style="display: none;" class="video-generation-section">
       <div class="video-generation-wrapper">
-        <h3><i class="fas fa-video"></i> Generación de Video</h3>
-        <p class="video-description">Convierte todas las secciones generadas en un video compilado con transiciones y audio sincronizado.</p>
-        
-        <button id="generateSimpleVideoBtn" class="generate-simple-video-btn">
-          <i class="fas fa-images"></i>
-          <span>Video Simple (Sin Animación)</span>
-        </button>
-        
-        <button id="generateSeparateVideosBtn" class="generate-separate-videos-btn">
-          <i class="fas fa-video"></i>
-          <span>Clips Separados por Sección</span>
-        </button>
-
-        <div id="sectionClipsContainer" class="section-clips-container" style="display: none;">
-          <div class="section-clips-header">
-            <i class="fas fa-cut"></i>
-            <span>Generar clips individuales por sección</span>
-          </div>
-          <div id="sectionClipsButtons" class="section-clips-grid">
-            <!-- Botones dinámicos por sección -->
-          </div>
-        </div>
-
-        <div id="clipProgressContainer" class="clip-progress-container" style="display: none;">
-          <div class="clip-progress-header">
-            <i class="fas fa-chart-bar"></i>
-            <span>Progreso de clips por sección</span>
-          </div>
-          <div id="clipProgressSummary" class="clip-progress-summary">Preparando progreso...</div>
-          <div id="clipProgressColumns" class="clip-progress-columns">
-            <!-- Columnas de progreso dinámicas -->
-          </div>
-        </div>
-        
         <button id="regenerateApplioAudiosBtn" class="regenerate-audio-btn" style="display: none;">
           <i class="fas fa-microphone-alt"></i>
           <span>Generar Audios Faltantes</span>
@@ -898,62 +874,187 @@
           <i class="fas fa-youtube"></i>
           <span>Generar Metadatos</span>
         </button>
-        
-        <div id="generateMissingImagesControls" class="generate-missing-images-controls" style="display: none;">
-          <div id="googleApiSelector" class="google-api-selector" style="display: none;">
-            <div class="google-api-selector__header">
-              <i class="fas fa-plug"></i>
-              <span>Selecciona las APIs de Google</span>
-            </div>
-            <div id="googleApiOptions" class="google-api-options">
-              <!-- Opciones de APIs de Google se insertan dinámicamente -->
-            </div>
-            <p class="google-api-selector__hint">Se enviarán 5 imágenes por lote y se esperarán 10 segundos entre cada intento.</p>
-          </div>
-          <button id="generateMissingImagesBtn" class="generate-missing-images-btn">
-            <i class="fas fa-image"></i>
-            <span>Generar Imágenes Faltantes</span>
-          </button>
-          <button id="cancelMissingImagesBtn" class="cancel-missing-images-btn" style="display: none;">
-            <i class="fas fa-stop-circle"></i>
-            <span>Detener Generación</span>
-          </button>
-          <label for="attemptComfyCheckbox" class="attempt-comfy-toggle">
-            <input type="checkbox" id="attemptComfyCheckbox">
-            <span>Intentar con Comfy</span>
-          </label>
-        </div>
 
-        <div id="sectionImagesContainer" class="section-images-container" style="display: none;">
-          <div class="section-images-header">
-            <i class="fas fa-images"></i>
-            <span>Generar imágenes por sección</span>
+        <!-- Panel de Traducción -->
+        <div id="translationPanel" class="translation-panel" style="display: none;">
+          <div class="panel-header">
+            <div class="panel-title">
+              <i class="fas fa-language"></i>
+              <span>Localización y Doblaje</span>
+            </div>
+            <span class="panel-badge">Multi-idioma</span>
           </div>
-          <div id="sectionImagesButtons" class="section-images-grid">
-            <!-- Botones dinámicos por sección -->
-          </div>
-        </div>
+          
+          <div class="panel-content">
+            <p class="panel-description">
+              Traduce guiones y genera doblajes sincronizados automáticamente.
+            </p>
 
-        <div id="sectionImagesProgressContainer" class="section-images-progress" style="display: none;">
-          <div class="section-images-progress-header">
-            <i class="fas fa-bars-progress"></i>
-            <span>Progreso de imágenes por sección</span>
-            <span id="sectionImagesProgressSummary" class="section-images-progress-summary">Sin datos</span>
-          </div>
-          <div id="sectionImagesProgressBars" class="section-images-progress-bars">
-            <!-- Barras de progreso por sección -->
+            <div class="translation-actions">
+              <!-- Paso 1: Traducción -->
+              <div class="action-group">
+                <button id="translateAllBtn" class="action-btn primary-action">
+                  <div class="btn-icon"><i class="fas fa-globe"></i></div>
+                  <div class="btn-text">
+                    <span class="btn-title">Traducir Todo</span>
+                    <span class="btn-subtitle">EN, FR, DE, KO, RU, PT, ZH</span>
+                  </div>
+                </button>
+              </div>
+
+              <!-- Paso 2: Generación de Audio -->
+              <div class="action-group">
+                <button id="generateTranslatedAudiosBtn" class="action-btn secondary-action">
+                  <div class="btn-icon"><i class="fas fa-microphone-alt"></i></div>
+                  <div class="btn-text">
+                    <span class="btn-title">Generar Doblaje</span>
+                    <span class="btn-subtitle">Crear audios con Applio</span>
+                  </div>
+                </button>
+              </div>
+
+              <!-- Configuración de Tiempo -->
+              <div class="time-config-container">
+                <div class="time-input-wrapper">
+                  <i class="fas fa-clock"></i>
+                  <label for="targetDurationInput">Duración Objetivo</label>
+                  <input type="text" id="targetDurationInput" placeholder="MM:SS" maxlength="5">
+                </div>
+                <div class="time-hint">Ajusta el audio final a este tiempo exacto</div>
+              </div>
+            </div>
+
+            <!-- Progreso -->
+            <div id="translationProgress" class="translation-progress-container" style="display: none;">
+              <div class="progress-info">
+                <span id="translationStatus">Procesando...</span>
+                <span id="translationPercent">0%</span>
+              </div>
+              <div class="progress-track">
+                <div id="translationProgressBar" class="progress-fill"></div>
+              </div>
+            </div>
+
+            <hr style="border: 0; border-top: 1px solid var(--color-border-soft); margin: 20px 0;">
+            
+            <!-- Traducción de Títulos -->
+            <div class="title-translation-section">
+              <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 15px; color: var(--color-accent-2); font-weight: 600;">
+                <i class="fas fa-heading"></i> Traducción de Títulos
+              </div>
+              
+              <div class="input-group" style="margin-bottom: 15px;">
+                <input type="text" id="titleInput" placeholder="Ingresa el título del video aquí..." style="width: 100%; padding: 12px; border-radius: var(--radius-sm); background: var(--color-bg-900); border: 1px solid var(--color-border); color: var(--text-primary); margin-bottom: 10px; outline: none;">
+                <button id="translateTitleBtn" class="action-btn primary-action" style="width: 100%; justify-content: center;">
+                  <i class="fas fa-language"></i> Traducir Título a Todos los Idiomas
+                </button>
+              </div>
+
+              <div id="translatedTitlesList" class="translated-titles-list" style="display: none; display: grid; gap: 10px;">
+                <!-- Items generated dynamically -->
+              </div>
+            </div>
           </div>
         </div>
-        
-        <button id="generateMissingPromptsBtn" class="generate-missing-prompts-btn" style="display: none;">
-          <i class="fas fa-file-text"></i>
-          <span>Generar Prompts de Imágenes Faltantes</span>
-        </button>
         
         <button id="regenerateMissingScriptsBtn" class="regenerate-scripts-btn" style="display: none;">
           <i class="fas fa-file-alt"></i>
           <span>Regenerar Guiones Vacíos</span>
         </button>
+
+        <details class="video-generation-collapsible" style="margin-top: 20px; background: rgba(0,0,0,0.2); border-radius: 8px; border: 1px solid #4a5568;">
+          <summary style="padding: 15px; cursor: pointer; font-weight: bold; color: #e2e8f0; list-style: none; display: flex; justify-content: space-between; align-items: center;">
+            <span><i class="fas fa-video"></i> Generación de Video y Clips</span>
+            <i class="fas fa-chevron-down"></i>
+          </summary>
+          <div style="padding: 15px; border-top: 1px solid #4a5568;">
+            <p class="video-description" style="margin-top: 0;">Convierte todas las secciones generadas en un video compilado con transiciones y audio sincronizado.</p>
+            
+            <button id="generateSimpleVideoBtn" class="generate-simple-video-btn">
+              <i class="fas fa-images"></i>
+              <span>Video Simple (Sin Animación)</span>
+            </button>
+            
+            <button id="generateSeparateVideosBtn" class="generate-separate-videos-btn">
+              <i class="fas fa-video"></i>
+              <span>Clips Separados por Sección</span>
+            </button>
+
+            <div id="sectionClipsContainer" class="section-clips-container" style="display: none;">
+              <div class="section-clips-header">
+                <i class="fas fa-cut"></i>
+                <span>Generar clips individuales por sección</span>
+              </div>
+              <div id="sectionClipsButtons" class="section-clips-grid">
+                <!-- Botones dinámicos por sección -->
+              </div>
+            </div>
+
+            <div id="clipProgressContainer" class="clip-progress-container" style="display: none;">
+              <div class="clip-progress-header">
+                <i class="fas fa-chart-bar"></i>
+                <span>Progreso de clips por sección</span>
+              </div>
+              <div id="clipProgressSummary" class="clip-progress-summary">Preparando progreso...</div>
+              <div id="clipProgressColumns" class="clip-progress-columns">
+                <!-- Columnas de progreso dinámicas -->
+              </div>
+            </div>
+
+            <hr style="border: 0; border-top: 1px solid #4a5568; margin: 20px 0;">
+
+            <div id="generateMissingImagesControls" class="generate-missing-images-controls" style="display: none;">
+              <div id="googleApiSelector" class="google-api-selector" style="display: none;">
+                <div class="google-api-selector__header">
+                  <i class="fas fa-plug"></i>
+                  <span>Selecciona las APIs de Google</span>
+                </div>
+                <div id="googleApiOptions" class="google-api-options">
+                  <!-- Opciones de APIs de Google se insertan dinámicamente -->
+                </div>
+                <p class="google-api-selector__hint">Se enviarán 5 imágenes por lote y se esperarán 10 segundos entre cada intento.</p>
+              </div>
+              <button id="generateMissingImagesBtn" class="generate-missing-images-btn">
+                <i class="fas fa-image"></i>
+                <span>Generar Imágenes Faltantes</span>
+              </button>
+              <button id="cancelMissingImagesBtn" class="cancel-missing-images-btn" style="display: none;">
+                <i class="fas fa-stop-circle"></i>
+                <span>Detener Generación</span>
+              </button>
+              <label for="attemptComfyCheckbox" class="attempt-comfy-toggle">
+                <input type="checkbox" id="attemptComfyCheckbox">
+                <span>Intentar con Comfy</span>
+              </label>
+            </div>
+
+            <div id="sectionImagesContainer" class="section-images-container" style="display: none;">
+              <div class="section-images-header">
+                <i class="fas fa-images"></i>
+                <span>Generar imágenes por sección</span>
+              </div>
+              <div id="sectionImagesButtons" class="section-images-grid">
+                <!-- Botones dinámicos por sección -->
+              </div>
+            </div>
+
+            <div id="sectionImagesProgressContainer" class="section-images-progress" style="display: none;">
+              <div class="section-images-progress-header">
+                <i class="fas fa-bars-progress"></i>
+                <span>Progreso de imágenes por sección</span>
+                <span id="sectionImagesProgressSummary" class="section-images-progress-summary">Sin datos</span>
+              </div>
+              <div id="sectionImagesProgressBars" class="section-images-progress-bars">
+                <!-- Barras de progreso por sección -->
+              </div>
+            </div>
+            
+            <button id="generateMissingPromptsBtn" class="generate-missing-prompts-btn" style="display: none;">
+              <i class="fas fa-file-text"></i>
+              <span>Generar Prompts de Imágenes Faltantes</span>
+            </button>
+          </div>
+        </details>
         
         <div id="videoProgressContainer" class="video-progress-container" style="display: none;">
           <div class="video-progress-label">Generando video...</div>
