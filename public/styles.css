@@ -9381,43 +9381,71 @@ body.prompts-panel-active .container {
 .audio-capsule {
   background: rgba(7, 12, 22, 0.75);
   border: 1px solid rgba(255, 165, 0, 0.1);
+  transition: all 0.3s ease;
 }
 
 .audio-capsule.completed {
   background: #ffa500;
-  box-shadow: 0 0 8px rgba(255, 165, 0, 0.4);
+  box-shadow: 0 0 10px rgba(255, 165, 0, 0.6);
+  border-color: #ffa500;
+}
+
+.audio-capsule.active {
+  background: rgba(255, 165, 0, 0.3);
+  border-color: #ffa500;
+  box-shadow: 0 0 15px rgba(255, 165, 0, 0.4);
+  animation: pulse-orange 1.5s infinite;
+}
+
+@keyframes pulse-orange {
+  0% { box-shadow: 0 0 0 0 rgba(255, 165, 0, 0.4); }
+  70% { box-shadow: 0 0 0 6px rgba(255, 165, 0, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(255, 165, 0, 0); }
 }
 
 /* Contenedores de progreso por proyecto */
 .project-progress-container {
-  background: rgba(7, 12, 22, 0.8);
-  border: 1px solid rgba(0, 255, 127, 0.2);
-  border-radius: 12px;
-  padding: 16px;
+  background: linear-gradient(145deg, rgba(15, 23, 42, 0.9), rgba(7, 12, 22, 0.95));
+  border: 1px solid rgba(0, 255, 127, 0.3);
+  border-radius: 16px;
+  padding: 20px;
   margin: 0;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(10px);
   flex: 1;
   min-width: 300px;
   max-width: 400px;
+  transition: all 0.3s ease;
+}
+
+.project-progress-container:hover {
+  border-color: rgba(0, 255, 127, 0.6);
+  box-shadow: 0 12px 40px rgba(0, 255, 127, 0.15);
+  transform: translateY(-2px);
 }
 
 .project-progress-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 12px;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 }
 
 .project-progress-title {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   font-weight: 600;
+  font-size: 1.1rem;
   color: var(--text-primary);
+  text-shadow: 0 0 10px rgba(0, 255, 127, 0.3);
 }
 
 .project-progress-title i {
   color: #00ff7f;
+  filter: drop-shadow(0 0 5px rgba(0, 255, 127, 0.5));
 }
 
 .project-progress-status {
@@ -9427,26 +9455,65 @@ body.prompts-panel-active .container {
 }
 
 .project-phase {
-  font-size: 0.9rem;
-  color: var(--text-secondary);
-  padding: 4px 8px;
+  font-size: 0.8rem;
+  color: #00ff7f;
+  padding: 4px 10px;
   background: rgba(0, 255, 127, 0.1);
-  border-radius: 6px;
+  border: 1px solid rgba(0, 255, 127, 0.2);
+  border-radius: 20px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 600;
 }
 
 .project-percentage {
-  font-size: 1.1rem;
-  font-weight: 700;
+  font-size: 1.2rem;
+  font-weight: 800;
   color: #00ff7f;
+  text-shadow: 0 0 10px rgba(0, 255, 127, 0.4);
+}
+
+/* Time stats */
+.project-time-stats {
+  display: flex;
+  justify-content: space-between;
+  margin: 15px 0;
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.time-stat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.time-stat i {
+  color: #00ff7f;
+  opacity: 0.8;
+}
+
+.time-value {
+  font-family: 'Courier New', monospace;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: 1px;
 }
 
 .project-progress-info {
-  margin-top: 8px;
+  margin-top: 12px;
   text-align: center;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 8px;
 }
 
 .project-current-task {
-  font-size: 0.85rem;
+  font-size: 0.9rem;
   color: var(--text-muted);
 }
 
@@ -10356,5 +10423,112 @@ body.prompts-panel-active .container {
   width: 0%;
   transition: width 0.3s ease;
   box-shadow: 0 0 10px rgba(34, 211, 238, 0.3);
+}
+
+
+/* Estilos para el nuevo contenedor de progreso detallado */
+.detailed-progress-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 16px;
+  margin: 20px 0;
+}
+
+.progress-detail-card {
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(99, 102, 241, 0.2);
+  border-radius: var(--radius-sm);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  transition: all 0.3s ease;
+}
+
+.progress-detail-card.active {
+  border-color: var(--color-accent-1);
+  background: rgba(99, 102, 241, 0.1);
+  box-shadow: 0 0 15px rgba(99, 102, 241, 0.15);
+}
+
+.progress-detail-card.completed {
+  border-color: var(--color-accent-2);
+  background: rgba(34, 211, 238, 0.05);
+}
+
+.detail-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.detail-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: rgba(99, 102, 241, 0.2);
+  color: var(--color-accent-1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.9rem;
+}
+
+.progress-detail-card.completed .detail-icon {
+  background: rgba(34, 211, 238, 0.2);
+  color: var(--color-accent-2);
+}
+
+.detail-title {
+  font-weight: 600;
+  color: var(--text-primary);
+  flex-grow: 1;
+}
+
+.detail-count {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  background: rgba(0, 0, 0, 0.2);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.detail-bar-container {
+  height: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.detail-bar {
+  height: 100%;
+  background: linear-gradient(90deg, var(--color-accent-1), var(--color-accent-3));
+  border-radius: 3px;
+  transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 0 8px rgba(99, 102, 241, 0.4);
+}
+
+.progress-detail-card.completed .detail-bar {
+  background: linear-gradient(90deg, var(--color-accent-2), #2dd4bf);
+  box-shadow: 0 0 8px rgba(34, 211, 238, 0.4);
+}
+
+.detail-status {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  text-align: right;
+  font-style: italic;
+}
+
+.progress-detail-card.active .detail-status {
+  color: var(--color-accent-1);
+  font-style: normal;
+  font-weight: 500;
+}
+
+.progress-detail-card.completed .detail-status {
+  color: var(--color-accent-2);
+  font-weight: 600;
 }
 

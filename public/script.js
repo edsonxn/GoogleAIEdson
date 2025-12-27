@@ -1258,10 +1258,12 @@ function updateAudioCapsules(currentStep, totalSteps, containerId) {
   
   // Marcar cÃ¡psulas completadas hasta currentStep - 1
   capsules.forEach((capsule, index) => {
+    capsule.classList.remove('completed', 'active');
+    
     if (index < currentStep) {
       capsule.classList.add('completed');
-    } else {
-      capsule.classList.remove('completed');
+    } else if (index === currentStep) {
+      capsule.classList.add('active');
     }
   });
 }
@@ -1360,6 +1362,20 @@ function createProjectProgressContainer(projectKey, projectName, totalSections, 
         <span class="project-percentage">0%</span>
       </div>
     </div>
+    
+    <div class="project-time-stats">
+      <div class="time-stat">
+        <i class="fas fa-clock"></i>
+        <span class="time-label">Tiempo:</span>
+        <span class="time-value" id="time-elapsed-${projectKey}">00:00</span>
+      </div>
+      <div class="time-stat">
+        <i class="fas fa-hourglass-half"></i>
+        <span class="time-label">Estimado:</span>
+        <span class="time-value" id="time-remaining-${projectKey}">--:--</span>
+      </div>
+    </div>
+
     <div class="progress-bar-wrapper">
       <div class="progress-capsules" id="progressCapsules-${projectKey}">
         <!-- CÃ¡psulas se generarÃ¡n dinÃ¡micamente -->
@@ -1387,6 +1403,21 @@ function createProjectProgressContainer(projectKey, projectName, totalSections, 
     outputElement.appendChild(container);
   }
 
+  // Inicializar datos del proyecto con tiempo de inicio si no existe
+  if (!projectDataMap.has(projectKey)) {
+    projectDataMap.set(projectKey, { 
+      startTime: Date.now(),
+      ...projectData 
+    });
+  } else {
+    // Si ya existe, asegurarnos de que tenga startTime
+    const existingData = projectDataMap.get(projectKey);
+    if (!existingData.startTime) {
+      existingData.startTime = Date.now();
+      projectDataMap.set(projectKey, existingData);
+    }
+  }
+
   // Inicializar cÃ¡psulas
   setTimeout(() => {
     initializeProgressCapsules(`progressCapsules-${projectKey}`);
@@ -1399,10 +1430,32 @@ function createProjectProgressContainer(projectKey, projectName, totalSections, 
   }, 100);
 
   projectProgressContainers.set(projectKey, container);
+  
+  // Actualizar mapa de datos preservando startTime si existe
   if (projectData) {
-    projectDataMap.set(projectKey, projectData);
+    const existingData = projectDataMap.get(projectKey) || {};
+    projectDataMap.set(projectKey, {
+      startTime: existingData.startTime || Date.now(),
+      ...projectData
+    });
   }
   return container;
+}
+
+// Formatear tiempo en MM:SS
+function formatTime(ms) {
+  if (!ms || ms < 0) return '00:00';
+  const seconds = Math.floor((ms / 1000) % 60);
+  const minutes = Math.floor((ms / (1000 * 60)) % 60);
+  const hours = Math.floor(ms / (1000 * 60 * 60));
+  
+  const formattedSeconds = seconds.toString().padStart(2, '0');
+  const formattedMinutes = minutes.toString().padStart(2, '0');
+  
+  if (hours > 0) {
+    return `${hours}:${formattedMinutes}:${formattedSeconds}`;
+  }
+  return `${formattedMinutes}:${formattedSeconds}`;
 }
 
 // Actualizar progreso de un proyecto especÃ­fico
@@ -1415,6 +1468,25 @@ function updateProjectProgress(projectKey, data) {
   }
 
   const { percentage, phase, currentStep, totalSteps, currentTask, audioProgress, imagesProgress } = data;
+
+  // Actualizar tiempos
+  const projectData = projectDataMap.get(projectKey);
+  if (projectData && projectData.startTime) {
+    const elapsedTime = Date.now() - projectData.startTime;
+    const timeElapsedElement = container.querySelector(`#time-elapsed-${projectKey}`);
+    if (timeElapsedElement) {
+      timeElapsedElement.textContent = formatTime(elapsedTime);
+    }
+
+    const timeRemainingElement = container.querySelector(`#time-remaining-${projectKey}`);
+    if (timeRemainingElement && percentage > 0 && percentage < 100) {
+      const estimatedTotalTime = elapsedTime / (percentage / 100);
+      const remainingTime = estimatedTotalTime - elapsedTime;
+      timeRemainingElement.textContent = formatTime(remainingTime);
+    } else if (percentage >= 100) {
+      if (timeRemainingElement) timeRemainingElement.textContent = '00:00';
+    }
+  }
 
   // Actualizar porcentaje principal
   const percentageElement = container.querySelector('.project-percentage');
@@ -1645,7 +1717,8 @@ function startProgressPolling(projectKey, onProgressUpdate = null) {
           currentStep: progressData.currentStep,
           totalSteps: progressData.totalSteps,
           estimatedTimeRemaining: progressData.estimatedTimeRemaining,
-          currentTask: currentTask
+          currentTask: currentTask,
+          phases: progressData.phases
         };
         
         // Usar callback personalizado si se proporciona, sino usar updateProgressBar
@@ -1690,9 +1763,75 @@ function stopProgressPolling(projectKey = null) {
   }
 }
 
+// Actualizar progreso detallado (Guiones y Audios)
+function updateDetailedProgress(phases) {
+    // Update Script Progress
+    if (phases.script) {
+        const scriptCard = document.getElementById('scriptProgressCard');
+        const scriptBar = document.getElementById('scriptProgressBar');
+        const scriptCount = document.getElementById('scriptCount');
+        const scriptStatus = document.getElementById('scriptStatus');
+        
+        if (scriptCard && scriptBar && scriptCount && scriptStatus) {
+            const total = phases.script.total || 0;
+            const completed = phases.script.completed || 0;
+            const percent = total > 0 ? (completed / total) * 100 : 0;
+            
+            scriptBar.style.width = `${percent}%`;
+            scriptCount.textContent = `${completed}/${total}`;
+            
+            if (percent === 100) {
+                scriptCard.classList.add('completed');
+                scriptCard.classList.remove('active');
+                scriptStatus.textContent = 'Completado';
+            } else if (percent > 0) {
+                scriptCard.classList.add('active');
+                scriptStatus.textContent = 'Generando...';
+            } else {
+                scriptCard.classList.remove('active', 'completed');
+                scriptStatus.textContent = 'Pendiente';
+            }
+        }
+    }
+
+    // Update Audio Progress
+    if (phases.audio) {
+        const audioCard = document.getElementById('audioProgressCard');
+        const audioBar = document.getElementById('audioProgressBar');
+        const audioCount = document.getElementById('audioCount');
+        const audioStatus = document.getElementById('audioStatus');
+        
+        if (audioCard && audioBar && audioCount && audioStatus) {
+            const total = phases.audio.total || 0;
+            const completed = phases.audio.completed || 0;
+            const percent = total > 0 ? (completed / total) * 100 : 0;
+            
+            audioBar.style.width = `${percent}%`;
+            audioCount.textContent = `${completed}/${total}`;
+            
+            if (percent === 100) {
+                audioCard.classList.add('completed');
+                audioCard.classList.remove('active');
+                audioStatus.textContent = 'Completado';
+            } else if (percent > 0) {
+                audioCard.classList.add('active');
+                audioStatus.textContent = 'Generando...';
+            } else {
+                audioCard.classList.remove('active', 'completed');
+                audioStatus.textContent = 'Pendiente';
+            }
+        }
+    }
+}
+
 // Actualizar la barra de progreso
 function updateProgressBar(data) {
-  const { percentage, phase, currentStep, totalSteps, estimatedTimeRemaining, currentTask } = data;
+  const { percentage, phase, currentStep, totalSteps, estimatedTimeRemaining, currentTask, phases } = data;
+
+  // Actualizar tarjetas de progreso detallado si hay datos de fases
+  if (phases) {
+    updateDetailedProgress(phases);
+  }
 
   const progressCapsules = document.getElementById('progressCapsules');
   const progressPercentage = document.getElementById('progressPercentage');
@@ -1811,7 +1950,11 @@ function resetProgressBar() {
     currentStep: 0,
     totalSteps: 0,
     estimatedTimeRemaining: 'Calculando...',
-    currentTask: 'Preparando generaciÃ³n...'
+    currentTask: 'Preparando generaciÃ³n...',
+    phases: {
+        script: { total: 0, completed: 0 },
+        audio: { total: 0, completed: 0 }
+    }
   });
   progressStartTime = null;
   if (progressInterval) {
@@ -2317,13 +2460,7 @@ async function runAutoGeneration() {
   const generateAudio = document.getElementById("autoGenerateAudio").checked;
   let generateApplioAudio = document.getElementById("autoGenerateApplioAudio").checked;
   const selectedApplioVoice = document.getElementById("applioVoiceSelect").value;
-  let selectedApplioModel = document.getElementById("applioModelSelect").value || "es-ES-AlvaroNeural";
-  
-  // Fix: Replace broken French voice if selected
-  if (selectedApplioModel === 'fr-FR-RemyMultilingualNeural') {
-    selectedApplioModel = 'es-ES-AlvaroNeural';
-  }
-
+  const selectedApplioModel = document.getElementById("applioModelSelect").value;
   const applioPitch = parseInt(document.getElementById("applioPitch").value) || 0;
   const applioSpeed = parseInt(document.getElementById("applioSpeed").value) || 0;
 
@@ -3456,7 +3593,7 @@ async function generateSectionApplioAudio(section) {
         topic: currentTopic,
         folderName: document.getElementById("folderName").value.trim(),
         currentSection: section,
-        voice: "es-ES-AlvaroNeural", // Voz de TTS (se mantiene)
+        voice: "fr-FR-RemyMultilingualNeural", // Voz de TTS (se mantiene)
         applioVoice: selectedApplioVoice, // Voz del modelo de Applio
         applioModel: selectedApplioModel, // Modelo TTS de Applio
         applioPitch: applioPitch, // Pitch para Applio

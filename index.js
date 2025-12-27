@@ -5084,13 +5084,37 @@ async function performBatchAudioGeneration(params = {}) {
     try {
       let audioPath;
 
+      // Verificar si ya existe un audio generado previamente para evitar duplicados
+      if (section.audioPath) {
+        const existingAudioPath = path.join('./public', section.audioPath);
+        if (fs.existsSync(existingAudioPath)) {
+          console.log(`⏭️ [${projectKey}] Audio ya existe para sección ${section.section}, saltando generación: ${section.audioPath}`);
+          audioResults.push({
+            section: section.section,
+            title: section.title,
+            audioPath: section.audioPath,
+            success: true,
+            skipped: true
+          });
+          
+          // Actualizar progreso aunque se salte
+          try {
+            const progressData = updateProjectProgress(projectKey, 'audio', i + 1, sections.length);
+          } catch (e) {
+            // Ignorar error de progreso
+          }
+          
+          continue;
+        }
+      }
+
       if (useApplio) {
         const selectedApplioVoice = applioVoice || 'es-ES-ElviraNeural.pth';
         const selectedApplioModel = applioModel || 'rmvpe';
   const selectedPitch = Number.isFinite(Number(applioPitch)) ? Number(applioPitch) : 0;
   const selectedSpeed = Number.isFinite(Number(applioSpeed)) ? Number(applioSpeed) : 0;
 
-        const fileName = `${createSafeFolderName(section.title)}_seccion_${section.section}_${Date.now()}.wav`;
+        const fileName = `${createSafeFolderName(section.title)}_seccion_${section.section}_applio_${Date.now()}.wav`;
         const filePath = path.join(sectionFolderStructure.sectionDir, fileName);
 
         console.log(`📁 [${projectKey}] Guardando audio Applio en: ${filePath}`);
@@ -5138,7 +5162,7 @@ async function performBatchAudioGeneration(params = {}) {
 
           const sourceFile = audioResponse.audioPath;
           const safeTitle = createSafeFolderName(section.title);
-          const fileName = `${safeTitle}_seccion_${section.section}_${Date.now()}.wav`;
+          const fileName = `${safeTitle}_seccion_${section.section}_applio_${Date.now()}.wav`;
           const filePath = path.join(sectionFolderStructure.sectionDir, fileName);
 
           fs.copyFileSync(sourceFile, filePath);
@@ -5460,6 +5484,94 @@ app.post('/generate-batch-automatic', async (req, res) => {
     const projectKey = createSafeFolderName(baseNameForKey);
     console.log(`🔑 PROJECT KEY GENERADO: "${projectKey}" (de: "${baseNameForKey}")`);
 
+    // Función interna para procesar audio asíncronamente
+    const processSectionAudioAsync = async (
+      section,
+      scriptText,
+      topic,
+      projectKey,
+      chapterStructure,
+      useApplio,
+      applioVoice,
+      applioModel,
+      applioPitch,
+      applioSpeed,
+      selectedVoice,
+      selectedStyle,
+      totalSections
+    ) => {
+      try {
+        console.log(`🎵 [PARALELO] Iniciando generación de audio para sección ${section}...`);
+        const sectionFolderStructure = createProjectStructure(topic, section, projectKey);
+        const cleanScript = scriptText.replace(/[*_#]/g, '').trim();
+        let generatedAudioPath = null;
+        
+        const startTime = Date.now();
+
+        if (useApplio) {
+          const selectedApplioVoice = applioVoice || 'es-ES-ElviraNeural.pth';
+          const selectedApplioModel = applioModel || 'rmvpe';
+          const selectedPitch = Number.isFinite(Number(applioPitch)) ? Number(applioPitch) : 0;
+          const selectedSpeed = Number.isFinite(Number(applioSpeed)) ? Number(applioSpeed) : 0;
+
+          const fileName = `${createSafeFolderName(chapterStructure[section - 1] || `Sección ${section}`)}_seccion_${section}_applio_${Date.now()}.wav`;
+          const filePath = path.join(sectionFolderStructure.sectionDir, fileName);
+
+          // Asegurar conexión
+          const isConnected = await applioClient.checkConnection();
+          if (!isConnected) {
+            console.warn('⚠️ Applio no responde al check de conexión, intentando generar de todas formas...');
+          }
+          
+          const result = await applioClient.textToSpeech(cleanScript, filePath, {
+            voice: selectedApplioVoice,
+            model: selectedApplioModel,
+            pitch: selectedPitch,
+            speed: selectedSpeed
+          });
+          
+          if (result.success) {
+            generatedAudioPath = path.relative('./public', filePath).replace(/\\/g, '/');
+            console.log(`✅ [PARALELO] Audio Applio generado para sección ${section}: ${generatedAudioPath}`);
+          } else {
+            console.error(`❌ [PARALELO] Falló generación Applio sección ${section}:`, result.error);
+          }
+        } else {
+          // Google TTS
+          const fileName = `${createSafeFolderName(chapterStructure[section - 1] || `Sección ${section}`)}_seccion_${section}_${Date.now()}.mp3`;
+          const filePath = path.join(sectionFolderStructure.sectionDir, fileName);
+          
+          generatedAudioPath = await generateStoryAudio(
+            cleanScript,
+            selectedVoice,
+            sectionFolderStructure.sectionDir,
+            chapterStructure[section - 1] || `Sección ${section}`,
+            section,
+            selectedStyle
+          );
+          console.log(`✅ [PARALELO] Audio Google TTS generado para sección ${section}: ${generatedAudioPath}`);
+        }
+
+        if (generatedAudioPath) {
+          // Actualizar estado del proyecto en disco
+          updateSectionAudioInState(projectKey, section, generatedAudioPath);
+          
+          // Actualizar tracker de progreso en memoria
+          const duration = Date.now() - startTime;
+          
+          if (projectProgressTracker[projectKey]) {
+             projectProgressTracker[projectKey].phases.audio.completed++;
+             updateProjectProgress(projectKey, 'audio', projectProgressTracker[projectKey].phases.audio.completed, totalSections, 'audio', duration);
+          } else {
+             updateProjectProgress(projectKey, 'audio', 1, totalSections, 'audio', duration);
+          }
+        }
+
+      } catch (error) {
+        console.error(`❌ [PARALELO] Error generando audio para sección ${section}:`, error);
+      }
+    };
+
     // Crear estructura de carpetas usando el mismo projectKey
     const folderStructure = createProjectStructure(topic, 1, projectKey);
     console.log(`📁 Estructura de proyecto creada: ${folderStructure.projectDir}`);
@@ -5756,70 +5868,26 @@ VERIFICACIÓN FINAL: Tu respuesta debe contener exactamente ${numImages - 1} ocu
         }
 
         // ===============================================================
-        // GENERACIÓN DE AUDIO INMEDIATA (NUEVO)
+        // GENERACIÓN DE AUDIO EN PARALELO (ASÍNCRONO)
         // ===============================================================
-        let audioPath = null;
-        try {
-          console.log(`🎵 Generando audio inmediato para sección ${section}...`);
-          const sectionFolderStructure = createProjectStructure(topic, section, projectKey);
-          const cleanScript = scriptText.replace(/[*_#]/g, '').trim();
-          
-          if (useApplio) {
-            const selectedApplioVoice = applioVoice || 'es-ES-ElviraNeural.pth';
-            const selectedApplioModel = applioModel || 'rmvpe';
-            const selectedPitch = Number.isFinite(Number(applioPitch)) ? Number(applioPitch) : 0;
-            const selectedSpeed = Number.isFinite(Number(applioSpeed)) ? Number(applioSpeed) : 0;
-
-            const fileName = `${createSafeFolderName(chapterStructure[section - 1] || `Sección ${section}`)}_seccion_${section}_${Date.now()}.wav`;
-            const filePath = path.join(sectionFolderStructure.sectionDir, fileName);
-
-            console.log(`🎙️ Generando con Applio: ${selectedApplioVoice} (Pitch: ${selectedPitch}, Speed: ${selectedSpeed})`);
-            
-            // Asegurar conexión
-            const isConnected = await applioClient.checkConnection();
-            if (!isConnected) {
-              console.warn('⚠️ Applio no responde al check de conexión, intentando generar de todas formas...');
-            }
-            
-            const result = await applioClient.textToSpeech(cleanScript, filePath, {
-              voice: selectedApplioVoice,
-              model: selectedApplioModel,
-              pitch: selectedPitch,
-              speed: selectedSpeed
-            });
-            
-            if (result.success) {
-              audioPath = path.relative('./public', filePath).replace(/\\/g, '/');
-              console.log(`✅ Audio Applio generado: ${audioPath}`);
-            } else {
-              console.error('❌ Falló generación Applio:', result.error);
-            }
-          } else {
-            // Google TTS
-            const fileName = `${createSafeFolderName(chapterStructure[section - 1] || `Sección ${section}`)}_seccion_${section}_${Date.now()}.mp3`;
-            const filePath = path.join(sectionFolderStructure.sectionDir, fileName);
-            
-            audioPath = await generateStoryAudio(
-              cleanScript,
-              selectedVoice,
-              sectionFolderStructure.sectionDir,
-              chapterStructure[section - 1] || `Sección ${section}`,
-              section,
-              selectedStyle
-            );
-            console.log(`✅ Audio Google TTS generado: ${audioPath}`);
-          }
-        } catch (audioError) {
-          console.error(`❌ Error generando audio inmediato para sección ${section}:`, audioError);
-        }
+        // Lanzamos el proceso sin await para que corra en paralelo
+        processSectionAudioAsync(
+          section,
+          scriptText,
+          topic,
+          projectKey,
+          chapterStructure,
+          useApplio,
+          applioVoice,
+          applioModel,
+          applioPitch,
+          applioSpeed,
+          selectedVoice,
+          selectedStyle,
+          sections
+        ).catch(err => console.error(`❌ Error en proceso de audio paralelo sección ${section}:`, err));
         
-        // Actualizar allSections con el audio generado
-        if (audioPath) {
-          const currentSectionIndex = allSections.findIndex(s => s.section === section);
-          if (currentSectionIndex !== -1) {
-            allSections[currentSectionIndex].audioPath = audioPath;
-          }
-        }
+        let audioPath = null; // Inicialmente null porque es asíncrono
         
         // ===============================================================
         // GUARDADO PROGRESIVO Y ACTUALIZACIÓN DE PROGRESO
@@ -16712,6 +16780,58 @@ function getLocalIP() {
     }
   }
   return 'localhost';
+}
+
+// Función auxiliar para actualizar el audio de una sección en el estado del proyecto
+function updateSectionAudioInState(projectKey, sectionNumber, audioPath) {
+  try {
+    const projectStateFile = `./public/outputs/${projectKey}/project_state.json`;
+    if (!fs.existsSync(projectStateFile)) return false;
+
+    const state = JSON.parse(fs.readFileSync(projectStateFile, 'utf8'));
+    
+    if (state.completedSections) {
+      const sectionIndex = state.completedSections.findIndex(s => s.section === sectionNumber);
+      if (sectionIndex !== -1) {
+        state.completedSections[sectionIndex].audio = {
+          path: audioPath,
+          filename: path.basename(audioPath),
+          saved: true
+        };
+        
+        // También actualizar completedAudio
+        if (!state.completedAudio) state.completedAudio = [];
+        
+        const audioEntry = {
+          section: sectionNumber,
+          path: audioPath,
+          filename: path.basename(audioPath),
+          completedAt: new Date().toISOString()
+        };
+        
+        const audioIndex = state.completedAudio.findIndex(a => a.section === sectionNumber);
+        if (audioIndex !== -1) {
+          state.completedAudio[audioIndex] = audioEntry;
+        } else {
+          state.completedAudio.push(audioEntry);
+        }
+        
+        state.lastModified = new Date().toISOString();
+        
+        // Actualizar resumableState
+        if (state.resumableState) {
+           state.resumableState.canResumeAudio = state.completedAudio.length < (state.totalSections || 0);
+        }
+
+        fs.writeFileSync(projectStateFile, JSON.stringify(state, null, 2), 'utf8');
+        return true;
+      }
+    }
+    return false;
+  } catch (error) {
+    console.error(`❌ Error actualizando audio en estado para sección ${sectionNumber}:`, error);
+    return false;
+  }
 }
 
 app.listen(PORT, '0.0.0.0', async () => {

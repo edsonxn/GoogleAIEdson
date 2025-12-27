@@ -806,10 +806,33 @@
           </div>
         </div>
 
-        <div class="progress-bar-wrapper">
-          <div class="progress-capsules" id="progressCapsules">
-            <!-- Cápsulas se generarán dinámicamente -->
-          </div>
+        <!-- Nueva estructura de progreso detallado -->
+        <div class="detailed-progress-grid">
+            <!-- Progreso de Guiones -->
+            <div class="progress-detail-card" id="scriptProgressCard">
+                <div class="detail-header">
+                    <div class="detail-icon"><i class="fas fa-pen-nib"></i></div>
+                    <span class="detail-title">Guiones</span>
+                    <span class="detail-count" id="scriptCount">0/0</span>
+                </div>
+                <div class="detail-bar-container">
+                    <div class="detail-bar" id="scriptProgressBar" style="width: 0%"></div>
+                </div>
+                <div class="detail-status" id="scriptStatus">Pendiente</div>
+            </div>
+
+            <!-- Progreso de Audios -->
+            <div class="progress-detail-card" id="audioProgressCard">
+                <div class="detail-header">
+                    <div class="detail-icon"><i class="fas fa-microphone-lines"></i></div>
+                    <span class="detail-title">Audios</span>
+                    <span class="detail-count" id="audioCount">0/0</span>
+                </div>
+                <div class="detail-bar-container">
+                    <div class="detail-bar" id="audioProgressBar" style="width: 0%"></div>
+                </div>
+                <div class="detail-status" id="audioStatus">Pendiente</div>
+            </div>
         </div>
 
         <div class="progress-body">
@@ -822,39 +845,11 @@
               <span class="stat-label">Tiempo restante</span>
               <span class="stat-value" id="estimatedTime">Calculando...</span>
             </div>
-            <div class="stat-item">
-              <span class="stat-label">Elementos completados</span>
-              <span class="stat-value" id="currentProgress">0 / 0</span>
-            </div>
-          </div>
-
-          <div class="progress-phases">
-            <div class="phase-item is-active" data-phase="script">
-              <div class="phase-icon"><i class="fas fa-pen-nib"></i></div>
-              <div class="phase-info">
-                <span class="phase-name">Guiones</span>
-                <span class="phase-status" id="phaseScriptStatus">Pendiente</span>
-              </div>
-            </div>
-            <div class="phase-item is-pending" data-phase="audio">
-              <div class="phase-icon"><i class="fas fa-microphone-lines"></i></div>
-              <div class="phase-info">
-                <span class="phase-name">Audios</span>
-                <span class="phase-status" id="phaseAudioStatus">Pendiente</span>
-              </div>
-            </div>
-            <div class="phase-item is-pending" data-phase="images">
-              <div class="phase-icon"><i class="fas fa-images"></i></div>
-              <div class="phase-info">
-                <span class="phase-name">Imágenes</span>
-                <span class="phase-status" id="phaseImagesStatus">Pendiente</span>
-              </div>
-            </div>
           </div>
         </div>
 
         <div class="current-task">
-          <i class="fas fa-cog fa-spin"></i>
+          <i class="fas fa-cog fa-spin" id="currentTaskIcon"></i>
           <span id="currentTask">Preparando generación...</span>
         </div>
       </div>
