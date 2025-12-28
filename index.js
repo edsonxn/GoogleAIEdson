@@ -17244,33 +17244,28 @@ if __name__ == "__main__":
 
             // Función auxiliar para ejecutar Python con reintentos (python -> py)
             const runPythonScript = async () => {
-                const commands = process.platform === 'win32' ? ['python', 'py'] : ['python3', 'python'];
-                let lastError;
-
-                for (const cmd of commands) {
-                    try {
-                        return await new Promise((resolve, reject) => {
-                            const proc = spawn(cmd, [scriptPath]);
-                            let out = '', err = '';
-                            proc.stdout.on('data', d => out += d);
-                            proc.stderr.on('data', d => err += d);
-                            proc.on('error', e => reject(e));
-                            proc.on('close', code => {
-                                if (code === 0) resolve(out);
-                                else reject(new Error(err || `Exit code ${code}`));
-                            });
-                        });
-                    } catch (e) {
-                        lastError = e;
-                        // Si es error de "no encontrado" o el shim de la Store, probar siguiente
-                        if (e.code === 'ENOENT' || e.message.includes('Microsoft Store') || e.message.includes('no se encontró Python')) {
-                            console.log(`⚠️ Comando "${cmd}" falló, intentando siguiente...`);
-                            continue;
-                        }
-                        throw e;
-                    }
+                let cmd, args;
+                try {
+                    const detected = await detectPythonCommand();
+                    cmd = detected.cmd;
+                    args = detected.args;
+                } catch (e) {
+                    // Fallback
+                    cmd = process.platform === 'win32' ? 'py' : 'python3';
+                    args = [];
                 }
-                throw lastError;
+
+                return await new Promise((resolve, reject) => {
+                    const proc = spawn(cmd, [...args, scriptPath]);
+                    let out = '', err = '';
+                    proc.stdout.on('data', d => out += d);
+                    proc.stderr.on('data', d => err += d);
+                    proc.on('error', e => reject(e));
+                    proc.on('close', code => {
+                        if (code === 0) resolve(out);
+                        else reject(new Error(err || `Exit code ${code}`));
+                    });
+                });
             };
 
             transcriptionResult = await runPythonScript().then(output => {
