@@ -16212,6 +16212,10 @@ document.addEventListener('DOMContentLoaded', function() {
             if (musicFile) {
                 formData.append('music', musicFile);
             }
+            
+            // Agregar el estado del checkbox de Shorts
+            const isShortVideo = document.getElementById('isShortVideo')?.checked || false;
+            formData.append('isShortVideo', isShortVideo);
 
             const startTime = Date.now();
 

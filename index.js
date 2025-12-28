@@ -17406,7 +17406,10 @@ if __name__ == "__main__":
             let filterString = `apad,atrim=0:${videoDuration}`; // Default fallback
 
             if (ttsDuration > 0) {
-                const silenceDuration = 20;
+                // Verificar si es un Short/Reel para omitir el silencio
+                const isShortVideo = req.body.isShortVideo === 'true';
+                const silenceDuration = isShortVideo ? 0 : 20;
+                
                 // Ensure we don't have negative target duration, minimum 1 second for speech
                 const targetSpeechDuration = Math.max(1.0, videoDuration - silenceDuration);
                 
