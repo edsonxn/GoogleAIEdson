@@ -16853,6 +16853,19 @@ app.listen(PORT, '0.0.0.0', async () => {
       if (code === 0) console.log('✅ FFmpeg detectado correctamente');
   });
 
+  // Verificar Python al inicio
+  const checkPython = spawn('python', ['--version']);
+  checkPython.on('error', () => {
+      console.error('\n❌❌❌ ERROR CRÍTICO ❌❌❌');
+      console.error('Python NO está instalado o no se encuentra en el PATH.');
+      console.error('O Windows está intentando abrir la Microsoft Store (Alias de ejecución).');
+      console.error('👉 Instala Python (marcando "Add to PATH"): https://www.python.org/downloads/');
+      console.error('👉 O desactiva los "Alias de ejecución de aplicaciones" para Python en la configuración de Windows.\n');
+  });
+  checkPython.on('close', (code) => {
+      if (code === 0) console.log('✅ Python detectado correctamente');
+  });
+
   // Verificar conexión con ComfyUI
   try {
     const connectionCheck = await comfyUIClient.checkConnection();
