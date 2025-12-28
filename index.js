@@ -17200,44 +17200,62 @@ if __name__ == "__main__":
             const scriptPath = path.join(outputDir, 'transcribe_temp.py');
             fs.writeFileSync(scriptPath, transcriptionScript);
 
-            transcriptionResult = await new Promise((resolve, reject) => {
-                const pythonProcess = spawn('python', [scriptPath]);
-                let output = '';
-                let errorOutput = '';
-                
-                pythonProcess.stdout.on('data', (data) => output += data.toString());
-                pythonProcess.stderr.on('data', (data) => errorOutput += data.toString());
-                
-                pythonProcess.on('close', (code) => {
-                    if (code === 0) {
-                        try {
-                            const jsonStart = output.indexOf("---JSON_START---");
-                            const jsonEnd = output.indexOf("---JSON_END---");
-                            
-                            if (jsonStart !== -1 && jsonEnd !== -1) {
-                                const jsonStr = output.substring(jsonStart + 16, jsonEnd).trim();
-                                const json = JSON.parse(jsonStr);
-                                if (json.error) reject(new Error(json.error));
-                                else resolve(json);
-                            } else {
-                                // Fallback
-                                const lines = output.trim().split('\n');
-                                const lastLine = lines[lines.length - 1];
-                                try {
-                                    const json = JSON.parse(lastLine);
-                                    if (json.error) reject(new Error(json.error));
-                                    else resolve(json);
-                                } catch (e) {
-                                    reject(new Error('Invalid JSON from transcription: ' + output));
-                                }
-                            }
-                        } catch (e) {
-                            reject(new Error('Invalid JSON from transcription: ' + output));
+            // Función auxiliar para ejecutar Python con reintentos (python -> py)
+            const runPythonScript = async () => {
+                const commands = process.platform === 'win32' ? ['python', 'py'] : ['python3', 'python'];
+                let lastError;
+
+                for (const cmd of commands) {
+                    try {
+                        return await new Promise((resolve, reject) => {
+                            const proc = spawn(cmd, [scriptPath]);
+                            let out = '', err = '';
+                            proc.stdout.on('data', d => out += d);
+                            proc.stderr.on('data', d => err += d);
+                            proc.on('error', e => reject(e));
+                            proc.on('close', code => {
+                                if (code === 0) resolve(out);
+                                else reject(new Error(err || `Exit code ${code}`));
+                            });
+                        });
+                    } catch (e) {
+                        lastError = e;
+                        // Si es error de "no encontrado" o el shim de la Store, probar siguiente
+                        if (e.code === 'ENOENT' || e.message.includes('Microsoft Store') || e.message.includes('no se encontró Python')) {
+                            console.log(`⚠️ Comando "${cmd}" falló, intentando siguiente...`);
+                            continue;
                         }
-                    } else {
-                        reject(new Error('Python script failed: ' + errorOutput));
+                        throw e;
                     }
-                });
+                }
+                throw lastError;
+            };
+
+            transcriptionResult = await runPythonScript().then(output => {
+                try {
+                    const jsonStart = output.indexOf("---JSON_START---");
+                    const jsonEnd = output.indexOf("---JSON_END---");
+                    
+                    if (jsonStart !== -1 && jsonEnd !== -1) {
+                        const jsonStr = output.substring(jsonStart + 16, jsonEnd).trim();
+                        const json = JSON.parse(jsonStr);
+                        if (json.error) throw new Error(json.error);
+                        return json;
+                    } else {
+                        // Fallback
+                        const lines = output.trim().split('\n');
+                        const lastLine = lines[lines.length - 1];
+                        try {
+                            const json = JSON.parse(lastLine);
+                            if (json.error) throw new Error(json.error);
+                            return json;
+                        } catch (e) {
+                            throw new Error('Invalid JSON from transcription: ' + output);
+                        }
+                    }
+                } catch (e) {
+                    throw new Error('Invalid JSON from transcription: ' + output);
+                }
             });
             
             // Guardar transcripción para futuro uso

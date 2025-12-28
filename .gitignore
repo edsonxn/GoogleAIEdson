@@ -108,3 +108,7 @@ __pycache__/
 temp_frames/
 frame_*.jpg
 frame_*.png
+
+# Binarios de FFmpeg
+*.exe
+*.dll
