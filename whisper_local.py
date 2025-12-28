@@ -13,13 +13,33 @@ from pathlib import Path
 from typing import Optional, Dict, Any, List
 import time
 
+# Intentar añadir las rutas de las librerías de NVIDIA al PATH si existen
+try:
+    import site
+    site_packages = site.getsitepackages()
+    for path in site_packages:
+        nvidia_path = os.path.join(path, 'nvidia')
+        if os.path.exists(nvidia_path):
+            for root, dirs, files in os.walk(nvidia_path):
+                if 'bin' in dirs:
+                    bin_path = os.path.join(root, 'bin')
+                    os.environ['PATH'] = bin_path + os.pathsep + os.environ['PATH']
+                    try:
+                        os.add_dll_directory(bin_path)
+                    except AttributeError:
+                        pass # os.add_dll_directory solo disponible en Python 3.8+ Windows
+except Exception:
+    pass
+
+FASTER_WHISPER_ERROR = None
 try:
     from faster_whisper import WhisperModel
     import torch
     FASTER_WHISPER_AVAILABLE = True
-except ImportError:
+except Exception as e:
     FASTER_WHISPER_AVAILABLE = False
-    print("Advertencia: Faster-Whisper no disponible. Instalarlo con: pip install faster-whisper")
+    FASTER_WHISPER_ERROR = str(e)
+    # No imprimimos nada aquí para no ensuciar la salida JSON si se importa como módulo
 
 class WhisperLocal:
     """Clase para manejar transcripción local con Faster-Whisper"""
@@ -33,13 +53,19 @@ class WhisperLocal:
         
     def detect_device(self) -> str:
         """Detecta automáticamente el mejor dispositivo disponible"""
-        if torch.cuda.is_available():
-            device_name = torch.cuda.get_device_name(0)
-            memory_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3
-            print(f"GPU detectada: {device_name} ({memory_gb:.1f} GB)")
-            return "cuda"
-        else:
-            print("Usando CPU (GPU no disponible)")
+        if not FASTER_WHISPER_AVAILABLE:
+            return "cpu"
+            
+        try:
+            if torch.cuda.is_available():
+                device_name = torch.cuda.get_device_name(0)
+                memory_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3
+                # print(f"GPU detectada: {device_name} ({memory_gb:.1f} GB)") # Comentado para no ensuciar JSON
+                return "cuda"
+            else:
+                # print("Usando CPU (GPU no disponible)")
+                return "cpu"
+        except Exception:
             return "cpu"
     
     def get_optimal_settings(self, device: str) -> Dict[str, str]:
@@ -68,7 +94,7 @@ class WhisperLocal:
             force_device: cuda, cpu, auto
         """
         if not FASTER_WHISPER_AVAILABLE:
-            print("❌ Faster-Whisper no está instalado")
+            # print(f"❌ Faster-Whisper no está disponible: {FASTER_WHISPER_ERROR}")
             return False
         
         try:
@@ -83,7 +109,7 @@ class WhisperLocal:
             final_device = force_device or settings["device"]
             final_compute_type = settings["compute_type"]
             
-            print(f"Cargando modelo Whisper '{final_model_size}' en {final_device}...")
+            # print(f"Cargando modelo Whisper '{final_model_size}' en {final_device}...")
             start_time = time.time()
             
             # Cargar modelo
@@ -95,7 +121,7 @@ class WhisperLocal:
             )
             
             load_time = time.time() - start_time
-            print(f"Modelo cargado en {load_time:.2f} segundos")
+            # print(f"Modelo cargado en {load_time:.2f} segundos")
             
             # Guardar configuración actual
             self.model_size = final_model_size
@@ -106,8 +132,8 @@ class WhisperLocal:
             return True
             
         except Exception as e:
-            print(f"Error cargando modelo: {e}")
-            return False
+            # print(f"Error cargando modelo: {e}")
+            raise e # Re-lanzar para que el llamador lo maneje
     
     def transcribe_audio(self, audio_path: str, language: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -120,12 +146,24 @@ class WhisperLocal:
         Returns:
             Dict con transcript, language, duration, etc.
         """
+        if not FASTER_WHISPER_AVAILABLE:
+             return {
+                "success": False,
+                "error": f"Faster-Whisper no disponible: {FASTER_WHISPER_ERROR}"
+            }
+
         if not self.is_loaded:
-            print("Modelo no cargado. Cargando modelo por defecto...")
-            if not self.load_model():
+            # print("Modelo no cargado. Cargando modelo por defecto...")
+            try:
+                if not self.load_model():
+                    return {
+                        "success": False,
+                        "error": "No se pudo cargar el modelo de Whisper"
+                    }
+            except Exception as e:
                 return {
                     "success": False,
-                    "error": "No se pudo cargar el modelo de Whisper"
+                    "error": f"Error cargando modelo: {str(e)}"
                 }
         
         if not os.path.exists(audio_path):
@@ -135,8 +173,8 @@ class WhisperLocal:
             }
         
         try:
-            print(f"Transcribiendo: {os.path.basename(audio_path)}")
-            print(f"Configuracion: {self.model_size} | {self.device} | {self.compute_type}")
+            # print(f"Transcribiendo: {os.path.basename(audio_path)}")
+            # print(f"Configuracion: {self.model_size} | {self.device} | {self.compute_type}")
             
             start_time = time.time()
             
@@ -189,14 +227,14 @@ class WhisperLocal:
                 }
             }
             
-            print(f"Transcripcion completada en {transcription_time:.2f}s")
-            print(f"Velocidad: {result['stats']['processing_speed']:.1f}x tiempo real")
-            print(f"Idioma detectado: {info.language} ({info.language_probability:.1%})")
+            # print(f"Transcripcion completada en {transcription_time:.2f}s")
+            # print(f"Velocidad: {result['stats']['processing_speed']:.1f}x tiempo real")
+            # print(f"Idioma detectado: {info.language} ({info.language_probability:.1%})")
             
             return result
             
         except Exception as e:
-            print(f"Error en transcripcion: {e}")
+            # print(f"Error en transcripcion: {e}")
             return {
                 "success": False,
                 "error": str(e)
@@ -235,11 +273,11 @@ whisper_local = WhisperLocal()
 
 def test_whisper_local():
     """Función de prueba para verificar que todo funciona"""
-    print("Probando Whisper Local...")
+    # print("Probando Whisper Local...")
     
     # Mostrar información del sistema
     info = whisper_local.get_model_info()
-    print(f"GPU disponible: {info['gpu_available']}")
+    # print(f"GPU disponible: {info['gpu_available']}")
     if info['gpu_available']:
         print(f"GPU: {info['gpu_name']}")
     

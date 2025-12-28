@@ -10532,3 +10532,37 @@ body.prompts-panel-active .container {
   font-weight: 600;
 }
 
+
+/* Drop Zone Styles */
+.drop-zone {
+  border: 2px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 2rem;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.drop-zone:hover, .drop-zone.dragover {
+  border-color: var(--color-accent-1);
+  background: rgba(99, 102, 241, 0.1);
+}
+
+.drop-zone i {
+  font-size: 3rem;
+  color: var(--text-secondary);
+  margin-bottom: 1rem;
+}
+
+.drop-zone p {
+  color: var(--text-secondary);
+  margin-bottom: 0.5rem;
+}
+
+.drop-zone .file-name {
+  color: var(--color-accent-2);
+  font-weight: 600;
+  margin-top: 1rem;
+}
+

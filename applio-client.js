@@ -18,6 +18,15 @@ class ApplioClient {
         return result;
     }
 
+    async checkConnection() {
+        try {
+            await axios.get(this.applioUrl, { timeout: 2000 });
+            return true;
+        } catch (error) {
+            throw new Error(`No se puede conectar a Applio en ${this.applioUrl}. Asegúrate de que esté ejecutándose.`);
+        }
+    }
+
     async textToSpeech(text, outputPath, options = {}) {
         // Encadenar a la cola para asegurar ejecución secuencial estricta
         const task = this.queue.then(() => this._executeTextToSpeech(text, outputPath, options));

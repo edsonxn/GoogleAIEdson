@@ -29,7 +29,7 @@ process.on('uncaughtException', (error) => {
 });
 
 // Función para obtener una instancia de GoogleGenerativeAI con fallback controlado
-async function getGoogleAI(model = "gemini-2.5-flash", options = {}) {
+async function getGoogleAI(model = "gemini-3-flash-preview", options = {}) {
   const { context = 'general', forcePrimary = false } = options;
   const usageState = getTrackedUsageState(context);
   const skipFreeApis = forcePrimary || usageState?.preferPrimary;
@@ -1010,7 +1010,7 @@ async function generateMissingScript(topic, sectionNumber, totalSections, chapte
     }
 
     // Usar el cliente de IA con fallback automático
-  const { model } = await getGoogleAI("gemini-2.5-flash", { context: 'llm' });
+  const { model } = await getGoogleAI("gemini-3-pro-preview", { context: 'llm' });
     
     console.log('🤖 Enviando prompt al modelo de IA...');
     const result = await model.generateContent({
@@ -1419,7 +1419,8 @@ const storage = multer.diskStorage({
 const upload = multer({ 
   storage: storage,
   limits: {
-    fileSize: 5 * 1024 * 1024 * 1024 // 5GB máximo para videos grandes
+    fileSize: 50 * 1024 * 1024 * 1024, // 50GB máximo (aumentado para evitar errores)
+    fieldSize: 100 * 1024 * 1024 // 100MB para campos de texto grandes
   },
   fileFilter: function (req, file, cb) {
     const allowedTypes = ['audio/mp3', 'audio/wav', 'audio/mpeg', 'audio/m4a', 'video/mp4'];
@@ -2234,8 +2235,8 @@ function reconstructProjectState(folderName) {
       reconstructed: true,
       reconstructedAt: new Date().toISOString(),
       voice: 'shimmer', // Valor por defecto
-      imageModel: 'gemini2', // Valor por defecto
-      llmModel: 'gemini-2.5-flash', // Valor por defecto (Flash más rápido)
+      imageModel: 'gemini3', // Valor por defecto
+      llmModel: 'gemini-3-flash-preview', // Valor por defecto (Flash más rápido)
       scriptStyle: 'professional', // Valor por defecto
       imageCount: 5, // Valor por defecto
       minWords: 800,
@@ -2981,7 +2982,7 @@ async function generateStoryAudio(script, voiceName = DEFAULT_TTS_VOICE, section
         try {
           console.log(`🔊 Generando audio con voz ${candidateVoice} usando ${apiName}...`);
           const response = await client.models.generateContent({
-            model: 'gemini-2.5-flash-preview-tts',
+            model: 'gemini-2.5-flash-preview-tts', // Keep TTS model as is for now unless there is a v3 TTS
             contents: [
               {
                 role: 'user',
@@ -3999,7 +4000,7 @@ Responde SOLO con las ${imageCount} líneas de palabras clave, sin explicaciones
 
     console.log(`🤖 Enviando prompt a LLM para generar keywords...`);
     
-    const response = await generateUniversalContent('gemini-2.5-flash', prompt);
+    const response = await generateUniversalContent('gemini-3-flash-preview', prompt);
     const keywordsText = response ? response.trim() : '';
     
     console.log(`📝 Respuesta del LLM:`, keywordsText);
@@ -5464,7 +5465,7 @@ app.post('/generate-batch-automatic', async (req, res) => {
     const wordsMin = minWords || 800;
     const wordsMax = maxWords || 1100;
   const additionalInstructions = promptModifier || '';
-  const selectedLlmModel = llmModel || 'gemini-2.5-flash';
+  const selectedLlmModel = llmModel || 'gemini-3-flash-preview';
     let shouldSkipImages = skipImages === true;
     let shouldUseGoogleImages = googleImages === true;
     let shouldUseLocalAI = localAIImages === true;
@@ -8092,7 +8093,7 @@ ${storyTopicReference ? `• El proyecto trata sobre "${storyTopicReference}". `
       console.log(`   📝 Segmento ${i + 1}: palabras ${startIndex + 1}-${endIndex} (${segmentWords.length} palabras)`);
     }
     
-  const { model } = await getGoogleAI("gemini-2.5-flash", { context: 'llm' });
+  const { model } = await getGoogleAI("gemini-3-flash-preview", { context: 'llm' });
 
   const baseInstructions = `
 Basándote en los siguientes segmentos secuenciales del guión/script, genera ${imageCount} prompts MUY DETALLADOS para generar imágenes que representen ESPECÍFICAMENTE cada segmento en orden cronológico.
@@ -8405,7 +8406,7 @@ ${trimmedScript
   : 'SCRIPT EXCERPTS: Not available, rely on topic and summary.'}
 `;
 
-  const { model } = await getGoogleAI('gemini-2.5-flash', { context: 'llm' });
+  const { model } = await getGoogleAI('gemini-3-flash-preview', { context: 'llm' });
     const result = await model.generateContent({
       contents: [{ parts: [{ text: contextPrompt }] }],
       generationConfig: {
@@ -8591,7 +8592,7 @@ async function generateProtagonistProfile(scriptContent, imageInstructions = '')
       ? scriptContent.slice(0, PROTAGONIST_SCRIPT_CHARACTER_LIMIT)
       : scriptContent;
 
-  const { model } = await getGoogleAI('gemini-2.5-flash', { context: 'llm' });
+  const { model } = await getGoogleAI('gemini-3-flash-preview', { context: 'llm' });
 
     const profilePrompt = `You are designing a visual bible for a story's main protagonist. Analyze the script excerpts provided and infer the most consistent primary character. Return a strict JSON object (no extra text) with the following keys as strings: "name", "gender", "age", "skinTone", "hair", "eyes", "clothing", "personality", "uniqueFeatures", "role", "promptSnippet", "notes".\n- "promptSnippet" must be a 25-45 word English sentence describing how to depict the protagonist consistently in image prompts.\n- Use concise yet vivid language.\n- If information is missing, make creative but coherent choices.\n- Keep all values in English.\n- Consider the user visual style instructions: "${imageInstructions || 'none provided'}".\n\nSCRIPT EXCERPTS (TRIMMED):\n"""${trimmedScript}"""`;
 
@@ -10327,7 +10328,7 @@ app.post('/generate', async (req, res) => {
   const selectedImageModel = normalizeImageModel(imageModel);
   const selectedImageModelLabel = getImageModelLabel(selectedImageModel);
   console.log(`🤖 Modelo de imágenes seleccionado para esta sección: ${selectedImageModelLabel} (${selectedImageModel})`);
-    const selectedLlmModel = llmModel || 'gemini-2.5-flash';
+    const selectedLlmModel = llmModel || 'gemini-3-flash-preview';
     let shouldSkipImages = skipImages === true;
     let shouldUseGoogleImages = googleImages === true;
     let shouldUseLocalAI = localAIImages === true;
@@ -12757,7 +12758,7 @@ async function translateSectionScript(folderName, sectionNum, targetLang, projec
     OUTPUT ONLY THE TRANSLATED TEXT.
   `;
 
-  const { model } = await getGoogleAI("gemini-2.5-flash", { context: 'llm' });
+  const { model } = await getGoogleAI("gemini-3-flash-preview", { context: 'llm' });
   const result = await model.generateContent(prompt);
   const translatedText = result.response.text();
 
@@ -13411,7 +13412,7 @@ app.post('/translate-title', async (req, res) => {
       Do not include markdown formatting or explanations.
     `;
 
-    const { model } = await getGoogleAI("gemini-2.5-flash", { context: 'llm', forcePrimary: true });
+    const { model } = await getGoogleAI("gemini-3-flash-preview", { context: 'llm', forcePrimary: true });
     const result = await model.generateContent(prompt);
     const responseText = result.response.text().replace(/```json|```/g, '').trim();
     
@@ -13534,7 +13535,7 @@ app.post('/generate-youtube-metadata', async (req, res) => {
           targetLanguage
         });
         
-  const { model: regenerateModel } = await getGoogleAI("gemini-2.5-flash", { context: 'llm', forcePrimary: true });
+  const { model: regenerateModel } = await getGoogleAI("gemini-3-flash-preview", { context: 'llm', forcePrimary: true });
         const regenerateResponse = await regenerateModel.generateContent([
           { text: regeneratePrompt }
         ]);
@@ -17016,4 +17017,414 @@ app.post('/generate-youtube-metadata-for-project', async (req, res) => {
       error: 'Error generando metadatos: ' + error.message
     });
   }
+});
+
+// --- Endpoint para Traducir Videos ---
+app.post('/api/translate-video', upload.fields([{ name: 'video', maxCount: 1 }, { name: 'music', maxCount: 1 }]), async (req, res) => {
+    // Setup SSE
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    const sendStatus = (status, progress = null, completed = false, error = null) => {
+        const data = JSON.stringify({ status, progress, completed, error });
+        res.write(`data: ${data}\n\n`);
+    };
+
+    try {
+        if (!req.files || !req.files['video']) {
+            throw new Error('No video file uploaded');
+        }
+
+        const videoFile = req.files['video'][0];
+        const musicFile = req.files['music'] ? req.files['music'][0] : null;
+
+        const videoPath = videoFile.path;
+
+        // Limpiar carpeta temp de archivos viejos (excepto los actuales)
+        try {
+            const tempDir = './temp';
+            if (fs.existsSync(tempDir)) {
+                const files = fs.readdirSync(tempDir);
+                const currentFiles = [
+                    path.basename(videoPath),
+                    musicFile ? path.basename(musicFile.path) : null
+                ].filter(Boolean);
+
+                console.log('🧹 Limpiando archivos temporales antiguos...');
+                for (const file of files) {
+                    if (!currentFiles.includes(file)) {
+                        try {
+                            const filePath = path.join(tempDir, file);
+                            // Solo borrar si es un archivo (no directorios)
+                            if (fs.lstatSync(filePath).isFile()) {
+                                fs.unlinkSync(filePath);
+                            }
+                        } catch (err) {
+                            console.error(`⚠️ No se pudo borrar ${file}:`, err.message);
+                        }
+                    }
+                }
+            }
+        } catch (cleanupError) {
+            console.error('Error durante la limpieza de temp:', cleanupError);
+        }
+
+        const videoName = path.parse(videoFile.originalname).name;
+        // Usar carpeta pública para outputs, con el nombre del video
+        const outputDir = path.join(process.cwd(), 'public', 'outputs', videoName);
+        
+        // Crear directorio si no existe (recursive: true asegura que cree outputs/ si falta)
+        if (!fs.existsSync(outputDir)) {
+            fs.mkdirSync(outputDir, { recursive: true });
+        }
+        
+        console.log(`📂 Directorio de salida: ${outputDir}`);
+
+        sendStatus('Video subido. Iniciando procesamiento...', 10);
+
+        // 1. Extract Audio
+        const audioPath = path.join(outputDir, 'original_audio.mp3');
+        
+        if (fs.existsSync(audioPath)) {
+            console.log('✅ Audio original ya existe, saltando extracción.');
+            sendStatus('Audio original encontrado, saltando extracción...', 20);
+        } else {
+            sendStatus('Extrayendo audio...', 20);
+            await new Promise((resolve, reject) => {
+                const ffmpeg = spawn('ffmpeg', ['-y', '-i', videoPath, '-vn', '-acodec', 'libmp3lame', audioPath]);
+                ffmpeg.on('close', (code) => {
+                    if (code === 0) resolve();
+                    else reject(new Error('FFmpeg error extracting audio'));
+                });
+            });
+        }
+
+        // Get Video Duration
+        let videoDuration = 0;
+        await new Promise((resolve, reject) => {
+             const ffprobe = spawn('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', videoPath]);
+             let output = '';
+             ffprobe.stdout.on('data', (data) => output += data.toString());
+             ffprobe.on('close', (code) => {
+                 if (code === 0) {
+                     videoDuration = parseFloat(output);
+                     resolve();
+                 } else reject(new Error('FFprobe error'));
+             });
+        });
+
+        // 2. Transcribe Audio
+        let transcriptionResult = null;
+        const transcriptionJsonPath = path.join(outputDir, 'transcription.json');
+
+        if (fs.existsSync(transcriptionJsonPath)) {
+            console.log('✅ Transcripción ya existe, cargando...');
+            sendStatus('Transcripción encontrada, cargando...', 30);
+            try {
+                transcriptionResult = JSON.parse(fs.readFileSync(transcriptionJsonPath, 'utf8'));
+            } catch (e) {
+                console.error('Error leyendo transcripción existente, re-transcribiendo...');
+            }
+        }
+
+        if (!transcriptionResult) {
+            sendStatus('Transcribiendo audio...', 30);
+            
+            const transcriptionScript = `
+# -*- coding: utf-8 -*-
+import sys
+import json
+import os
+sys.path.append('${process.cwd().replace(/\\/g, '/')}')
+from whisper_local import whisper_local
+
+# Configurar codificación UTF-8 para Windows
+if sys.platform == 'win32':
+    import codecs
+    sys.stdout = codecs.getwriter('utf-8')(sys.stdout.detach())
+    sys.stderr = codecs.getwriter('utf-8')(sys.stderr.detach())
+
+def transcribe():
+    try:
+        if not whisper_local.is_loaded:
+            whisper_local.load_model('medium')
+        
+        result = whisper_local.transcribe_audio(r'${audioPath.replace(/\\/g, '/')}')
+        print("---JSON_START---")
+        print(json.dumps(result))
+        print("---JSON_END---")
+    except Exception as e:
+        print("---JSON_START---")
+        print(json.dumps({'error': str(e)}))
+        print("---JSON_END---")
+
+if __name__ == "__main__":
+    transcribe()
+`;
+            const scriptPath = path.join(outputDir, 'transcribe_temp.py');
+            fs.writeFileSync(scriptPath, transcriptionScript);
+
+            transcriptionResult = await new Promise((resolve, reject) => {
+                const pythonProcess = spawn('python', [scriptPath]);
+                let output = '';
+                let errorOutput = '';
+                
+                pythonProcess.stdout.on('data', (data) => output += data.toString());
+                pythonProcess.stderr.on('data', (data) => errorOutput += data.toString());
+                
+                pythonProcess.on('close', (code) => {
+                    if (code === 0) {
+                        try {
+                            const jsonStart = output.indexOf("---JSON_START---");
+                            const jsonEnd = output.indexOf("---JSON_END---");
+                            
+                            if (jsonStart !== -1 && jsonEnd !== -1) {
+                                const jsonStr = output.substring(jsonStart + 16, jsonEnd).trim();
+                                const json = JSON.parse(jsonStr);
+                                if (json.error) reject(new Error(json.error));
+                                else resolve(json);
+                            } else {
+                                // Fallback
+                                const lines = output.trim().split('\n');
+                                const lastLine = lines[lines.length - 1];
+                                try {
+                                    const json = JSON.parse(lastLine);
+                                    if (json.error) reject(new Error(json.error));
+                                    else resolve(json);
+                                } catch (e) {
+                                    reject(new Error('Invalid JSON from transcription: ' + output));
+                                }
+                            }
+                        } catch (e) {
+                            reject(new Error('Invalid JSON from transcription: ' + output));
+                        }
+                    } else {
+                        reject(new Error('Python script failed: ' + errorOutput));
+                    }
+                });
+            });
+            
+            // Guardar transcripción para futuro uso
+            fs.writeFileSync(transcriptionJsonPath, JSON.stringify(transcriptionResult, null, 2));
+        }
+
+        const originalText = transcriptionResult.transcript;
+        if (!originalText) {
+            throw new Error('La transcripción del audio falló o devolvió texto vacío.');
+        }
+        sendStatus('Transcripción completada. Traduciendo...', 50);
+
+        // 3. Translate and Generate Audio
+        const languages = ['en', 'fr', 'de', 'pt', 'ru', 'zh', 'ko']; 
+        const langNames = {
+            'en': 'English', 'fr': 'French', 'de': 'German', 
+            'pt': 'Portuguese', 'ru': 'Russian',
+            'zh': 'Chinese', 'ko': 'Korean'
+        };
+        
+        // Mapa de voces TTS para cada idioma (Edge TTS)
+        const voiceMap = {
+            'en': 'en-US-ChristopherNeural',
+            'fr': 'fr-FR-HenriNeural',
+            'de': 'de-DE-ConradNeural',
+            'pt': 'pt-BR-AntonioNeural',
+            'ru': 'ru-RU-DmitryNeural',
+            'zh': 'zh-CN-YunxiNeural',
+            'ko': 'ko-KR-InJoonNeural'
+        };
+
+        let progress = 50;
+        const progressStep = 40 / languages.length;
+
+        for (const lang of languages) {
+            const finalAudioPath = path.join(outputDir, `${langNames[lang]}.mp3`);
+            
+            if (fs.existsSync(finalAudioPath)) {
+                console.log(`✅ Audio final para ${langNames[lang]} ya existe, saltando.`);
+                sendStatus(`Audio para ${langNames[lang]} ya existe, saltando...`, progress + progressStep);
+                progress += progressStep;
+                continue;
+            }
+
+            sendStatus(`Traduciendo a ${langNames[lang]}...`, progress);
+            
+            let translatedText = "";
+            const scriptPath = path.join(outputDir, `script_${lang}.txt`);
+
+            if (fs.existsSync(scriptPath)) {
+                console.log(`✅ Guión traducido para ${langNames[lang]} ya existe, cargando.`);
+                translatedText = fs.readFileSync(scriptPath, 'utf8');
+            } else {
+                let specialInstruction = "";
+
+                // Ruso, Coreano y Alemán: Reducir 30% de los párrafos aleatoriamente (3 de cada 10)
+                if (['de', 'ko', 'ru'].includes(lang)) {
+                    specialInstruction = `
+                    IMPORTANT DURATION CONTROL:
+                    1. Analyze the paragraphs in the script.
+                    2. Randomly select approximately 30% of the paragraphs (e.g., 3 out of every 10).
+                    3. For these selected paragraphs ONLY, condense the translation by about 20% (remove filler words, be concise).
+                    4. Translate the remaining paragraphs faithfully.
+                    5. Maintain the exact same number of paragraphs as the original.
+                    `;
+                }
+                
+                // Translate
+                const prompt = `
+                Translate the following video script content to ${langNames[lang]}.
+                ${specialInstruction}
+                Maintain the tone, style, and formatting.
+                OUTPUT ONLY THE TRANSLATED TEXT.
+                
+                SCRIPT:
+                ${originalText}
+                `;
+                
+                const { model } = await getGoogleAI("gemini-3-pro-preview", { context: 'llm' });
+                const result = await model.generateContent(prompt);
+                translatedText = result.response.text();
+                
+                // Limpiar posibles bloques de código markdown
+                translatedText = translatedText.replace(/```[\s\S]*?```/g, '').trim();
+                if (!translatedText) translatedText = result.response.text(); // Fallback si se borró todo
+
+                // Save translated text
+                fs.writeFileSync(scriptPath, translatedText);
+            }
+
+            sendStatus(`Generando audio para ${langNames[lang]}...`, progress + (progressStep / 2));
+
+            // Generate Audio
+            const audioOutputPath = path.join(outputDir, `audio_${lang}.wav`);
+            
+            // Usar la voz correcta para el idioma
+            const ttsModel = voiceMap[lang] || 'en-US-ChristopherNeural';
+            
+            // Asegurar que Applio esté conectado antes de intentar generar
+            let isConnected = false;
+            try {
+                isConnected = await applioClient.checkConnection();
+            } catch (e) {
+                isConnected = false;
+            }
+
+            if (!isConnected) {
+                console.log("⚠️ Applio no está conectado, intentando iniciar...");
+                sendStatus("Iniciando servidor Applio...", progress);
+                try {
+                    await startApplio();
+                    // Esperar un momento extra para asegurar que esté listo
+                    await new Promise(resolve => setTimeout(resolve, 5000));
+                } catch (startError) {
+                    throw new Error("No se pudo iniciar Applio automáticamente: " + startError.message);
+                }
+            }
+
+            if (!translatedText || translatedText === 'undefined') {
+                throw new Error(`Error en la traducción a ${langNames[lang]}: Texto vacío o inválido.`);
+            }
+
+            await applioClient.textToSpeech(translatedText, audioOutputPath, {
+                model: ttsModel,
+                speed: 0,
+                pitch: 0
+            });
+
+            // 4. Adjust Duration (Pad/Trim) with Time Stretching
+            // const finalAudioPath = path.join(outputDir, `${langNames[lang]}.mp3`); // Defined at start of loop
+            
+            // Get TTS Audio Duration
+            let ttsDuration = 0;
+            try {
+                await new Promise((resolve) => {
+                    const ffprobe = spawn('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', audioOutputPath]);
+                    let output = '';
+                    ffprobe.stdout.on('data', (data) => output += data.toString());
+                    ffprobe.on('close', (code) => {
+                        if (code === 0) ttsDuration = parseFloat(output);
+                        resolve();
+                    });
+                });
+            } catch (e) {
+                console.error("Error getting TTS duration:", e);
+            }
+
+            let filterString = `apad,atrim=0:${videoDuration}`; // Default fallback
+
+            if (ttsDuration > 0) {
+                const silenceDuration = 20;
+                // Ensure we don't have negative target duration, minimum 1 second for speech
+                const targetSpeechDuration = Math.max(1.0, videoDuration - silenceDuration);
+                
+                // Calculate speed factor (Input / Target)
+                const speedFactor = ttsDuration / targetSpeechDuration;
+                
+                let filters = [];
+                let currentSpeed = speedFactor;
+                
+                // Handle extreme speed changes by chaining filters (atempo limit: 0.5 - 2.0)
+                while (currentSpeed > 2.0) {
+                    filters.push('atempo=2.0');
+                    currentSpeed /= 2.0;
+                }
+                while (currentSpeed < 0.5) {
+                    filters.push('atempo=0.5');
+                    currentSpeed /= 0.5;
+                }
+                filters.push(`atempo=${currentSpeed}`);
+                
+                filterString = filters.join(',') + `,apad,atrim=0:${videoDuration}`;
+            }
+            
+            await new Promise((resolve, reject) => {
+                let ffmpegArgs = [];
+                
+                if (musicFile) {
+                    // Complex filter for mixing
+                    // Input 0: Speech (audioOutputPath)
+                    // Input 1: Music (musicFile.path) - Looped
+                    // Note: We apply the time-stretch/pad filter to input 0 first
+                    
+                    ffmpegArgs = [
+                        '-y',
+                        '-i', audioOutputPath,
+                        '-stream_loop', '-1', '-i', musicFile.path,
+                        '-filter_complex', `[0:a]${filterString}[speech];[1:a]volume=1.0[bgm];[speech][bgm]amix=inputs=2:duration=first[out]`,
+                        '-map', '[out]',
+                        '-acodec', 'libmp3lame',
+                        finalAudioPath
+                    ];
+                } else {
+                    ffmpegArgs = [
+                        '-y',
+                        '-i', audioOutputPath,
+                        '-af', filterString,
+                        '-acodec', 'libmp3lame',
+                        finalAudioPath
+                    ];
+                }
+
+                const ffmpegCmd = spawn('ffmpeg', ffmpegArgs);
+                
+                ffmpegCmd.on('close', (code) => {
+                    if (code === 0) {
+                        // Se mantiene el archivo wav original
+                        resolve();
+                    }
+                    else reject(new Error('FFmpeg error adjusting duration'));
+                });
+            });
+
+            progress += progressStep;
+        }
+
+        sendStatus('Proceso completado', 100, true);
+        res.end();
+
+    } catch (error) {
+        console.error(error);
+        sendStatus('Error: ' + error.message, null, false, error.message);
+        res.end();
+    }
 });

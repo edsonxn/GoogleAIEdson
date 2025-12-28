@@ -7,10 +7,11 @@ let globalChapterStructure = [];
 // Variable global para almacenar las keywords de cada imagen para el botÃ³n de refresh
 let currentImageKeywords = [];
 
-const IMAGE_MODEL_DEFAULT = 'gemini2';
+const IMAGE_MODEL_DEFAULT = 'gemini3';
 const IMAGE_MODEL_LABELS = {
   gemini2: 'Gemini 2.0 Flash',
-  gemini25: 'Gemini 2.5 Flash (Nuevo)'
+  gemini25: 'Gemini 2.5 Flash',
+  gemini3: 'Gemini 3 Flash Preview (Nuevo)'
 };
 
 function normalizeImageModel(model) {
@@ -22,6 +23,15 @@ function normalizeImageModel(model) {
 
   if (value === 'gemini' || value === 'gemini2' || value === 'gemini-2' || value === 'gemini-2.0-flash' || value === 'gemini-2.0') {
     return 'gemini2';
+  }
+
+  if (
+    value === 'gemini3' ||
+    value === 'gemini-3' ||
+    value === 'gemini-3-flash-preview' ||
+    value === 'gemini-3-flash-preview-image'
+  ) {
+    return 'gemini3';
   }
 
   if (
@@ -8893,7 +8903,7 @@ function showYouTubeMetadataResults(metadata, topic) {
   }, 100);
 }
 
-// FunciÃ³n para parsear la metadata y extraer secciones
+// Función para parsear la metadata y extraer secciones
 function parseMetadata(metadata) {
   const lines = metadata.split('\n');
   let currentSection = '';
@@ -8902,33 +8912,37 @@ function parseMetadata(metadata) {
   let tags = [];
   let thumbnailPrompts = [];
   
+  // Helper to normalize text for comparison (remove accents)
+  const normalize = (text) => {
+    return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
+  };
+
   for (let line of lines) {
     line = line.trim();
     const upperLine = line.toUpperCase();
+    const normalizedLine = normalize(line);
     
     if (
-      upperLine.includes('TÃTULOS CLICKBAIT') ||
-      upperLine.includes('TITULOS CLICKBAIT') ||
+      normalizedLine.includes('TITULOS CLICKBAIT') ||
       upperLine.includes('CLICKBAIT TITLES')
     ) {
       currentSection = 'titles';
       continue;
     } else if (
-      upperLine.includes('DESCRIPCIÃ“N') ||
-      upperLine.includes('DESCRIPCION') ||
+      normalizedLine.includes('DESCRIPCION') ||
       upperLine.includes('DESCRIPTION')
     ) {
       currentSection = 'description';
       continue;
     } else if (
-      upperLine.includes('ETIQUETAS') ||
+      normalizedLine.includes('ETIQUETAS') ||
       upperLine.includes('TAGS')
     ) {
       currentSection = 'tags';
       continue;
     } else if (
-      upperLine.includes('PROMPTS PARA MINIATURAS') ||
-      upperLine.includes('MINIATURA') ||
+      normalizedLine.includes('PROMPTS PARA MINIATURAS') ||
+      normalizedLine.includes('MINIATURA') ||
       upperLine.includes('THUMBNAIL PROMPTS') ||
       upperLine.includes('PROMPTS FOR YOUTUBE THUMBNAILS')
     ) {
@@ -8937,7 +8951,7 @@ function parseMetadata(metadata) {
     }
     
     if (currentSection === 'titles' && line && !line.startsWith('**')) {
-      // Remover numeraciÃ³n al inicio (1., 2., etc.)
+      // Remover numeración al inicio (1., 2., etc.)
       const cleanTitle = line.replace(/^\d+\.\s*/, '');
       if (cleanTitle) {
         titles.push(cleanTitle);
@@ -8949,7 +8963,7 @@ function parseMetadata(metadata) {
       const lineTags = line.split(',').map(tag => tag.trim()).filter(tag => tag);
       tags.push(...lineTags);
     } else if (currentSection === 'thumbnails' && line && !line.startsWith('**')) {
-      // Remover numeraciÃ³n al inicio (1., 2., etc.)
+      // Remover numeración al inicio (1., 2., etc.)
       const cleanPrompt = line.replace(/^\d+\.\s*/, '');
       if (cleanPrompt) {
         thumbnailPrompts.push(cleanPrompt);
@@ -8960,11 +8974,11 @@ function parseMetadata(metadata) {
   const tagsString = tags.join(', ');
   
   return {
-    titles: titles.slice(0, 10), // MÃ¡ximo 10 tÃ­tulos
+    titles: titles.slice(0, 10), // Máximo 10 títulos
     description: description.trim(),
-    tags: tags.slice(0, 25), // MÃ¡ximo 25 etiquetas
+    tags: tags.slice(0, 25), // Máximo 25 etiquetas
     tagsString: tagsString,
-    thumbnailPrompts: thumbnailPrompts.slice(0, 5) // MÃ¡ximo 5 prompts
+    thumbnailPrompts: thumbnailPrompts.slice(0, 5) // Máximo 5 prompts
   };
 }
 
@@ -16035,3 +16049,254 @@ document.addEventListener('DOMContentLoaded', function() {
     });
   }
 });
+
+// --- Funciones para Traducir Videos ---
+
+function openTranslateVideoModal() {
+  const modal = document.getElementById('translateVideoModal');
+  if (modal) {
+    modal.style.display = 'flex';
+    setTimeout(() => modal.classList.add('active'), 10);
+  }
+  collapseSidebar();
+}
+
+function closeTranslateVideoModal() {
+  const modal = document.getElementById('translateVideoModal');
+  if (modal) {
+    modal.classList.remove('active');
+    setTimeout(() => modal.style.display = 'none', 300);
+    // Reset form
+    const fileInput = document.getElementById('videoUpload');
+    const fileNameDisplay = document.getElementById('videoFileName');
+    const generateBtn = document.getElementById('generateTranslatedVideoBtn');
+    const progressContainer = document.getElementById('translateVideoProgress');
+    
+    if(fileInput) fileInput.value = '';
+    if(fileNameDisplay) fileNameDisplay.textContent = '';
+    if(generateBtn) generateBtn.disabled = true;
+    if(progressContainer) progressContainer.style.display = 'none';
+  }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    const translateVideoBtn = document.getElementById('translateVideoBtn');
+    if (translateVideoBtn) {
+        translateVideoBtn.addEventListener('click', openTranslateVideoModal);
+    }
+
+    const closeTranslateVideoModalBtn = document.getElementById('closeTranslateVideoModal');
+    if (closeTranslateVideoModalBtn) {
+        closeTranslateVideoModalBtn.addEventListener('click', closeTranslateVideoModal);
+    }
+
+    const cancelTranslateVideoBtn = document.getElementById('cancelTranslateVideoBtn');
+    if (cancelTranslateVideoBtn) {
+        cancelTranslateVideoBtn.addEventListener('click', closeTranslateVideoModal);
+    }
+
+    // Drag and Drop Logic
+    const dropZone = document.getElementById('videoDropZone');
+    const fileInput = document.getElementById('videoUpload');
+    const fileNameDisplay = document.getElementById('videoFileName');
+    
+    const musicDropZone = document.getElementById('musicDropZone');
+    const musicInput = document.getElementById('musicUpload');
+    const musicNameDisplay = document.getElementById('musicFileName');
+
+    const generateBtn = document.getElementById('generateTranslatedVideoBtn');
+
+    // Video Dropzone Logic
+    if (dropZone && fileInput) {
+        dropZone.addEventListener('click', () => fileInput.click());
+
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('dragover');
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            if (e.dataTransfer.files.length) {
+                fileInput.files = e.dataTransfer.files;
+                handleFileSelect(fileInput.files[0]);
+            }
+        });
+
+        fileInput.addEventListener('change', () => {
+            if (fileInput.files.length) {
+                handleFileSelect(fileInput.files[0]);
+            }
+        });
+    }
+
+    // Music Dropzone Logic
+    if (musicDropZone && musicInput) {
+        musicDropZone.addEventListener('click', () => musicInput.click());
+
+        musicDropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            musicDropZone.classList.add('dragover');
+        });
+
+        musicDropZone.addEventListener('dragleave', () => {
+            musicDropZone.classList.remove('dragover');
+        });
+
+        musicDropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            musicDropZone.classList.remove('dragover');
+            if (e.dataTransfer.files.length) {
+                musicInput.files = e.dataTransfer.files;
+                handleMusicSelect(musicInput.files[0]);
+            }
+        });
+
+        musicInput.addEventListener('change', () => {
+            if (musicInput.files.length) {
+                handleMusicSelect(musicInput.files[0]);
+            }
+        });
+    }
+
+    function handleFileSelect(file) {
+        if (file.type === 'video/mp4') {
+            fileNameDisplay.textContent = file.name;
+            generateBtn.disabled = false;
+        } else {
+            alert('Por favor, selecciona un archivo .mp4 válido.');
+            fileInput.value = '';
+            fileNameDisplay.textContent = '';
+            generateBtn.disabled = true;
+        }
+    }
+
+    function handleMusicSelect(file) {
+        if (file.type.includes('audio')) {
+            musicNameDisplay.textContent = file.name;
+        } else {
+            alert('Por favor, selecciona un archivo de audio válido (.mp3, .wav).');
+            musicInput.value = '';
+            musicNameDisplay.textContent = '';
+        }
+    }
+
+    // Generate Button Logic
+    if (generateBtn) {
+        generateBtn.addEventListener('click', async () => {
+            const file = fileInput.files[0];
+            if (!file) return;
+            
+            const musicFile = musicInput && musicInput.files.length ? musicInput.files[0] : null;
+
+            generateBtn.disabled = true;
+            const progressContainer = document.getElementById('translateVideoProgress');
+            const statusText = document.getElementById('translateVideoStatus');
+            const progressBar = document.getElementById('translateVideoProgressBar');
+            const percentText = document.getElementById('translateVideoPercent');
+            const timeRemainingText = document.getElementById('translateVideoTimeRemaining');
+            
+            progressContainer.style.display = 'block';
+            statusText.textContent = 'Iniciando subida...';
+            progressBar.style.width = '0%';
+            if (percentText) percentText.textContent = '0%';
+            if (timeRemainingText) timeRemainingText.textContent = 'Calculando tiempo...';
+
+            const formData = new FormData();
+            formData.append('video', file);
+            if (musicFile) {
+                formData.append('music', musicFile);
+            }
+
+            const startTime = Date.now();
+
+            try {
+                statusText.textContent = 'Subiendo y procesando...';
+                
+                const response = await fetch('/api/translate-video', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) throw new Error('Error en la traducción del video');
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    
+                    const text = decoder.decode(value);
+                    const lines = text.split('\n');
+                    
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.slice(6));
+                                
+                                if (data.status) {
+                                    statusText.textContent = data.status;
+                                }
+                                
+                                if (data.progress) {
+                                    const progress = parseFloat(data.progress);
+                                    progressBar.style.width = `${progress}%`;
+                                    if (percentText) percentText.textContent = `${Math.round(progress)}%`;
+
+                                    // Calcular tiempo restante
+                                    if (progress > 0) {
+                                        const elapsedTime = Date.now() - startTime;
+                                        const estimatedTotalTime = (elapsedTime / progress) * 100;
+                                        const remainingTime = estimatedTotalTime - elapsedTime;
+                                        
+                                        // Formatear a MM:SS
+                                        const remainingSeconds = Math.max(0, Math.floor(remainingTime / 1000));
+                                        const mins = Math.floor(remainingSeconds / 60);
+                                        const secs = remainingSeconds % 60;
+                                        
+                                        if (timeRemainingText) {
+                                            timeRemainingText.textContent = `Tiempo restante estimado: ${mins}:${secs.toString().padStart(2, '0')}`;
+                                        }
+                                    }
+                                }
+                                
+                                if (data.completed) {
+                                    statusText.textContent = '¡Completado!';
+                                    progressBar.style.width = '100%';
+                                    if (percentText) percentText.textContent = '100%';
+                                    if (timeRemainingText) timeRemainingText.textContent = 'Completado';
+                                    
+                                    // Pequeña pausa para que el usuario vea el 100%
+                                    setTimeout(() => {
+                                        alert('Video traducido y audios generados correctamente en la carpeta "outputs".');
+                                        closeTranslateVideoModal();
+                                        generateBtn.disabled = false;
+                                    }, 500);
+                                }
+                                
+                                if (data.error) {
+                                    throw new Error(data.error);
+                                }
+                            } catch (e) {
+                                console.error('Error parsing SSE data', e);
+                            }
+                        }
+                    }
+                }
+
+            } catch (error) {
+                console.error(error);
+                statusText.textContent = 'Error: ' + error.message;
+                progressBar.style.backgroundColor = '#e53e3e'; // Red color
+                generateBtn.disabled = false;
+            }
+        });
+    }
+});
+
