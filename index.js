@@ -16840,6 +16840,19 @@ app.listen(PORT, '0.0.0.0', async () => {
   console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`);
   console.log(`📱 Para acceder desde tu celular en la misma red WiFi, usa: http://${localIP}:${PORT}`);
   
+  // Verificar FFmpeg al inicio
+  const { spawn } = await import('child_process');
+  const checkFFmpeg = spawn('ffmpeg', ['-version']);
+  checkFFmpeg.on('error', () => {
+      console.error('\n❌❌❌ ERROR CRÍTICO ❌❌❌');
+      console.error('FFmpeg NO está instalado o no se encuentra en el PATH del sistema.');
+      console.error('La aplicación NO funcionará correctamente sin FFmpeg.');
+      console.error('👉 Instala FFmpeg: https://ffmpeg.org/download.html\n');
+  });
+  checkFFmpeg.on('close', (code) => {
+      if (code === 0) console.log('✅ FFmpeg detectado correctamente');
+  });
+
   // Verificar conexión con ComfyUI
   try {
     const connectionCheck = await comfyUIClient.checkConnection();
@@ -17093,6 +17106,15 @@ app.post('/api/translate-video', upload.fields([{ name: 'video', maxCount: 1 }, 
             sendStatus('Extrayendo audio...', 20);
             await new Promise((resolve, reject) => {
                 const ffmpeg = spawn('ffmpeg', ['-y', '-i', videoPath, '-vn', '-acodec', 'libmp3lame', audioPath]);
+                
+                ffmpeg.on('error', (err) => {
+                    if (err.code === 'ENOENT') {
+                        reject(new Error('CRÍTICO: FFmpeg no está instalado o no se encuentra en el PATH. Por favor instala FFmpeg.'));
+                    } else {
+                        reject(err);
+                    }
+                });
+
                 ffmpeg.on('close', (code) => {
                     if (code === 0) resolve();
                     else reject(new Error('FFmpeg error extracting audio'));
