@@ -16,6 +16,46 @@ import multer from 'multer';
 import axios from 'axios';
 import os from 'os';
 
+// Helper para detectar el comando de Python correcto (Python 3.13 preferido sobre 3.14 preview)
+let cachedPythonCommand = null;
+async function detectPythonCommand() {
+  if (cachedPythonCommand) return cachedPythonCommand;
+  
+  const { exec } = await import('child_process');
+  const execPromise = (cmd) => new Promise((resolve, reject) => {
+    exec(cmd, (error, stdout, stderr) => {
+      if (error) reject(error);
+      else resolve(stdout);
+    });
+  });
+
+  // 1. Intentar 'py -3.13' (Prioridad absoluta para evitar conflictos con 3.14)
+  try {
+    await execPromise('py -3.13 --version');
+    console.log('✅ Usando Python 3.13 via py launcher');
+    cachedPythonCommand = { cmd: 'py', args: ['-3.13'] };
+    return cachedPythonCommand;
+  } catch (e) {}
+
+  // 2. Intentar 'python' (Estándar)
+  try {
+    await execPromise('python --version');
+    cachedPythonCommand = { cmd: 'python', args: [] };
+    return cachedPythonCommand;
+  } catch (e) {}
+
+  // 3. Intentar 'py' (Fallback a la última versión)
+  try {
+    await execPromise('py --version');
+    console.log('⚠️ Usando Python default via py launcher (puede ser inestable si es 3.14)');
+    cachedPythonCommand = { cmd: 'py', args: [] };
+    return cachedPythonCommand;
+  } catch (e) {}
+
+  throw new Error('No se encontró ninguna instalación de Python válida.');
+}
+
+
 // Global error handlers to prevent application crashes
 process.on('unhandledRejection', (reason, promise) => {
   console.error('❌ Unhandled Promise Rejection:', reason);
@@ -12273,7 +12313,8 @@ if __name__ == '__main__':
     fs.writeFileSync(tempScriptPath, pythonScript);
 
     // Ejecutar transcripción
-    const pythonProcess = spawn('python', [tempScriptPath], {
+    const { cmd, args } = await detectPythonCommand();
+    const pythonProcess = spawn(cmd, [...args, tempScriptPath], {
       cwd: process.cwd(),
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { 
@@ -12427,7 +12468,8 @@ except Exception as e:
     fs.mkdirSync(path.dirname(tempScriptPath), { recursive: true });
     fs.writeFileSync(tempScriptPath, pythonScript);
 
-    const pythonProcess = spawn('python', [tempScriptPath], {
+    const { cmd, args } = await detectPythonCommand();
+    const pythonProcess = spawn(cmd, [...args, tempScriptPath], {
       env: { 
         ...process.env, 
         PYTHONIOENCODING: 'utf-8',
