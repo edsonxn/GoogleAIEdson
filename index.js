@@ -17373,7 +17373,7 @@ if __name__ == "__main__":
                 ${originalText}
                 `;
                 
-                const { model } = await getGoogleAI("gemini-3-flash-preview", { context: 'llm' });
+                const { model } = await getGoogleAI("gemini-2.5-flash", { context: 'llm' });
                 const result = await model.generateContent(prompt);
                 translatedText = result.response.text();
                 
