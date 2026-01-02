@@ -78,7 +78,7 @@ class ApplioClient {
                 false,                          // autotune
                 1,                              // clean_audio
                 false,                          
-                155,                            // clean_strength
+                0.5,                            // clean_strength (REDUCIDO DE 155 A 0.5)
                 false,                          // export_format_enabled
                 0.5,                            // upscale_audio
                 "WAV",                          // export_format
