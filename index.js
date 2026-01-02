@@ -5909,9 +5909,10 @@ VERIFICACIÓN FINAL: Tu respuesta debe contener exactamente ${numImages - 1} ocu
         }
 
         // ===============================================================
-        // GENERACIÓN DE AUDIO EN PARALELO (ASÍNCRONO)
+        // GENERACIÓN DE AUDIO EN PARALELO (ASÍNCRONO) - DESACTIVADO
         // ===============================================================
-        // Lanzamos el proceso sin await para que corra en paralelo
+        // Se ha movido a la FASE 2 para que inicie después de terminar todos los guiones
+        /*
         processSectionAudioAsync(
           section,
           scriptText,
@@ -5927,6 +5928,7 @@ VERIFICACIÓN FINAL: Tu respuesta debe contener exactamente ${numImages - 1} ocu
           selectedStyle,
           sections
         ).catch(err => console.error(`❌ Error en proceso de audio paralelo sección ${section}:`, err));
+        */
         
         let audioPath = null; // Inicialmente null porque es asíncrono
         
@@ -6042,6 +6044,45 @@ VERIFICACIÓN FINAL: Tu respuesta debe contener exactamente ${numImages - 1} ocu
     console.log(`\n✅ FASE 1 COMPLETADA:`);
     console.log(`📝 ${allSections.length} guiones generados`);
     console.log(`🎨 ${allImagePrompts.length} sets de prompts de imágenes generados`);
+
+    // =======================================================================
+    // FASE 2: GENERAR AUDIOS (SECUENCIAL EN BACKGROUND)
+    // =======================================================================
+    console.log('\n' + '🎵'.repeat(20));
+    console.log('🎵 FASE 2: INICIANDO GENERACIÓN DE AUDIOS (POST-SCRIPTS)');
+    console.log('🎵'.repeat(20));
+
+    // Ejecutar en segundo plano para no bloquear la respuesta HTTP
+    (async () => {
+        console.log(`🚀 Iniciando cola de generación de audio para ${allSections.length} secciones...`);
+        for (const sectionData of allSections) {
+            // Saltar si hubo error en el guión
+            if (sectionData.script && sectionData.script.startsWith('Error generando')) {
+                console.warn(`⚠️ Saltando audio para sección ${sectionData.section} debido a error en guión.`);
+                continue;
+            }
+
+            await processSectionAudioAsync(
+                sectionData.section,
+                sectionData.script,
+                topic,
+                projectKey,
+                chapterStructure,
+                useApplio,
+                applioVoice,
+                applioModel,
+                applioPitch,
+                applioSpeed,
+                selectedVoice,
+                selectedStyle,
+                sections
+            );
+            
+            // Pequeña pausa entre audios para no saturar
+            await new Promise(r => setTimeout(r, 1000));
+        }
+        console.log('✅✅✅ TODAS LAS FASES COMPLETADAS (AUDIOS TERMINADOS) ✅✅✅');
+    })().catch(err => console.error("❌ Error fatal en generación de audios (Background):", err));
     
     res.json({
       success: true,
