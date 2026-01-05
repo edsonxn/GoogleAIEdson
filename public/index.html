@@ -268,6 +268,60 @@
           </div>
         </div>
 
+        <!-- Selección de Proveedor de Voz -->
+        <div class="form-group" style="margin-top: 1rem;">
+          <label>Proveedor de Voz:</label>
+          <div class="radio-group">
+            <label class="radio-label">
+              <input type="radio" name="ttsProvider" value="applio" class="radio-input" checked onchange="toggleVoiceSelect()">
+              <span class="radio-custom"></span>
+              <span>Applio (Remy)</span>
+            </label>
+            <label class="radio-label">
+              <input type="radio" name="ttsProvider" value="google" class="radio-input" onchange="toggleVoiceSelect()">
+              <span class="radio-custom"></span>
+              <span>Google TTS</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Selección de Voz de Google (Oculto por defecto) -->
+        <div id="googleVoiceSelectContainer" class="form-group" style="margin-top: 1rem; display: none;">
+          <label for="googleVoiceSelect">Voz de Google:</label>
+          <select id="googleVoiceSelect" class="field-select" style="width: 100%; padding: 10px; background: rgba(17, 26, 45, 0.85); border: 1px solid var(--color-border); border-radius: 8px; color: var(--text-primary);">
+            <option value="Kore">Kore (Firme - Default)</option>
+            <option value="Zephyr">Zephyr (Brillo)</option>
+            <option value="Puck">Puck (Optimista)</option>
+            <option value="Charon">Charon (Informativa)</option>
+            <option value="Fenrir">Fenrir (Excitabilidad)</option>
+            <option value="Leda">Leda (Juvenil)</option>
+            <option value="Orus">Orus (Firme)</option>
+            <option value="Aoede">Aoede (Breezy)</option>
+            <option value="Callirrhoe">Callirrhoe (Voz tranquila)</option>
+            <option value="Autonoe">Autonoe (Brillo)</option>
+            <option value="Enceladus">Enceladus (Sin aliento)</option>
+            <option value="Iapetus">Iapetus (Claro)</option>
+            <option value="Umbriel">Umbriel (Relajado)</option>
+            <option value="Algieba">Algieba (Suave)</option>
+            <option value="Despina">Despina (Suave)</option>
+            <option value="Erinome">Erinome (Despejado)</option>
+            <option value="Algenib">Algenib (Arenoso)</option>
+            <option value="Rasalgethi">Rasalgethi (Informativa)</option>
+            <option value="Laomedeia">Laomedeia (Optimista)</option>
+            <option value="Achernar">Achernar (Suave)</option>
+            <option value="Alnilam">Alnilam (Firme)</option>
+            <option value="Schedar">Schedar (Par)</option>
+            <option value="Gacrux">Gacrux (Contenido para mayores)</option>
+            <option value="Pulcherrima">Pulcherrima (Reenviar)</option>
+            <option value="Achird">Achird (Amistoso)</option>
+            <option value="Zubenelgenubi">Zubenelgenubi (Informal)</option>
+            <option value="Vindemiatrix">Vindemiatrix (Suave)</option>
+            <option value="Sadachbia">Sadachbia (Animada)</option>
+            <option value="Sadaltager">Sadaltager (Conocimiento)</option>
+            <option value="Sulafat">Sulafat (Cálida)</option>
+          </select>
+        </div>
+
         <!-- Checkbox para Shorts (Movido aquí) -->
         <div class="form-group" style="margin-top: 1rem;">
           <label class="checkbox-label">

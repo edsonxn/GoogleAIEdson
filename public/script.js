@@ -3386,38 +3386,42 @@ async function runAutoGeneration() {
     }
     
     // =============================================================== 
-    // VERIFICACIÃ“N FINAL: ASEGURAR QUE TODOS LOS AUDIOS ESTÃ‰N COMPLETOS
+    // VERIFICACIÓN FINAL: ASEGURAR QUE TODOS LOS AUDIOS ESTÉN COMPLETOS
     // =============================================================== 
+    
     if (generateAudio || generateApplioAudio) {
-      console.log('\nðŸ” REALIZANDO VERIFICACIÃ“N FINAL DE AUDIOS...');
+      console.log('\n🔍 REALIZANDO VERIFICACIÓN FINAL DE AUDIOS...');
+      
+      // Esperar un momento para asegurar que el sistema de archivos se actualice
+      await new Promise(resolve => setTimeout(resolve, 2000));
       
       try {
         // Verificar audios para el proyecto principal
         await regenerateAllAudios();
-        console.log('âœ… VerificaciÃ³n final de audios completada para proyecto principal');
+        console.log('✅ Verificación final de audios completada para proyecto principal');
         
         // Verificar audios para proyectos adicionales
         if (window.currentProject && window.currentProject.additionalProjects && window.currentProject.additionalProjects.length > 0) {
-          console.log(`ðŸ” Verificando audios finales para ${window.currentProject.additionalProjects.length} proyectos adicionales...`);
+          console.log(`🔍 Verificando audios finales para ${window.currentProject.additionalProjects.length} proyectos adicionales...`);
           
           for (const additionalProject of window.currentProject.additionalProjects) {
             try {
-              console.log(`ðŸ” Verificando audios finales para proyecto: ${additionalProject.folderName}`);
-              // Usar la funciÃ³n de regenerar audios faltantes para el proyecto especÃ­fico
+              console.log(`🔍 Verificando audios finales para proyecto: ${additionalProject.folderName}`);
+              // Usar la función de regenerar audios faltantes para el proyecto específico
               await regenerateAllAudiosForProject(additionalProject.folderName);
-              console.log(`âœ… Audios finales verificados para proyecto: ${additionalProject.folderName}`);
+              console.log(`✅ Audios finales verificados para proyecto: ${additionalProject.folderName}`);
             } catch (projectError) {
-              console.error(`âŒ Error verificando audios finales para proyecto ${additionalProject.folderName}:`, projectError);
+              console.error(`❌ Error verificando audios finales para proyecto ${additionalProject.folderName}:`, projectError);
               // No detener el proceso por errores en proyectos adicionales
             }
           }
         }
         
-        console.log('âœ… VerificaciÃ³n final de audios completada para todos los proyectos');
+        console.log('✅ Verificación final de audios completada para todos los proyectos');
       } catch (error) {
-        console.error('âŒ Error en verificaciÃ³n final de audios:', error);
-        // No detener el proceso completo por errores en la verificaciÃ³n
-        console.log('âš ï¸ GeneraciÃ³n completada pero con posibles audios faltantes');
+        console.error('❌ Error en verificación final de audios:', error);
+        // No detener el proceso completo por errores en la verificación
+        console.log('⚠️ Generación completada pero con posibles audios faltantes');
       }
     }
     
@@ -16106,6 +16110,15 @@ document.addEventListener('DOMContentLoaded', function() {
 
     const generateBtn = document.getElementById('generateTranslatedVideoBtn');
 
+    // Expose toggleVoiceSelect globally so it can be called from HTML
+    window.toggleVoiceSelect = function() {
+        const googleRadio = document.querySelector('input[name="ttsProvider"][value="google"]');
+        const container = document.getElementById('googleVoiceSelectContainer');
+        if (googleRadio && container) {
+            container.style.display = googleRadio.checked ? 'block' : 'none';
+        }
+    };
+
     // Video Dropzone Logic
     if (dropZone && fileInput) {
         dropZone.addEventListener('click', () => fileInput.click());
@@ -16187,120 +16200,160 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // Generate Button Logic
-    if (generateBtn) {
-        generateBtn.addEventListener('click', async () => {
-            const file = fileInput.files[0];
-            if (!file) return;
-            
-            const musicFile = musicInput && musicInput.files.length ? musicInput.files[0] : null;
+    window.startVideoTranslation = async function(isRetry = false) {
+        const file = fileInput.files[0];
+        if (!file) {
+            // Should not happen if button is disabled when no file, but good safety
+            return;
+        }
+        
+        const musicFile = musicInput && musicInput.files.length ? musicInput.files[0] : null;
 
-            generateBtn.disabled = true;
-            const progressContainer = document.getElementById('translateVideoProgress');
-            const statusText = document.getElementById('translateVideoStatus');
-            const progressBar = document.getElementById('translateVideoProgressBar');
-            const percentText = document.getElementById('translateVideoPercent');
-            const timeRemainingText = document.getElementById('translateVideoTimeRemaining');
-            
-            progressContainer.style.display = 'block';
-            statusText.textContent = 'Iniciando subida...';
-            progressBar.style.width = '0%';
-            if (percentText) percentText.textContent = '0%';
-            if (timeRemainingText) timeRemainingText.textContent = 'Calculando tiempo...';
+        generateBtn.disabled = true;
+        const progressContainer = document.getElementById('translateVideoProgress');
+        const statusText = document.getElementById('translateVideoStatus');
+        const progressBar = document.getElementById('translateVideoProgressBar');
+        const percentText = document.getElementById('translateVideoPercent');
+        const timeRemainingText = document.getElementById('translateVideoTimeRemaining');
+        
+        progressContainer.style.display = 'block';
+        statusText.textContent = isRetry ? 'Reanudando proceso...' : 'Iniciando subida...';
+        statusText.innerHTML = isRetry ? 'Reanudando proceso...' : 'Iniciando subida...'; // Reset HTML
+        progressBar.style.width = '0%';
+        progressBar.style.backgroundColor = '#4299e1'; // Reset color
+        if (percentText) percentText.textContent = '0%';
+        if (timeRemainingText) timeRemainingText.textContent = 'Calculando tiempo...';
 
-            const formData = new FormData();
+        const formData = new FormData();
+        
+        if (isRetry) {
+            // If retrying, send the filename so backend can find the existing file
+            formData.append('retryVideoName', file.name);
+            // We do NOT append the video file here to skip upload
+        } else {
             formData.append('video', file);
-            if (musicFile) {
-                formData.append('music', musicFile);
-            }
+        }
+
+        if (musicFile) {
+            formData.append('music', musicFile);
+        }
+        
+        // Agregar el estado del checkbox de Shorts
+        const isShortVideo = document.getElementById('isShortVideo')?.checked || false;
+        formData.append('isShortVideo', isShortVideo);
+
+        // Agregar el proveedor de TTS seleccionado
+        const ttsProvider = document.querySelector('input[name="ttsProvider"]:checked')?.value || 'applio';
+        formData.append('ttsProvider', ttsProvider);
+
+        // Agregar la voz de Google seleccionada
+        const googleVoice = document.getElementById('googleVoiceSelect')?.value || 'Kore';
+        formData.append('googleVoice', googleVoice);
+
+        const startTime = Date.now();
+
+        try {
+            statusText.textContent = isRetry ? 'Verificando archivos existentes...' : 'Subiendo y procesando...';
             
-            // Agregar el estado del checkbox de Shorts
-            const isShortVideo = document.getElementById('isShortVideo')?.checked || false;
-            formData.append('isShortVideo', isShortVideo);
+            const response = await fetch('/api/translate-video', {
+                method: 'POST',
+                body: formData
+            });
 
-            const startTime = Date.now();
+            if (!response.ok) throw new Error('Error en la traducción del video');
 
-            try {
-                statusText.textContent = 'Subiendo y procesando...';
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
                 
-                const response = await fetch('/api/translate-video', {
-                    method: 'POST',
-                    body: formData
-                });
+                const text = decoder.decode(value);
+                const lines = text.split('\n');
+                
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        try {
+                            const data = JSON.parse(line.slice(6));
+                            
+                            if (data.status) {
+                                statusText.textContent = data.status;
+                            }
 
-                if (!response.ok) throw new Error('Error en la traducción del video');
-
-                const reader = response.body.getReader();
-                const decoder = new TextDecoder();
-
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-                    
-                    const text = decoder.decode(value);
-                    const lines = text.split('\n');
-                    
-                    for (const line of lines) {
-                        if (line.startsWith('data: ')) {
-                            try {
-                                const data = JSON.parse(line.slice(6));
-                                
-                                if (data.status) {
-                                    statusText.textContent = data.status;
+                            if (data.error === "RATE_LIMIT_EXCEEDED" || (data.error && data.error.includes("RATE_LIMIT_EXCEEDED"))) {
+                                statusText.innerHTML = `<span style="color: #f56565;"><i class="fas fa-exclamation-triangle"></i> Cuota de API agotada.</span>`;
+                                if (timeRemainingText) {
+                                    timeRemainingText.innerHTML = `
+                                        <div style="margin-top: 10px; padding: 10px; background: rgba(245, 101, 101, 0.1); border-radius: 8px; border: 1px solid rgba(245, 101, 101, 0.3);">
+                                            <p style="color: #feb2b2; margin-bottom: 8px;">Se han agotado las cuotas de la API de Google.</p>
+                                            <button onclick="window.startVideoTranslation(true)" style="background: #c53030; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 0.9em;">
+                                                <i class="fas fa-redo"></i> Reintentar proceso (Continuar)
+                                            </button>
+                                        </div>
+                                    `;
                                 }
-                                
-                                if (data.progress) {
-                                    const progress = parseFloat(data.progress);
-                                    progressBar.style.width = `${progress}%`;
-                                    if (percentText) percentText.textContent = `${Math.round(progress)}%`;
+                                // Stop processing UI updates but don't close modal immediately
+                                generateBtn.disabled = false;
+                                return; 
+                            }
+                            
+                            if (data.progress) {
+                                const progress = parseFloat(data.progress);
+                                progressBar.style.width = `${progress}%`;
+                                if (percentText) percentText.textContent = `${Math.round(progress)}%`;
 
-                                    // Calcular tiempo restante
-                                    if (progress > 0) {
-                                        const elapsedTime = Date.now() - startTime;
-                                        const estimatedTotalTime = (elapsedTime / progress) * 100;
-                                        const remainingTime = estimatedTotalTime - elapsedTime;
-                                        
-                                        // Formatear a MM:SS
-                                        const remainingSeconds = Math.max(0, Math.floor(remainingTime / 1000));
-                                        const mins = Math.floor(remainingSeconds / 60);
-                                        const secs = remainingSeconds % 60;
-                                        
-                                        if (timeRemainingText) {
-                                            timeRemainingText.textContent = `Tiempo restante estimado: ${mins}:${secs.toString().padStart(2, '0')}`;
-                                        }
+                                // Calcular tiempo restante
+                                if (progress > 0) {
+                                    const elapsedTime = Date.now() - startTime;
+                                    const estimatedTotalTime = (elapsedTime / progress) * 100;
+                                    const remainingTime = estimatedTotalTime - elapsedTime;
+                                    
+                                    // Formatear a MM:SS
+                                    const remainingSeconds = Math.max(0, Math.floor(remainingTime / 1000));
+                                    const mins = Math.floor(remainingSeconds / 60);
+                                    const secs = remainingSeconds % 60;
+                                    
+                                    if (timeRemainingText) {
+                                        timeRemainingText.textContent = `Tiempo restante estimado: ${mins}:${secs.toString().padStart(2, '0')}`;
                                     }
                                 }
-                                
-                                if (data.completed) {
-                                    statusText.textContent = '¡Completado!';
-                                    progressBar.style.width = '100%';
-                                    if (percentText) percentText.textContent = '100%';
-                                    if (timeRemainingText) timeRemainingText.textContent = 'Completado';
-                                    
-                                    // Pequeña pausa para que el usuario vea el 100%
-                                    setTimeout(() => {
-                                        alert('Video traducido y audios generados correctamente en la carpeta "outputs".');
-                                        closeTranslateVideoModal();
-                                        generateBtn.disabled = false;
-                                    }, 500);
-                                }
-                                
-                                if (data.error) {
-                                    throw new Error(data.error);
-                                }
-                            } catch (e) {
-                                console.error('Error parsing SSE data', e);
                             }
+                            
+                            if (data.completed) {
+                                statusText.textContent = '¡Completado!';
+                                progressBar.style.width = '100%';
+                                if (percentText) percentText.textContent = '100%';
+                                if (timeRemainingText) timeRemainingText.textContent = 'Completado';
+                                
+                                // Pequeña pausa para que el usuario vea el 100%
+                                setTimeout(() => {
+                                    alert('Video traducido y audios generados correctamente en la carpeta "outputs".');
+                                    closeTranslateVideoModal();
+                                    generateBtn.disabled = false;
+                                }, 500);
+                            }
+                            
+                            if (data.error) {
+                                throw new Error(data.error);
+                            }
+                        } catch (e) {
+                            console.error('Error parsing SSE data', e);
                         }
                     }
                 }
-
-            } catch (error) {
-                console.error(error);
-                statusText.textContent = 'Error: ' + error.message;
-                progressBar.style.backgroundColor = '#e53e3e'; // Red color
-                generateBtn.disabled = false;
             }
-        });
+
+        } catch (error) {
+            console.error(error);
+            statusText.textContent = 'Error: ' + error.message;
+            progressBar.style.backgroundColor = '#e53e3e'; // Red color
+            generateBtn.disabled = false;
+        }
+    };
+
+    if (generateBtn) {
+        generateBtn.addEventListener('click', () => window.startVideoTranslation(false));
     }
 });
 

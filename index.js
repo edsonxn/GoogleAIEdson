@@ -100,7 +100,9 @@ async function getGoogleAI(model = "gemini-3-flash-preview", options = {}) {
     const genAI = new GoogleGenerativeAI(entry.key);
     const aiModel = genAI.getGenerativeModel({ model });
 
-    await aiModel.generateContent("test");
+    // Usar countTokens en lugar de generateContent para ahorrar cuota
+    // Esto valida que la key funciona y el modelo es accesible sin gastar una generación
+    await aiModel.countTokens("test");
 
     console.log(`✅ API ${apiName} lista para usarse (${contextLabel})`);
 
@@ -113,9 +115,19 @@ async function getGoogleAI(model = "gemini-3-flash-preview", options = {}) {
         return await attemptWithEntry(entry, 'free');
       } catch (error) {
         lastError = error;
-        markFreeApiFailure(context, error);
-        console.warn(`⚠️ API gratuita ${entry.name} falló. Cambiando a la API principal. Motivo: ${error.message}`);
-        break; // Cambiar inmediatamente a la API principal tras el primer fallo
+        
+        // Detectar error de cuota (429)
+        const isRateLimit = error.message.includes('429') || (error.status === 429) || error.message.includes('Too Many Requests') || error.message.includes('Quota exceeded');
+        
+        if (isRateLimit) {
+          console.warn(`⚠️ API gratuita ${entry.name} saturada (429). Probando siguiente llave...`);
+          // NO marcamos fallo permanente, solo pasamos a la siguiente
+        } else {
+          markFreeApiFailure(context, error);
+          console.warn(`⚠️ API gratuita ${entry.name} falló. Motivo: ${error.message}`);
+        }
+        
+        // NO hacemos break, intentamos con la siguiente llave gratuita
       }
     }
   }
@@ -893,7 +905,7 @@ function extractScriptContent(fullContent) {
       
       if (startIndex === -1) {
         // Si no encuentra ningún patrón, devolver todo el contenido limpio
-        console.warn('⚠️ No se encontró marcador de inicio del guión, devolviendo contenido limpio');
+        // console.log('ℹ️ No se encontró marcador de inicio del guión, usando contenido completo');
         const cleanContent = fullContent.trim();
         return { 
           content: cleanContent, 
@@ -1050,7 +1062,7 @@ async function generateMissingScript(topic, sectionNumber, totalSections, chapte
     }
 
     // Usar el cliente de IA con fallback automático
-  const { model } = await getGoogleAI("gemini-3-pro-preview", { context: 'llm' });
+  const { model } = await getGoogleAI("gemini-2.5-flash", { context: 'llm' });
     
     console.log('🤖 Enviando prompt al modelo de IA...');
     const result = await model.generateContent({
@@ -1528,6 +1540,70 @@ async function generateContentWithRetry(ai, params, maxRetries = 3, delay = 2000
 }
 
 // Función universal para generar contenido con múltiples proveedores LLM
+// Función auxiliar para limpiar respuestas del LLM (eliminar bloques de pensamiento)
+function cleanLlmResponse(text) {
+  if (!text || typeof text !== 'string') return text;
+  
+  // Eliminar bloques <thought>...</thought>
+  let cleaned = text.replace(/<thought>[\s\S]*?<\/thought>/gi, '');
+  
+  // Eliminar bloques "thought\nThinking Process:..." hasta el final del bloque de pensamiento
+  // Asumimos que el pensamiento termina cuando empieza el texto real o hay un salto de línea doble significativo
+  // Pero el formato mostrado por el usuario es complejo.
+  // "thought\nThinking Process:\n...\n\n    Si el equipo..."
+  
+  // Estrategia: Si detectamos "Thinking Process:", buscamos dónde termina.
+  // A menudo termina cuando empieza el contenido real, que suele estar marcado por el inicio del script o simplemente texto normal.
+  
+  if (cleaned.includes('Thinking Process:')) {
+    // Intentar encontrar el final del proceso de pensamiento
+    // A veces el modelo pone el output final después de una línea separadora o simplemente al final
+    
+    // Si hay un patrón claro de inicio de script (e.g. "Si el equipo...")
+    // Es difícil predecir.
+    
+    // Opción segura: Si el texto empieza con "thought" o "Thinking Process", intentar cortar hasta el primer párrafo que parezca contenido final.
+    // O buscar marcadores comunes como "Text:", "Script:", "Output:", "Draft:", "Final Text:"
+    
+    const markers = ['Final Text:', 'Output:', 'Script:', 'Here is the script:', 'Here is the text:'];
+    let bestIndex = -1;
+    
+    for (const marker of markers) {
+      const idx = cleaned.lastIndexOf(marker);
+      if (idx !== -1) {
+        // Verificar si lo que sigue es sustancial
+        if (idx > bestIndex) bestIndex = idx;
+      }
+    }
+    
+    if (bestIndex !== -1) {
+      // Encontramos un marcador, devolvemos lo que sigue
+      // Buscar el salto de línea después del marcador
+      const contentStart = cleaned.indexOf('\n', bestIndex);
+      if (contentStart !== -1) {
+        return cleaned.substring(contentStart).trim();
+      }
+    }
+    
+    // Si no hay marcadores claros, intentar eliminar el bloque inicial si es muy obvio
+    // El ejemplo del usuario muestra "thought\nThinking Process:..." al principio.
+    // Y luego mucho texto indentado.
+    // Y luego el texto final.
+    
+    // Regex para eliminar el bloque inicial de pensamiento si existe
+    cleaned = cleaned.replace(/^thought\s*Thinking Process:[\s\S]*?(?=\n\s*[A-Z¡¿])/i, '').trim();
+    
+    // Si sigue teniendo "Thinking Process:", intentar otra estrategia agresiva
+    if (cleaned.includes('Thinking Process:')) {
+       // Buscar el último bloque de texto que parezca el resultado final
+       // A menudo el modelo repite el texto final al final.
+       // Pero es arriesgado cortar demasiado.
+    }
+  }
+  
+  return cleaned.trim();
+}
+
 async function generateUniversalContent(model, promptOrHistory, systemInstruction = null, maxRetries = 3) {
   console.log(`🤖 Generando contenido con modelo: ${model}`);
   
@@ -1621,7 +1697,7 @@ async function generateUniversalContent(model, promptOrHistory, systemInstructio
           if (currentApiKeyType === 'primary') {
             markPrimarySuccess('llm');
           }
-          return await response.text();
+          return cleanLlmResponse(await response.text());
         } else {
           const result = await model_instance.generateContent(promptOrHistory);
           const response = await result.response;
@@ -1629,7 +1705,7 @@ async function generateUniversalContent(model, promptOrHistory, systemInstructio
           if (currentApiKeyType === 'primary') {
             markPrimarySuccess('llm');
           }
-          return await response.text();
+          return cleanLlmResponse(await response.text());
         }
       }
       
@@ -2008,7 +2084,7 @@ REGLAS ESTRICTAS:
 `;
 
     // Llamar a la IA para generar metadatos
-  const { model } = await getGoogleAI('gemini-3-pro-preview', { context: 'llm', forcePrimary: true });
+  const { model } = await getGoogleAI('gemini-2.5-flash', { context: 'llm' });
     
     console.log(`🤖 Enviando request a Gemini para generar metadatos...`);
     const result = await model.generateContent([{ text: prompt }]);
@@ -5155,7 +5231,8 @@ async function performBatchAudioGeneration(params = {}) {
   const selectedPitch = Number.isFinite(Number(applioPitch)) ? Number(applioPitch) : 0;
   const selectedSpeed = Number.isFinite(Number(applioSpeed)) ? Number(applioSpeed) : 0;
 
-        const fileName = `${createSafeFolderName(section.title)}_seccion_${section.section}_applio_${Date.now()}.wav`;
+        // USAR projectKey PARA EL NOMBRE DEL ARCHIVO (CONSISTENCIA CON FRONTEND)
+        const fileName = `${projectKey}_seccion_${section.section}_applio_${Date.now()}.wav`;
         const filePath = path.join(sectionFolderStructure.sectionDir, fileName);
 
         console.log(`📁 [${projectKey}] Guardando audio Applio en: ${filePath}`);
@@ -5177,11 +5254,12 @@ async function performBatchAudioGeneration(params = {}) {
         console.log(`✅ [${projectKey}] Audio Applio generado: ${audioPath}`);
       } else {
         try {
+          // USAR projectKey COMO TOPIC PARA EL NOMBRE DEL ARCHIVO (CONSISTENCIA CON FRONTEND)
           audioPath = await generateStoryAudio(
             section.cleanScript,
             voice || DEFAULT_TTS_VOICE,
             sectionFolderStructure.sectionDir,
-            section.title,
+            projectKey, // Usar projectKey en lugar de section.title
             section.section,
             requestedNarrationStyle
           );
@@ -5202,8 +5280,8 @@ async function performBatchAudioGeneration(params = {}) {
           }
 
           const sourceFile = audioResponse.audioPath;
-          const safeTitle = createSafeFolderName(section.title);
-          const fileName = `${safeTitle}_seccion_${section.section}_applio_${Date.now()}.wav`;
+          // USAR projectKey PARA EL NOMBRE DEL ARCHIVO (CONSISTENCIA CON FRONTEND)
+          const fileName = `${projectKey}_seccion_${section.section}_applio_${Date.now()}.wav`;
           const filePath = path.join(sectionFolderStructure.sectionDir, fileName);
 
           fs.copyFileSync(sourceFile, filePath);
@@ -5555,7 +5633,8 @@ app.post('/generate-batch-automatic', async (req, res) => {
           const selectedPitch = Number.isFinite(Number(applioPitch)) ? Number(applioPitch) : 0;
           const selectedSpeed = Number.isFinite(Number(applioSpeed)) ? Number(applioSpeed) : 0;
 
-          const fileName = `${createSafeFolderName(chapterStructure[section - 1] || `Sección ${section}`)}_seccion_${section}_applio_${Date.now()}.wav`;
+          // USAR projectKey PARA EL NOMBRE DEL ARCHIVO (CONSISTENCIA CON FRONTEND)
+          const fileName = `${projectKey}_seccion_${section}_applio_${Date.now()}.wav`;
           const filePath = path.join(sectionFolderStructure.sectionDir, fileName);
 
           // Asegurar conexión
@@ -5579,7 +5658,8 @@ app.post('/generate-batch-automatic', async (req, res) => {
           }
         } else {
           // Google TTS
-          const fileName = `${createSafeFolderName(chapterStructure[section - 1] || `Sección ${section}`)}_seccion_${section}_${Date.now()}.mp3`;
+          // USAR projectKey PARA EL NOMBRE DEL ARCHIVO (CONSISTENCIA CON FRONTEND)
+          const fileName = `${projectKey}_seccion_${section}_${Date.now()}.mp3`;
           const filePath = path.join(sectionFolderStructure.sectionDir, fileName);
           
           generatedAudioPath = await generateStoryAudio(
@@ -6046,8 +6126,11 @@ VERIFICACIÓN FINAL: Tu respuesta debe contener exactamente ${numImages - 1} ocu
     console.log(`🎨 ${allImagePrompts.length} sets de prompts de imágenes generados`);
 
     // =======================================================================
-    // FASE 2: GENERAR AUDIOS (SECUENCIAL EN BACKGROUND)
+    // FASE 2: GENERAR AUDIOS (SECUENCIAL EN BACKGROUND) - DESACTIVADO
     // =======================================================================
+    // Se desactiva para evitar doble generación, ya que el frontend (script.js)
+    // se encarga de orquestar la generación de audio secuencialmente.
+    /*
     console.log('\n' + '🎵'.repeat(20));
     console.log('🎵 FASE 2: INICIANDO GENERACIÓN DE AUDIOS (POST-SCRIPTS)');
     console.log('🎵'.repeat(20));
@@ -6083,6 +6166,7 @@ VERIFICACIÓN FINAL: Tu respuesta debe contener exactamente ${numImages - 1} ocu
         }
         console.log('✅✅✅ TODAS LAS FASES COMPLETADAS (AUDIOS TERMINADOS) ✅✅✅');
     })().catch(err => console.error("❌ Error fatal en generación de audios (Background):", err));
+    */
     
     res.json({
       success: true,
@@ -13589,7 +13673,7 @@ app.post('/generate-youtube-metadata', async (req, res) => {
       chaptersTimestamps
     });
 
-  const { model } = await getGoogleAI("gemini-3-pro-preview", { context: 'llm', forcePrimary: true });
+  const { model } = await getGoogleAI("gemini-2.5-flash", { context: 'llm' });
     
     const response = await model.generateContent([{ text: prompt }]);
     const responseText = response.response.text();
@@ -17130,6 +17214,272 @@ app.post('/generate-youtube-metadata-for-project', async (req, res) => {
   }
 });
 
+// Helper functions for Google TTS in Video Translation
+async function generateSingleGoogleTTS(text, outputPath, lang, selectedVoice = 'Kore') {
+    if (!text || !text.trim()) {
+        throw new Error("Text is empty");
+    }
+    // Map language codes to Google TTS voices if needed, or use a default
+    // Using 'Kore' as default as seen in other parts of the code
+    const voiceName = selectedVoice || 'Kore'; 
+    
+    // Get API key (using free tier logic from existing code)
+    const usageState = getTrackedUsageState('tts');
+    const skipFreeApis = usageState?.preferPrimary;
+    
+    // Prepare list of keys to try
+    let keysToTry = [];
+    
+    if (!skipFreeApis) {
+        const freeApiEntries = getFreeGoogleAPIKeys();
+        // Shuffle free keys to distribute load
+        for (let i = freeApiEntries.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [freeApiEntries[i], freeApiEntries[j]] = [freeApiEntries[j], freeApiEntries[i]];
+        }
+        keysToTry = [...freeApiEntries];
+    }
+    
+    // Add primary key at the end if available
+    if (process.env.GOOGLE_API_KEY) {
+        keysToTry.push({ key: process.env.GOOGLE_API_KEY, name: GOOGLE_PRIMARY_API_NAME, isPrimary: true });
+    }
+
+    if (keysToTry.length === 0) {
+        throw new Error('No Google API keys available for TTS');
+    }
+
+    let lastError = null;
+
+    for (const entry of keysToTry) {
+        let keyRetries = 1; // Allow 1 retry per key for specific errors
+        while (keyRetries >= 0) {
+            try {
+                const client = getGoogleTTSClient(entry.key);
+                const apiName = entry.name;
+                
+                console.log(`🔊 Generating Google TTS for lang ${lang} using ${apiName}...`);
+
+                const response = await client.models.generateContent({
+                    model: 'gemini-2.5-flash-preview-tts',
+                    contents: [
+                        {
+                            role: 'user',
+                            parts: [{ text: text }]
+                        }
+                    ],
+                    config: {
+                        responseModalities: ['AUDIO'],
+                        speechConfig: {
+                            voiceConfig: {
+                                prebuiltVoiceConfig: {
+                                    voiceName: voiceName
+                                }
+                            }
+                        }
+                    }
+                });
+
+                const audioPart = response?.candidates?.[0]?.content?.parts?.find(part => part.inlineData?.data);
+                if (!audioPart?.inlineData?.data) {
+                    // Log full response for debugging
+                    console.log(`❌ Google TTS response missing audio data (${apiName}). Response:`, JSON.stringify(response, null, 2));
+                    throw new Error('Google TTS response missing audio data');
+                }
+
+                const audioBuffer = Buffer.from(audioPart.inlineData.data, 'base64');
+                
+                if (audioBuffer.length < 100) {
+                    throw new Error('Generated audio is too short/empty');
+                }
+
+                // Check mimeType to determine if it's PCM or WAV
+                const mimeType = audioPart.inlineData.mimeType || '';
+                
+                // If it's PCM (or if we assume it is based on user feedback/docs), we need to wrap it in WAV container
+                // The user snippet suggests it returns raw PCM data that needs wrapping.
+                // We'll try to detect or just default to wrapping if it's not explicitly WAV.
+                
+                // Note: The API usually returns 'audio/wav' if it's WAV, or 'audio/pcm' if PCM.
+                // However, the user's snippet implies we should use saveWaveFile.
+                
+                if (mimeType.includes('pcm') || !mimeType.includes('wav')) {
+                     // Default to 24kHz as per user snippet
+                     const rateMatch = mimeType.match(/rate=(\d+)/i);
+                     const sampleRate = rateMatch ? parseInt(rateMatch[1], 10) : 24000;
+                     await saveWaveFile(outputPath, audioBuffer, 1, sampleRate);
+                } else {
+                     // It claims to be WAV, write directly
+                     await writeFile(outputPath, audioBuffer);
+                }
+                
+                // Success!
+                return; 
+
+            } catch (error) {
+                lastError = error;
+                const isRateLimit = error.message.includes('429') || (error.status === 429) || error.message.includes('Too Many Requests') || error.message.includes('Quota exceeded') || error.message.includes('RESOURCE_EXHAUSTED');
+                const isMissingAudio = error.message.includes('Google TTS response missing audio data');
+                
+                if (isRateLimit) {
+                    console.warn(`⚠️ API ${entry.name} saturada (429). Intentando siguiente...`);
+                    keyRetries = -1; // Don't retry this key, move to next
+                    // Add a small delay before trying next key to avoid hammering
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                } else if (isMissingAudio && keyRetries > 0) {
+                    console.warn(`⚠️ Error con API ${entry.name}: ${error.message}. Reintentando con la misma clave en 2s...`);
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    keyRetries--;
+                } else {
+                    console.warn(`⚠️ Error con API ${entry.name}: ${error.message}. Intentando siguiente...`);
+                    keyRetries = -1; // Move to next key
+                }
+            }
+        }
+    }
+
+    // If we get here, all keys failed
+    throw lastError || new Error('All API keys failed for TTS');
+}
+
+async function mergeAudioFiles(files, outputPath) {
+    return new Promise((resolve, reject) => {
+        // Verify files exist
+        const missingFiles = files.filter(f => !fs.existsSync(f));
+        if (missingFiles.length > 0) {
+            return reject(new Error(`Missing files for merge: ${missingFiles.join(', ')}`));
+        }
+
+        // Create a list file for ffmpeg
+        const listFilePath = outputPath + '.list.txt';
+        
+        // Use filenames only (relative paths) to avoid Windows path issues in concat demuxer
+        // This works because list file is in the same directory as the audio files
+        const fileContent = files.map(f => `file '${path.basename(f)}'`).join('\n');
+        fs.writeFileSync(listFilePath, fileContent);
+
+        console.log(`📝 Merging ${files.length} files. List file created at: ${listFilePath}`);
+
+        const ffmpeg = spawn('ffmpeg', [
+            '-y',
+            '-f', 'concat',
+            '-safe', '0',
+            '-i', listFilePath,
+            '-c', 'copy',
+            outputPath
+        ]);
+
+        let stderr = '';
+
+        ffmpeg.stderr.on('data', (data) => {
+            stderr += data.toString();
+        });
+
+        ffmpeg.on('close', (code) => {
+            if (fs.existsSync(listFilePath)) {
+                try { fs.unlinkSync(listFilePath); } catch (e) { console.error("Error deleting list file:", e); }
+            }
+            
+            if (code === 0) {
+                resolve();
+            } else {
+                console.error(`❌ FFmpeg merge failed. Stderr:\n${stderr}`);
+                reject(new Error(`FFmpeg merge failed with code ${code}. Stderr: ${stderr.slice(-200)}`));
+            }
+        });
+        
+        ffmpeg.on('error', (err) => {
+             if (fs.existsSync(listFilePath)) {
+                 try { fs.unlinkSync(listFilePath); } catch (e) {}
+             }
+             console.error(`❌ FFmpeg spawn error:`, err);
+             reject(err);
+        });
+    });
+}
+
+async function generateGoogleTTSWithSplitting(text, outputPath, lang, selectedVoice = 'Kore') {
+    // Split text into paragraphs based on double newlines (blank lines) as requested by user.
+    // This treats each block separated by a blank line as a single TTS request.
+    
+    // Split by 2 or more newlines (allowing for whitespace in between)
+    let paragraphs = text.split(/\n\s*\n/).filter(p => p.trim().length > 0);
+    
+    // Clean up paragraphs
+    paragraphs = paragraphs.map(p => p.trim());
+    
+    // Fallback if no paragraphs found (e.g. single block of text)
+    if (paragraphs.length === 0) paragraphs = [text];
+
+    const tempFiles = [];
+    const tempDir = path.dirname(outputPath);
+
+    try {
+        // Filter paragraphs first
+        const cleanParagraphs = paragraphs.map(p => p.trim()).filter(p => p.length > 0);
+        
+        // Pre-generate file paths to ensure order
+        // Use deterministic names for resumption: temp_tts_{lang}_part_{index}.wav
+        const filePaths = cleanParagraphs.map((_, i) => path.join(tempDir, `temp_tts_${lang}_part_${i}.wav`));
+        
+        // Add to tempFiles for cleanup
+        filePaths.forEach(f => tempFiles.push(f));
+
+        // Create tasks
+        const tasks = cleanParagraphs.map((paragraph, i) => {
+            return async () => {
+                const filePath = filePaths[i];
+                if (fs.existsSync(filePath)) {
+                    // Check if file is valid (size > 100 bytes)
+                    const stats = fs.statSync(filePath);
+                    if (stats.size > 100) {
+                        console.log(`⏩ Skipping existing part ${i} for ${lang}`);
+                        return;
+                    }
+                }
+                await generateSingleGoogleTTS(paragraph, filePath, lang, selectedVoice);
+            };
+        });
+
+        // Run in batches of 3 (Parallel execution)
+        const BATCH_SIZE = 3;
+        for (let i = 0; i < tasks.length; i += BATCH_SIZE) {
+            const batch = tasks.slice(i, i + BATCH_SIZE);
+            console.log(`🚀 Processing batch ${Math.floor(i/BATCH_SIZE) + 1}/${Math.ceil(tasks.length/BATCH_SIZE)} for ${lang} (3 parallel)...`);
+            
+            try {
+                await Promise.all(batch.map(task => task()));
+            } catch (err) {
+                console.error(`❌ Error in batch ${Math.floor(i/BATCH_SIZE) + 1} for ${lang}:`, err.message);
+                throw err; // Stop process on error, but temp files remain
+            }
+            
+            // Small delay between batches to avoid hitting rate limits too hard
+            if (i + BATCH_SIZE < tasks.length) await new Promise(r => setTimeout(r, 1000));
+        }
+
+        if (tempFiles.length === 0) {
+             throw new Error("No audio generated from text");
+        }
+        
+        // Always use mergeAudioFiles to ensure consistent output format compatible with FFmpeg
+        // This avoids issues where a direct copy might carry over weird header issues
+        await mergeAudioFiles(tempFiles, outputPath);
+
+        // Cleanup temp files ONLY on success
+        for (const file of tempFiles) {
+            if (fs.existsSync(file)) {
+                try { fs.unlinkSync(file); } catch(e) { console.error("Error deleting temp file:", e); }
+            }
+        }
+
+    } catch (error) {
+        console.error(`❌ Error in generateGoogleTTSWithSplitting for ${lang}:`, error);
+        // Do NOT delete temp files here to allow resumption
+        throw error;
+    }
+}
+
 // --- Endpoint para Traducir Videos ---
 app.post('/api/translate-video', upload.fields([{ name: 'video', maxCount: 1 }, { name: 'music', maxCount: 1 }]), async (req, res) => {
     // Setup SSE
@@ -17143,14 +17493,40 @@ app.post('/api/translate-video', upload.fields([{ name: 'video', maxCount: 1 }, 
     };
 
     try {
-        if (!req.files || !req.files['video']) {
-            throw new Error('No video file uploaded');
+        let videoPath;
+        let videoName;
+        let musicFile = req.files && req.files['music'] ? req.files['music'][0] : null;
+
+        // Check if this is a retry with an existing video
+        if (req.body.retryVideoName) {
+            videoName = path.parse(req.body.retryVideoName).name;
+            const outputDir = path.join(process.cwd(), 'public', 'outputs', videoName);
+            // Try to find the saved original video
+            // We don't know the extension for sure, so we might need to look for it or assume mp4/original name
+            // Let's assume we saved it as 'original_video.mp4' or similar. 
+            // Better: look for any file starting with 'original_video' in the output dir
+            
+            if (fs.existsSync(outputDir)) {
+                const files = fs.readdirSync(outputDir);
+                const originalVideo = files.find(f => f.startsWith('original_video.'));
+                if (originalVideo) {
+                    videoPath = path.join(outputDir, originalVideo);
+                    console.log(`🔄 Retrying with existing video: ${videoPath}`);
+                }
+            }
+            
+            if (!videoPath) {
+                throw new Error('Could not find existing video for retry. Please upload the file again.');
+            }
+        } else {
+            // Normal upload flow
+            if (!req.files || !req.files['video']) {
+                throw new Error('No video file uploaded');
+            }
+            const videoFile = req.files['video'][0];
+            videoPath = videoFile.path;
+            videoName = path.parse(videoFile.originalname).name;
         }
-
-        const videoFile = req.files['video'][0];
-        const musicFile = req.files['music'] ? req.files['music'][0] : null;
-
-        const videoPath = videoFile.path;
 
         // Limpiar carpeta temp de archivos viejos (excepto los actuales)
         try {
@@ -17181,13 +17557,26 @@ app.post('/api/translate-video', upload.fields([{ name: 'video', maxCount: 1 }, 
             console.error('Error durante la limpieza de temp:', cleanupError);
         }
 
-        const videoName = path.parse(videoFile.originalname).name;
         // Usar carpeta pública para outputs, con el nombre del video
         const outputDir = path.join(process.cwd(), 'public', 'outputs', videoName);
         
         // Crear directorio si no existe (recursive: true asegura que cree outputs/ si falta)
         if (!fs.existsSync(outputDir)) {
             fs.mkdirSync(outputDir, { recursive: true });
+        }
+        
+        // Save the video to outputDir if it's a new upload (not a retry)
+        if (!req.body.retryVideoName) {
+            const ext = path.extname(videoPath);
+            const savedVideoPath = path.join(outputDir, `original_video${ext}`);
+            // Copy instead of move to keep temp file logic simple (multer cleans up? actually we clean up manually above)
+            // But we want to persist it.
+            try {
+                fs.copyFileSync(videoPath, savedVideoPath);
+                console.log(`💾 Video saved for retry: ${savedVideoPath}`);
+            } catch (e) {
+                console.error("Error saving backup video:", e);
+            }
         }
         
         console.log(`📂 Directorio de salida: ${outputDir}`);
@@ -17414,8 +17803,23 @@ if __name__ == "__main__":
                 ${originalText}
                 `;
                 
-                const { model } = await getGoogleAI("gemini-2.5-flash", { context: 'llm' });
-                const result = await model.generateContent(prompt);
+                let result;
+                try {
+                    const { model } = await getGoogleAI("gemini-2.5-flash", { context: 'llm' });
+                    result = await model.generateContent(prompt);
+                } catch (error) {
+                    const isRateLimit = error.message.includes('429') || (error.status === 429) || error.message.includes('Too Many Requests') || error.message.includes('Quota exceeded');
+                    
+                    if (isRateLimit) {
+                        console.warn(`⚠️ API gratuita saturada (429) durante traducción. Reintentando con API PRINCIPAL...`);
+                        // Forzar uso de API principal
+                        const { model } = await getGoogleAI("gemini-2.5-flash", { context: 'llm', forcePrimary: true });
+                        result = await model.generateContent(prompt);
+                    } else {
+                        throw error; // Re-lanzar si no es error de cuota
+                    }
+                }
+
                 translatedText = result.response.text();
                 
                 // Limpiar posibles bloques de código markdown
@@ -17431,38 +17835,69 @@ if __name__ == "__main__":
             // Generate Audio
             const audioOutputPath = path.join(outputDir, `audio_${lang}.wav`);
             
-            // Usar la voz correcta para el idioma
-            const ttsModel = voiceMap[lang] || 'en-US-ChristopherNeural';
-            
-            // Asegurar que Applio esté conectado antes de intentar generar
-            let isConnected = false;
-            try {
-                isConnected = await applioClient.checkConnection();
-            } catch (e) {
-                isConnected = false;
-            }
+            // Check TTS Provider
+            const ttsProvider = req.body.ttsProvider || 'applio';
+            const googleVoice = req.body.googleVoice || 'Kore';
 
-            if (!isConnected) {
-                console.log("⚠️ Applio no está conectado, intentando iniciar...");
-                sendStatus("Iniciando servidor Applio...", progress);
-                try {
-                    await startApplio();
-                    // Esperar un momento extra para asegurar que esté listo
-                    await new Promise(resolve => setTimeout(resolve, 5000));
-                } catch (startError) {
-                    throw new Error("No se pudo iniciar Applio automáticamente: " + startError.message);
+            if (ttsProvider === 'google') {
+                if (!translatedText || translatedText === 'undefined') {
+                    throw new Error(`Error en la traducción a ${langNames[lang]}: Texto vacío o inválido.`);
                 }
-            }
+                
+                sendStatus(`Generando audio con Google TTS (${googleVoice}) para ${langNames[lang]}...`, progress + (progressStep / 2));
+                try {
+                    await generateGoogleTTSWithSplitting(translatedText, audioOutputPath, lang, googleVoice);
+                } catch (err) {
+                    console.error(`Error Google TTS for ${lang}:`, err);
+                    
+                    // Check for Rate Limit Error
+                    const isRateLimit = err.message.includes('429') || (err.status === 429) || err.message.includes('Quota exceeded') || err.message.includes('RESOURCE_EXHAUSTED');
+                    
+                    if (isRateLimit) {
+                        sendStatus(`⚠️ Cuota de API agotada para ${langNames[lang]}. Esperando 5 minutos...`, progress, false, "RATE_LIMIT_EXCEEDED");
+                        // We throw a specific error that the frontend can recognize if needed, 
+                        // but since we sent a status with error field, the frontend might handle it.
+                        // However, to stop the loop here:
+                        throw new Error(`RATE_LIMIT_EXCEEDED: Se han agotado las cuotas de API para ${langNames[lang]}. Por favor espera unos minutos y vuelve a intentar.`);
+                    }
+                    
+                    throw new Error(`Error generando audio con Google TTS para ${lang}: ${err.message}`);
+                }
+            } else {
+                // Applio Logic
+                // Usar la voz correcta para el idioma
+                const ttsModel = voiceMap[lang] || 'en-US-ChristopherNeural';
+                
+                // Asegurar que Applio esté conectado antes de intentar generar
+                let isConnected = false;
+                try {
+                    isConnected = await applioClient.checkConnection();
+                } catch (e) {
+                    isConnected = false;
+                }
 
-            if (!translatedText || translatedText === 'undefined') {
-                throw new Error(`Error en la traducción a ${langNames[lang]}: Texto vacío o inválido.`);
-            }
+                if (!isConnected) {
+                    console.log("⚠️ Applio no está conectado, intentando iniciar...");
+                    sendStatus("Iniciando servidor Applio...", progress);
+                    try {
+                        await startApplio();
+                        // Esperar un momento extra para asegurar que esté listo
+                        await new Promise(resolve => setTimeout(resolve, 5000));
+                    } catch (startError) {
+                        throw new Error("No se pudo iniciar Applio automáticamente: " + startError.message);
+                    }
+                }
 
-            await applioClient.textToSpeech(translatedText, audioOutputPath, {
-                model: ttsModel,
-                speed: 0,
-                pitch: 0
-            });
+                if (!translatedText || translatedText === 'undefined') {
+                    throw new Error(`Error en la traducción a ${langNames[lang]}: Texto vacío o inválido.`);
+                }
+
+                await applioClient.textToSpeech(translatedText, audioOutputPath, {
+                    model: ttsModel,
+                    speed: 0,
+                    pitch: 0
+                });
+            }
 
             // 4. Adjust Duration (Pad/Trim) with Time Stretching
             // const finalAudioPath = path.join(outputDir, `${langNames[lang]}.mp3`); // Defined at start of loop
@@ -17543,12 +17978,21 @@ if __name__ == "__main__":
 
                 const ffmpegCmd = spawn('ffmpeg', ffmpegArgs);
                 
+                let stderr = '';
+                ffmpegCmd.stderr.on('data', (data) => {
+                    stderr += data.toString();
+                });
+
                 ffmpegCmd.on('close', (code) => {
                     if (code === 0) {
                         // Se mantiene el archivo wav original
                         resolve();
                     }
-                    else reject(new Error('FFmpeg error adjusting duration'));
+                    else {
+                        console.error(`❌ FFmpeg adjust duration failed. Args: ${ffmpegArgs.join(' ')}`);
+                        console.error(`❌ Stderr: ${stderr}`);
+                        reject(new Error(`FFmpeg error adjusting duration: ${stderr.slice(-200)}`));
+                    }
                 });
             });
 
