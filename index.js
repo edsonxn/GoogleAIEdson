@@ -17399,16 +17399,22 @@ async function mergeAudioFiles(files, outputPath) {
 }
 
 async function generateGoogleTTSWithSplitting(text, outputPath, lang, selectedVoice = 'Kore') {
-    // Split text into paragraphs based on double newlines (blank lines) as requested by user.
-    // This treats each block separated by a blank line as a single TTS request.
+    // Split text into paragraphs based on double newlines
+    let rawParagraphs = text.split(/\n\s*\n/).filter(p => p.trim().length > 0);
     
-    // Split by 2 or more newlines (allowing for whitespace in between)
-    let paragraphs = text.split(/\n\s*\n/).filter(p => p.trim().length > 0);
+    // Group every 2 paragraphs together
+    let paragraphs = [];
+    for (let i = 0; i < rawParagraphs.length; i += 2) {
+        if (i + 1 < rawParagraphs.length) {
+            // Join current paragraph and next paragraph
+            paragraphs.push(rawParagraphs[i].trim() + "\n\n" + rawParagraphs[i+1].trim());
+        } else {
+            // Last odd paragraph
+            paragraphs.push(rawParagraphs[i].trim());
+        }
+    }
     
-    // Clean up paragraphs
-    paragraphs = paragraphs.map(p => p.trim());
-    
-    // Fallback if no paragraphs found (e.g. single block of text)
+    // Fallback if no paragraphs found
     if (paragraphs.length === 0) paragraphs = [text];
 
     const tempFiles = [];
@@ -17738,11 +17744,11 @@ if __name__ == "__main__":
         sendStatus('Transcripción completada. Traduciendo...', 50);
 
         // 3. Translate and Generate Audio
-        const languages = ['en', 'fr', 'de', 'pt', 'ru', 'zh', 'ko']; 
+        const languages = ['en', 'fr', 'de', 'pt', 'ru', 'zh', 'ko', 'ja']; 
         const langNames = {
             'en': 'English', 'fr': 'French', 'de': 'German', 
             'pt': 'Portuguese', 'ru': 'Russian',
-            'zh': 'Chinese', 'ko': 'Korean'
+            'zh': 'Chinese', 'ko': 'Korean', 'ja': 'Japanese'
         };
         
         // Mapa de voces TTS para cada idioma (Edge TTS)
@@ -17753,7 +17759,8 @@ if __name__ == "__main__":
             'pt': 'pt-BR-AntonioNeural',
             'ru': 'ru-RU-DmitryNeural',
             'zh': 'zh-CN-YunxiNeural',
-            'ko': 'ko-KR-InJoonNeural'
+            'ko': 'ko-KR-InJoonNeural',
+            'ja': 'ja-JP-KeitaNeural'
         };
 
         let progress = 50;
