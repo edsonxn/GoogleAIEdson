@@ -98,6 +98,7 @@ debug_*.js
 example_*.md
 
 # Archivos compilados de Python
+styles.json
 __pycache__/
 *.py[cod]
 *$py.class

@@ -1452,6 +1452,51 @@ async function stopApplio() {
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' })); // Aumentar límite para payloads grandes
 app.use(bodyParser.urlencoded({ limit: '50mb', extended: true })); // Para formularios grandes
+
+// --- RUTAS DE ESTILOS PERSONALIZADOS ---
+const STYLES_FILE_PATH = path.join(__dirname, 'styles.json');
+
+// Obtener estilos personalizados
+app.get('/api/custom-styles', async (req, res) => {
+  try {
+    if (!fs.existsSync(STYLES_FILE_PATH)) {
+        await writeFile(STYLES_FILE_PATH, JSON.stringify({ scriptStyles: [], thumbnailStyles: [] }, null, 2));
+    }
+    const data = await fs.promises.readFile(STYLES_FILE_PATH, 'utf8');
+    res.json(JSON.parse(data));
+  } catch (error) {
+    console.error('Error al leer estilos:', error);
+    res.status(500).json({ error: 'Error al leer estilos' });
+  }
+});
+
+// Guardar estilos personalizados
+app.post('/api/custom-styles', async (req, res) => {
+  try {
+    const { scriptStyles, thumbnailStyles } = req.body;
+    
+    // Leer archivo actual para preservar datos si solo se envía uno
+    let currentData = { scriptStyles: [], thumbnailStyles: [] };
+    if (fs.existsSync(STYLES_FILE_PATH)) {
+        const fileContent = await fs.promises.readFile(STYLES_FILE_PATH, 'utf8');
+        try {
+            currentData = JSON.parse(fileContent);
+        } catch (e) {
+            console.error('Error parseando estilos existentes, sobrescribiendo', e);
+        }
+    }
+
+    if (scriptStyles !== undefined) currentData.scriptStyles = scriptStyles;
+    if (thumbnailStyles !== undefined) currentData.thumbnailStyles = thumbnailStyles;
+
+    await writeFile(STYLES_FILE_PATH, JSON.stringify(currentData, null, 2));
+    res.json({ success: true, message: 'Estilos guardados correctamente' });
+  } catch (error) {
+    console.error('Error al guardar estilos:', error);
+    res.status(500).json({ error: 'Error al guardar estilos' });
+  }
+});
+
 app.use(express.static('public')); // Servir HTML y assets
 
 // Configurar multer para subida de archivos
@@ -3167,8 +3212,8 @@ async function generateStoryAudio(script, voiceName = DEFAULT_TTS_VOICE, section
         } catch (freeError) {
           lastError = freeError;
           markFreeApiFailure('tts', freeError);
-          console.warn(`⚠️ API TTS gratuita ${entry.name} falló. Cambiando a la API principal. Motivo: ${freeError.message}`);
-          break;
+          console.warn(`⚠️ API TTS gratuita ${entry.name} falló. Intentando con la siguiente... Motivo: ${freeError.message}`);
+          // Continuar con la siguiente API gratuita
         }
       }
     }
@@ -5992,23 +6037,7 @@ VERIFICACIÓN FINAL: Tu respuesta debe contener exactamente ${numImages - 1} ocu
         // GENERACIÓN DE AUDIO EN PARALELO (ASÍNCRONO) - DESACTIVADO
         // ===============================================================
         // Se ha movido a la FASE 2 para que inicie después de terminar todos los guiones
-        /*
-        processSectionAudioAsync(
-          section,
-          scriptText,
-          topic,
-          projectKey,
-          chapterStructure,
-          useApplio,
-          applioVoice,
-          applioModel,
-          applioPitch,
-          applioSpeed,
-          selectedVoice,
-          selectedStyle,
-          sections
-        ).catch(err => console.error(`❌ Error en proceso de audio paralelo sección ${section}:`, err));
-        */
+        // (Código eliminado para asegurar que no se ejecute)
         
         let audioPath = null; // Inicialmente null porque es asíncrono
         
@@ -6130,43 +6159,7 @@ VERIFICACIÓN FINAL: Tu respuesta debe contener exactamente ${numImages - 1} ocu
     // =======================================================================
     // Se desactiva para evitar doble generación, ya que el frontend (script.js)
     // se encarga de orquestar la generación de audio secuencialmente.
-    /*
-    console.log('\n' + '🎵'.repeat(20));
-    console.log('🎵 FASE 2: INICIANDO GENERACIÓN DE AUDIOS (POST-SCRIPTS)');
-    console.log('🎵'.repeat(20));
-
-    // Ejecutar en segundo plano para no bloquear la respuesta HTTP
-    (async () => {
-        console.log(`🚀 Iniciando cola de generación de audio para ${allSections.length} secciones...`);
-        for (const sectionData of allSections) {
-            // Saltar si hubo error en el guión
-            if (sectionData.script && sectionData.script.startsWith('Error generando')) {
-                console.warn(`⚠️ Saltando audio para sección ${sectionData.section} debido a error en guión.`);
-                continue;
-            }
-
-            await processSectionAudioAsync(
-                sectionData.section,
-                sectionData.script,
-                topic,
-                projectKey,
-                chapterStructure,
-                useApplio,
-                applioVoice,
-                applioModel,
-                applioPitch,
-                applioSpeed,
-                selectedVoice,
-                selectedStyle,
-                sections
-            );
-            
-            // Pequeña pausa entre audios para no saturar
-            await new Promise(r => setTimeout(r, 1000));
-        }
-        console.log('✅✅✅ TODAS LAS FASES COMPLETADAS (AUDIOS TERMINADOS) ✅✅✅');
-    })().catch(err => console.error("❌ Error fatal en generación de audios (Background):", err));
-    */
+    // (Código eliminado para asegurar que no se ejecute)
     
     res.json({
       success: true,
@@ -6864,16 +6857,34 @@ app.post('/generate-missing-scripts', async (req, res) => {
     const projectDir = path.join('./public/outputs', folderName);
     const projectTopic = projectState.topic || folderName;
     const totalSections = projectState.totalSections || projectState.completedSections.length;
+    
+    // Iterate up to totalSections to catch sections that might be missing from completedSections array
+    const loopLimit = Math.max(projectState.completedSections.length, totalSections);
 
-    for (let i = 0; i < projectState.completedSections.length; i++) {
-      const section = projectState.completedSections[i];
-      const sectionNumber = Number.parseInt(section.section, 10) || i + 1;
+    for (let i = 0; i < loopLimit; i++) {
+      let section = projectState.completedSections[i];
+      const sectionNumber = (section && section.section) ? Number.parseInt(section.section, 10) : i + 1;
+      
+      // If section entry is missing entirely from state, create a placeholder
+      if (!section) {
+          section = {
+              section: sectionNumber,
+              title: `Capítulo ${sectionNumber}`,
+              script: '', // Empty script to force regeneration
+              cleanScript: ''
+          };
+          console.log(`⚠️ Sección ${sectionNumber} no existe en el estado del proyecto. Se tratará como faltante.`);
+      }
+
       const { sectionDir } = createProjectStructure(projectTopic, sectionNumber, folderName);
       const defaultScriptFileName = `${folderName}_seccion_${sectionNumber}_guion.txt`;
       const defaultScriptPath = path.join(sectionDir, defaultScriptFileName);
 
       let scriptFiles = [];
       try {
+          if (!fs.existsSync(sectionDir)) {
+             fs.mkdirSync(sectionDir, { recursive: true });
+          }
         scriptFiles = fs.readdirSync(sectionDir).filter((file) =>
           file.endsWith('.txt') && !file.includes('metadata') && !file.includes('keywords')
         );
@@ -6970,7 +6981,7 @@ app.post('/generate-missing-scripts', async (req, res) => {
       }
     }
 
-    console.log(`📊 Análisis de guiones: ${missingSectionScripts.length}/${projectState.completedSections.length} secciones requieren regeneración con IA`);
+    console.log(`📊 Análisis de guiones: ${missingSectionScripts.length}/${loopLimit} secciones requieren regeneración con IA`);
 
     // Generar guiones solo para las secciones que lo necesitan
     for (let i = 0; i < missingSectionScripts.length; i++) {
@@ -6987,6 +6998,12 @@ app.post('/generate-missing-scripts', async (req, res) => {
         const previousSections = projectState.completedSections
           .filter(s => s.section < section.section)
           .sort((a, b) => a.section - b.section);
+          
+        // Extract style and length settings from project state
+        const scriptStyle = projectState.scriptStyle || 'professional';
+        const customStyleInstructions = projectState.customStyleInstructions || '';
+        const wordsMin = projectState.wordsMin || 150; // Default to ~150 words
+        const wordsMax = projectState.wordsMax || 250; // Default to ~250 words
         
         const generationResult = await generateMissingScript(
           projectState.topic || 'Proyecto de gaming',

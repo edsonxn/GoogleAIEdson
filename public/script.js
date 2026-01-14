@@ -3012,15 +3012,28 @@ async function runAutoGeneration() {
       // Crear lista de proyectos en orden
       const projectsToProcess = [];
       
-      // Solo agregar el proyecto principal si NO se generÃ³ audio en Fase 1
-      // OJO: En la implementaciÃ³n actual de Fase 1, SIEMPRE se genera audio si useApplio/generateAudio es true
-      // Por lo tanto, el proyecto principal YA TIENE audio.
+      // Solo agregar el proyecto principal si NO se generó audio en Fase 1
+      // OJO: Fase 1 ya NO genera audios en el backend (se comentó/eliminó esa lógica).
+      // Por lo tanto, debemos agregar el proyecto principal explícitamente.
       
-      // Sin embargo, para mantener compatibilidad, verificamos si realmente se generÃ³
-      // Como acabamos de modificar el backend para generar audio inmediato, asumimos que el principal ya estÃ¡ listo.
+      console.log('ℹ️ Agregando proyecto principal a la cola de generación de audio (Fase 2 manual).');
       
-      console.log('â„¹ï¸ El proyecto principal ya deberÃ­a tener audios generados en Fase 1.');
-      
+      projectsToProcess.push({
+        projectKey: window.currentProject.projectKey, // Usar datos actualizados
+        projectName: window.currentProject.topic,
+        voice: effectivePrimaryVoice,
+        isApplio: generateApplioAudio,
+        applioVoice: selectedApplioVoice,
+        applioModel: selectedApplioModel,
+        applioPitch: applioPitch,
+        applioSpeed: applioSpeed,
+        narrationStyle: narrationStyle,
+        scriptStyle: window.currentProject.scriptStyle,
+        customStyleInstructions: window.currentProject.customStyleInstructions,
+        wordsMin: window.currentProject.wordsMin,
+        wordsMax: window.currentProject.wordsMax
+      });
+
       // Agregar proyectos adicionales
       if (hasAdditionalProjects) {
         console.log(`ðŸ“‹ PROYECTOS ADICIONALES ENCONTRADOS:`, window.currentProject.additionalProjects.length);
@@ -3088,180 +3101,146 @@ async function runAutoGeneration() {
             console.log(`ðŸŽ¯ Este deberÃ­a ser el TEMA 1`);
           }
           
-          // Procesar todas las secciones de este proyecto
-          for (let sectionNum = 1; sectionNum <= totalSections; sectionNum++) {
-            console.log(`ðŸŽµ [${projectIndex + 1}/${projectsToProcess.length}] Generando audio: ${project.projectName} - SecciÃ³n ${sectionNum}/${totalSections}`);
+// Función helper para procesar una sección individual
+          const processSingleSectionAudio = async (sectionNum) => {
+            console.log(`🎶 [${project.projectKey}] Generando audio: ${project.projectName} - Sección ${sectionNum}/${totalSections}`);
             
             try {
-              // Inicializar progreso de audio al comenzar el proyecto (solo para la primera secciÃ³n)
+              // Inicializar progreso de audio al comenzar el proyecto (solo para la primera sección)
               if (sectionNum === 1) {
                 updateProjectProgress(project.projectKey, {
                   percentage: 0,
                   phase: 'audio',
-                currentStep: 0,
-                totalSteps: totalSections,
-                currentTask: `Iniciando generaciÃ³n de audio...`,
-                audioProgress: {
-                  percentage: 0,
                   currentStep: 0,
                   totalSteps: totalSections,
-                  currentTask: `Iniciando generaciÃ³n de audio...`
+                  currentTask: `Iniciando generación de audio...`,
+                  audioProgress: {
+                    percentage: 0,
+                    currentStep: 0,
+                    totalSteps: totalSections,
+                    currentTask: `Iniciando generación de audio...`
+                  }
+                });
+              }
+              
+              // (Progreso inicial eliminado para evitar saltos en batch)
+              // const projectProgressPercentage = Math.round(((sectionNum - 1) / totalSections) * 100);
+              
+              // Obtener el script para esta sección
+              let scriptContent = "";
+              if (project.projectKey === projectData.projectKey) {
+                // Proyecto principal
+                scriptContent = allSections[sectionNum - 1]?.script || "";
+                if (typeof scriptContent !== 'string') {
+                  scriptContent = String(scriptContent || "");
+                }
+              } else {
+                // Proyecto adicional - leer desde archivo
+                try {
+                  const scriptResponse = await fetch(`/read-script-file/${project.projectKey}/${sectionNum}`);
+                  if (scriptResponse.ok) {
+                    const scriptData = await scriptResponse.json();
+                    scriptContent = scriptData.script || "";
+                    if (typeof scriptContent !== 'string') {
+                      scriptContent = String(scriptContent || "");
+                    }
+                  } else {
+                    scriptContent = `Script para ${project.projectName} - Sección ${sectionNum}`;
+                  }
+                } catch (scriptError) {
+                  scriptContent = `Script para ${project.projectName} - Sección ${sectionNum}`;
+                }
+              }
+              
+              if (scriptContent.trim() === "" || scriptContent.startsWith("Script para")) {
+                scriptContent = `Contenido detallado de la sección ${sectionNum} del tema ${project.projectName}. Esta sección contiene información importante sobre el tema principal.`;
+              }
+              
+              // Generar el audio
+              const endpoint = project.isApplio ? "/generate-section-audio" : "/generate-audio";
+              const requestBody = project.isApplio ? {
+                script: scriptContent,
+                topic: project.projectName,
+                folderName: project.projectKey,
+                currentSection: sectionNum,
+                applioVoice: project.applioVoice,
+                applioModel: project.applioModel,
+                applioPitch: project.applioPitch,
+                applioSpeed: project.applioSpeed
+              } : {
+                script: scriptContent,
+                voice: project.voice,
+                topic: project.projectName,
+                folderName: project.projectKey,
+                currentSection: sectionNum,
+                narrationStyle: project.narrationStyle,
+                runId: audioRunId,
+                order: globalAudioOrder++
+              };
+              
+              const audioResponse = await fetch(endpoint, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(requestBody)
+              });
+              
+              if (!audioResponse.ok) {
+                const errorText = await audioResponse.text();
+                throw new Error(`Error HTTP ${audioResponse.status}: ${errorText}`);
+              }
+              
+              const audioData = await audioResponse.json();
+              
+              if (!audioData.success) {
+                console.error(`❌ [${project.projectKey}] Error generando audio para ${project.projectName} - Sección ${sectionNum}: ${audioData.error}`);
+              } else {
+                console.log(`✅ [${project.projectKey}] Audio generado exitosamente: ${project.projectName} - Sección ${sectionNum}`);
+              }
+              
+              // Actualizar progreso final para esta sección
+              completedAudioSections++;
+              const finalProgressPercentage = Math.round((completedAudioSections / totalSections) * 100);
+              
+              updateProjectProgress(project.projectKey, {
+                percentage: finalProgressPercentage,
+                phase: completedAudioSections === totalSections ? 'completed' : 'audio',
+                currentStep: completedAudioSections,
+                totalSteps: totalSections,
+                currentTask: completedAudioSections === totalSections ? 'Completado' : `Generando audio: Sección ${sectionNum} OK (${completedAudioSections}/${totalSections})`,
+                audioProgress: {
+                  percentage: finalProgressPercentage,
+                  currentStep: completedAudioSections,
+                  totalSteps: totalSections,
+                  currentTask: completedAudioSections === totalSections ? 'Completado' : `Generando audio: Sección ${sectionNum} OK (${completedAudioSections}/${totalSections})`
                 }
               });
+
+            } catch (error) {
+              console.error(`❌ [${project.projectKey}] Error procesando audio ${project.projectName} - Sección ${sectionNum}:`, error);
             }
-            
-            // Actualizar progreso solo para este proyecto
-            const projectProgressPercentage = Math.round(((sectionNum - 1) / totalSections) * 100);
-            
-            updateProjectProgress(project.projectKey, {
-              percentage: projectProgressPercentage,
-              phase: 'audio',
-              currentStep: sectionNum - 1,
-              totalSteps: totalSections,
-              currentTask: `Generando audio: SecciÃ³n ${sectionNum}`,
-              audioProgress: {
-                percentage: projectProgressPercentage,
-                currentStep: sectionNum - 1,
-                totalSteps: totalSections,
-                currentTask: `Generando audio: SecciÃ³n ${sectionNum}`
-              }
-            });
-            
-            // Obtener el script para esta secciÃ³n
-            let scriptContent = "";
-            if (project.projectKey === projectData.projectKey) {
-              // Proyecto principal
-              scriptContent = allSections[sectionNum - 1]?.script || "";
-              // Asegurar que scriptContent sea un string vÃ¡lido
-              if (typeof scriptContent !== 'string') {
-                console.warn(`âš ï¸ [${project.projectKey}] scriptContent no es string, convirtiendo. Tipo: ${typeof scriptContent}, Valor:`, scriptContent);
-                scriptContent = String(scriptContent || "");
-              }
-              console.log(`ðŸ“„ [${project.projectKey}] PROYECTO PRINCIPAL - Usando script del array allSections[${sectionNum - 1}]: ${scriptContent.substring(0, 100)}...`);
-              console.log(`ðŸ“„ [${project.projectKey}] allSections.length: ${allSections.length}, sectionNum: ${sectionNum}`);
-              console.log(`ðŸ“„ [${project.projectKey}] Contenido de allSections:`, allSections.map((s, i) => `SecciÃ³n ${i+1}: ${(typeof s === 'string' ? s.substring(0, 50) : String(s).substring(0, 50))}...`));
-            } else {
-              // Proyecto adicional - leer desde archivo
-              console.log(`ðŸ“„ [${project.projectKey}] Intentando leer script desde archivo para secciÃ³n ${sectionNum}...`);
-              try {
-                const scriptResponse = await fetch(`/read-script-file/${project.projectKey}/${sectionNum}`);
-                console.log(`ðŸ“„ [${project.projectKey}] Respuesta del endpoint /read-script-file:`, scriptResponse.status);
-                
-                if (scriptResponse.ok) {
-                  const scriptData = await scriptResponse.json();
-                  scriptContent = scriptData.script || "";
-                  // Asegurar que scriptContent sea un string vÃ¡lido
-                  if (typeof scriptContent !== 'string') {
-                    console.warn(`âš ï¸ [${project.projectKey}] scriptContent del endpoint no es string, convirtiendo. Tipo: ${typeof scriptContent}, Valor:`, scriptContent);
-                    scriptContent = String(scriptContent || "");
-                  }
-                  console.log(`ðŸ“„ [${project.projectKey}] Script leÃ­do exitosamente (${scriptContent.length} caracteres): ${scriptContent.substring(0, 50)}...`);
-                } else {
-                  const errorData = await scriptResponse.json();
-                  console.warn(`âš ï¸ [${project.projectKey}] Error leyendo script para secciÃ³n ${sectionNum}:`, errorData);
-                  scriptContent = `Script para ${project.projectName} - SecciÃ³n ${sectionNum}`;
-                }
-              } catch (scriptError) {
-                console.warn(`âš ï¸ [${project.projectKey}] Error de red leyendo script para secciÃ³n ${sectionNum}:`, scriptError);
-                scriptContent = `Script para ${project.projectName} - SecciÃ³n ${sectionNum}`;
+          };
+
+          // Procesar en lotes de 3
+          const batchSize = 3;
+          let completedAudioSections = 0;
+          
+          for (let startSection = 1; startSection <= totalSections; startSection += batchSize) {
+            const promises = [];
+            for (let i = 0; i < batchSize; i++) {
+              const currentSection = startSection + i;
+              if (currentSection <= totalSections) {
+                promises.push(processSingleSectionAudio(currentSection));
               }
             }
             
-            if (scriptContent.trim() === "" || scriptContent.startsWith("Script para")) {
-              console.warn(`âš ï¸ [${project.projectKey}] Script vacÃ­o o fallback para secciÃ³n ${sectionNum}, usando contenido bÃ¡sico`);
-              scriptContent = `Contenido detallado de la secciÃ³n ${sectionNum} del tema ${project.projectName}. Esta secciÃ³n contiene informaciÃ³n importante sobre el tema principal.`;
+            console.log(`🚀 [${project.projectKey}] Procesando lote de audios: Secciones ${startSection} a ${Math.min(startSection + batchSize - 1, totalSections)}`);
+            await Promise.all(promises);
+            
+            // Pequeña pausa entre lotes
+            if (startSection + batchSize <= totalSections) {
+              await new Promise(resolve => setTimeout(resolve, 1000));
             }
-            
-            console.log(`ðŸ“ [${project.projectKey}] Script final para secciÃ³n ${sectionNum} (${scriptContent.length} caracteres): ${scriptContent.substring(0, 150)}...`);
-            
-            // Generar el audio
-            const endpoint = project.isApplio ? "/generate-section-audio" : "/generate-audio";
-            const requestBody = project.isApplio ? {
-              script: scriptContent,
-              topic: project.projectName,
-              folderName: project.projectKey,
-              currentSection: sectionNum,
-              applioVoice: project.applioVoice,
-              applioModel: project.applioModel,
-              applioPitch: project.applioPitch,
-              applioSpeed: project.applioSpeed
-            } : {
-              script: scriptContent,
-              voice: project.voice,
-              topic: project.projectName,
-              folderName: project.projectKey,
-              currentSection: sectionNum,
-              narrationStyle: project.narrationStyle,
-              runId: audioRunId,
-              order: globalAudioOrder++
-            };
-            
-            console.log(`ðŸŽµ [${project.projectKey}] Enviando solicitud a ${endpoint} para secciÃ³n ${sectionNum}...`);
-            console.log(`ðŸŽµ [${project.projectKey}] Request body:`, {
-              scriptLength: scriptContent.length,
-              topic: project.projectName,
-              folderName: project.projectKey,
-              currentSection: sectionNum,
-              endpoint: endpoint,
-              runId: audioRunId,
-              order: globalAudioOrder - 1, // Mostrar el order actual (ya incrementado)
-              projectIndex: projectIndex,
-              totalProjects: projectsToProcess.length,
-              isFirstProject: projectIndex === 0,
-              isMainProject: project.projectKey === projectData.projectKey
-            });
-            
-            // Enviar solicitud y esperar respuesta completa
-            console.log(`â³ [${project.projectKey}] Esperando respuesta del servidor para secciÃ³n ${sectionNum}...`);
-            const audioResponse = await fetch(endpoint, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(requestBody)
-            });
-            
-            if (!audioResponse.ok) {
-              const errorText = await audioResponse.text();
-              console.error(`âŒ [${project.projectKey}] Error HTTP ${audioResponse.status} para secciÃ³n ${sectionNum}:`, errorText);
-              throw new Error(`Error HTTP ${audioResponse.status}: ${errorText}`);
-            }
-            
-            const audioData = await audioResponse.json();
-            console.log(`âœ… [${project.projectKey}] Respuesta recibida para secciÃ³n ${sectionNum}:`, {
-              success: audioData.success,
-              hasAudio: !!audioData.audio,
-              voice: audioData.voice
-            });
-            
-            if (!audioData.success) {
-              console.error(`âŒ [${project.projectKey}] Error generando audio para ${project.projectName} - SecciÃ³n ${sectionNum}: ${audioData.error}`);
-            } else {
-              console.log(`âœ… [${project.projectKey}] Audio generado exitosamente: ${project.projectName} - SecciÃ³n ${sectionNum}`);
-            }
-            
-            // Actualizar progreso final para esta secciÃ³n
-            const finalProgressPercentage = Math.round((sectionNum / totalSections) * 100);
-            updateProjectProgress(project.projectKey, {
-              percentage: finalProgressPercentage,
-              phase: sectionNum === totalSections ? 'completed' : 'audio',
-              currentStep: sectionNum,
-              totalSteps: totalSections,
-              currentTask: sectionNum === totalSections ? 'Completado' : `Generando audio: SecciÃ³n ${sectionNum + 1}`,
-              audioProgress: {
-                percentage: finalProgressPercentage,
-                currentStep: sectionNum,
-                totalSteps: totalSections,
-                currentTask: sectionNum === totalSections ? 'Completado' : `Generando audio: SecciÃ³n ${sectionNum + 1}`
-              }
-            });
-            
-            // PequeÃ±a pausa entre generaciones para no sobrecargar el servidor
-            console.log(`â³ [${project.projectKey}] Esperando 2 segundos antes de la siguiente secciÃ³n...`);
-            await new Promise(resolve => setTimeout(resolve, 2000));
-            
-          } catch (error) {
-            console.error(`âŒ [${project.projectKey}] Error procesando audio ${project.projectName} - SecciÃ³n ${sectionNum}:`, error);
           }
-        }
         
         console.log(`âœ… [${projectIndex + 1}/${projectsToProcess.length}] PROYECTO COMPLETADO: ${project.projectName} (${project.projectKey})`);
         
@@ -6118,37 +6097,49 @@ document.addEventListener('DOMContentLoaded', function() {
 // Sistema de Estilos Personalizados
 let customStyles = [];
 
-// Cargar estilos personalizados del localStorage
-function loadCustomStyles() {
-  console.log('ðŸ” Iniciando carga de estilos personalizados...');
-  const saved = localStorage.getItem('customScriptStyles');
-  console.log('ðŸ” Datos en localStorage:', saved);
-  
-  if (saved) {
-    try {
-      customStyles = JSON.parse(saved);
-      console.log(`ðŸ“ Cargados ${customStyles.length} estilos personalizados:`, customStyles);
-    } catch (error) {
-      console.error('âŒ Error cargando estilos:', error);
-      customStyles = [];
+// Cargar estilos personalizados del servidor
+async function loadCustomStyles() {
+  console.log('🔍 Iniciando carga de estilos personalizados desde servidor...');
+  try {
+    const response = await fetch('/api/custom-styles');
+    if (!response.ok) throw new Error('Error al obtener estilos');
+    
+    const data = await response.json();
+    if (data.scriptStyles) {
+        customStyles = data.scriptStyles;
+        console.log(`📝 Cargados ${customStyles.length} estilos personalizados:`, customStyles);
+    } else {
+        customStyles = [];
     }
-  } else {
-    console.log('ðŸ“ No hay estilos personalizados guardados');
+  } catch (error) {
+    console.error('❌ Error cargando estilos:', error);
     customStyles = [];
   }
+  updateStyleSelector();
 }
 
-// Guardar estilos en localStorage
-function saveCustomStyles() {
-  localStorage.setItem('customScriptStyles', JSON.stringify(customStyles));
-  console.log(`ðŸ’¾ Guardados ${customStyles.length} estilos personalizados`);
+// Guardar estilos en servidor
+async function saveCustomStyles() {
+  try {
+      const response = await fetch('/api/custom-styles', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ scriptStyles: customStyles })
+      });
+      if (!response.ok) throw new Error('Error al guardar');
+      console.log(`💾 Guardados ${customStyles.length} estilos personalizados`);
+  } catch (error) {
+       console.error('❌ Error guardando estilos:', error);
+       alert('Error al guardar estilos en el servidor');
+  }
 }
 
 // Inicializar sistema de estilos
 function initCustomStyles() {
-  console.log('ðŸŽ¨ Inicializando sistema de estilos personalizados...');
+  console.log('🎨 Inicializando sistema de estilos personalizados...');
   loadCustomStyles();
-  updateStyleSelector();
+  // updateStyleSelector(); // Se llama dentro de loadCustomStyles
+
   
   // Configurar eventos con un retraso para asegurar que el DOM estÃ© listo
   setTimeout(() => {
@@ -9108,49 +9099,59 @@ function toggleMainMetadataPanel(headerElement) {
 // SISTEMA DE ESTILOS DE MINIATURAS
 // ==========================================
 
-// FunciÃ³n para inicializar sistema de estilos de miniatura
+// Función para inicializar sistema de estilos de miniatura
 function initThumbnailStyles() {
-  console.log('ðŸ–¼ï¸ Inicializando sistema de estilos de miniatura...');
+  console.log('🖼️ Inicializando sistema de estilos de miniatura...');
   
   try {
     loadThumbnailStyles();
-    updateThumbnailStyleSelector();
+    // Selector se actualiza al cargar los estilos
     
     setTimeout(() => {
       setupThumbnailStyleModalEvents();
       setupManageThumbnailStylesEvents(); // Reactivado y arreglado
       setupEditThumbnailStyleEvents();
-      console.log('âœ… Sistema de estilos de miniatura inicializado correctamente');
+      console.log('✅ Sistema de estilos de miniatura inicializado correctamente');
     }, 100);
   } catch (error) {
-    console.error('âŒ Error inicializando estilos de miniatura:', error);
+    console.error('❌ Error inicializando estilos de miniatura:', error);
   }
 }
 
-// FunciÃ³n para cargar estilos de miniatura desde localStorage
-function loadThumbnailStyles() {
+// Función para cargar estilos de miniatura desde servidor
+async function loadThumbnailStyles() {
   try {
-    const savedStyles = localStorage.getItem('customThumbnailStyles');
-    if (savedStyles) {
-      customThumbnailStyles = JSON.parse(savedStyles);
-      console.log('ðŸ–¼ï¸ Estilos de miniatura cargados:', customThumbnailStyles);
+    const response = await fetch('/api/custom-styles');
+    if (!response.ok) throw new Error('Error al obtener estilos');
+    
+    const data = await response.json();
+    if (data.thumbnailStyles) {
+      customThumbnailStyles = data.thumbnailStyles;
+      console.log('🖼️ Estilos de miniatura cargados:', customThumbnailStyles);
     } else {
       customThumbnailStyles = [];
-      console.log('ðŸ–¼ï¸ No hay estilos de miniatura guardados');
+      console.log('🖼️ No hay estilos de miniatura guardados');
     }
   } catch (error) {
-    console.error('âŒ Error cargando estilos de miniatura:', error);
+    console.error('❌ Error cargando estilos de miniatura:', error);
     customThumbnailStyles = [];
   }
+  updateThumbnailStyleSelector();
 }
 
-// FunciÃ³n para guardar estilos de miniatura en localStorage
-function saveThumbnailStyles() {
+// Función para guardar estilos de miniatura en servidor
+async function saveThumbnailStyles() {
   try {
-    localStorage.setItem('customThumbnailStyles', JSON.stringify(customThumbnailStyles));
-    console.log('ðŸ’¾ Estilos de miniatura guardados exitosamente');
+      const response = await fetch('/api/custom-styles', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ thumbnailStyles: customThumbnailStyles })
+      });
+      if (!response.ok) throw new Error('Error al guardar');
+    console.log('💾 Estilos de miniatura guardados exitosamente');
   } catch (error) {
-    console.error('âŒ Error guardando estilos de miniatura:', error);
+    console.error('❌ Error guardando estilos de miniatura:', error);
+    alert('Error al guardar estilos en el servidor');
   }
 }
 
