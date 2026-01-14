@@ -83,6 +83,14 @@ COMFY_DEFAULT_GUIDANCE=3.5
 - Si omites alguna variable, el sistema utilizará los valores recomendados (`800x400`, `400x800`, `800x800`, `15` pasos y `1.8` de CFG).
 - Los valores definidos en el `.env` se reflejan automáticamente en el backend y en los controles del frontend cada vez que recargas la página.
 
+#### Configuración de Applio
+
+Si utilizas Applio para la generación de audio y no está instalado en la ruta por defecto (`C:\applio2\Applio`), debes especificar su ubicación en el archivo `.env`:
+
+```env
+APPLIO_ROOT=D:\Ruta\A\Tu\Applio
+```
+
 ### Obtener API Key de Google AI
 
 1. Ve a [Google AI Studio](https://ai.google.dev/)

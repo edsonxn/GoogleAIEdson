@@ -7,6 +7,26 @@ class ApplioClient {
         this.applioUrl = applioUrl;
         this.sessionHash = this._generateSessionHash();
         this.queue = Promise.resolve(); // Cola de ejecución secuencial
+        
+        // Determinar ruta de Applio desde variable de entorno o usar default
+        const envRoot = process.env.APPLIO_ROOT;
+        if (envRoot) {
+            console.log(`📂 Usando ruta configurada para Applio: ${envRoot}`);
+            this.applioRoot = envRoot;
+        } else {
+            console.log('⚠️ No se definió APPLIO_ROOT en .env, usando ruta por defecto: C:\\applio2\\Applio');
+            this.applioRoot = 'C:\\applio2\\Applio';
+        }
+
+        if (!fs.existsSync(this.applioRoot)) {
+            console.warn(`⚠️ ADVERTENCIA: La ruta de Applio '${this.applioRoot}' no existe en este PC.`);
+            console.warn(`   Por favor configuara 'APPLIO_ROOT' en tu archivo .env con la ruta correcta.`);
+        }
+
+        this.outputPaths = [
+            path.join(this.applioRoot, 'assets', 'audios', 'tts_rvc_output.wav'),
+            path.join(this.applioRoot, 'assets', 'audios', 'tts_output.wav')
+        ];
     }
 
     _generateSessionHash() {
@@ -70,8 +90,8 @@ class ApplioClient {
                 1,                              // volume_envelope
                 0.5,                            // protect
                 "rmvpe",                        // f0_method
-                "C:\\applio2\\Applio\\assets\\audios\\tts_output.wav",
-                "C:\\applio2\\Applio\\assets\\audios\\tts_rvc_output.wav",
+                this.outputPaths[1],            // tts_output.wav
+                this.outputPaths[0],            // tts_rvc_output.wav
                 voicePath,                      // Usar la voz seleccionada dinámicamente
                 "logs\\VOCES\\esponja.index",
                 false,                          // split_audio
@@ -115,10 +135,8 @@ class ApplioClient {
     }
 
     async _getFileTimestamp() {
-        const paths = [
-            "C:\\applio2\\Applio\\assets\\audios\\tts_rvc_output.wav",
-            "C:\\applio2\\Applio\\assets\\audios\\tts_output.wav"
-        ];
+        // Usar las rutas configuradas en el constructor
+        const paths = this.outputPaths;
 
         for (const filePath of paths) {
             if (fs.existsSync(filePath)) {
