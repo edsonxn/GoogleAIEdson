@@ -2088,9 +2088,10 @@ ${fullScript}
 Por favor genera:
 
 1. **10 TÍTULOS CLICKBAIT** (cada uno en una línea, numerados):
-   - Usa palabras que generen curiosidad
-   - Que sean polémicos pero relacionados al contenido
-   - maximo 15 palabras, minimo 10.
+   - Usa palabras que generen curiosidad.
+   - Si el contenido es una lista, incluye el número y sigue la estructura: "Las [Número] [Adjetivo] [Sujeto] en [Tema]".
+   - Ejemplo: "Las 5 Armas Más Raras de Conseguir en Skyrim".
+   - Máximo 15 palabras, mínimo 8.
 
 2. **DESCRIPCIÓN PARA VIDEO** (optimizada para SEO):
    - Entre 150-300 palabras
@@ -2101,7 +2102,7 @@ Por favor genera:
 
 3. **CAPÍTULOS / LÍNEA DE TIEMPO** (timestamps):
    - Genera una lista de tiempos estimados y títulos para los capítulos del video.
-   - IMPORTANTE: Los títulos deben ser MUY CORTOS (máximo 5 palabras).
+   - IMPORTANTE: Los títulos deben ser MUY CORTOS (máximo 6 palabras).
    - Usa el formato "00:00 Título".
 
 4. **25 ETIQUETAS** (separadas por comas):
@@ -12709,9 +12710,11 @@ ${fullScript}
 Please generate:
 
 1. **10 CLICKBAIT TITLES** (one per line, numbered):
-  - Use curiosity driven phrases
-  - They must be provocative but always related to the content
-  - Maximum 10 words, minimum 5
+  - Use curiosity driven phrases.
+  - If the content is a list (e.g. 5 items), the title MUST include the number.
+  - Structure: "The [Number] [Adjective] [Subject] in [Topic/Game]". Example: "The 5 Hardest Weapons to Get in World of Warcraft".
+  - Mention the specific game/topic explicitly.
+  - Maximum 12 words, minimum 6.
 
 2. **VIDEO DESCRIPTION** (SEO optimised):
   - Between 150-300 words
@@ -12719,7 +12722,7 @@ Please generate:
   - Mention the main content of the video
   - Add a call-to-action to subscribe
   - Engaging format with emojis${chaptersTimestamps ? `
-  - IMPORTANT: At the end of the description, add a blank line and then include ALL the chapter timestamps provided above (format: "MM:SS Title" or "H:MM:SS Title")` : ''}
+  - IMPORTANT: At the end of the description, add a blank line and then include the chapter timestamps. Use the provided times but REWRITE the titles to be VERY SHORT (max 6 words). Format: "MM:SS Short Title"` : ''}
 
 3. **25 TAGS** (comma-separated):
   - Keywords related to the topic
@@ -12730,13 +12733,12 @@ Please generate:
 
   MANDATORY FORMAT - FOLLOW THIS EXACT STRUCTURE FOR EACH OF THE 5 PROMPTS:
 
-  "YouTube thumbnail 16:9 showing [very detailed visual description of the content related to the topic, minimum 25 words] with overlaid text '[specific clickbait phrase related to the content]' with the text applying the following style: ${thumbnailInstructions}"
+  "YouTube thumbnail 16:9 showing [very detailed visual description of the content related to the topic, minimum 25 words]. High quality, 8k resolution, cinematic lighting. IMPORTANT: The image must NOT contain any text, letters, or words."
 
   STRICT RULES - DO NOT GENERATE SHORT OR INCOMPLETE PROMPTS:
   - EACH prompt must have at least 25 words of visual description
-  - EACH prompt must include a specific clickbait phrase between quotation marks
-  - EACH prompt must end with the complete style sentence provided above
-  - NEVER generate prompts similar to "the text with black outline and very shiny text" - THAT IS FORBIDDEN
+  - NO TEXT overlay in the image.
+  - DO NOT include instructions for text styles.
   - ALL prompts must strictly follow the full format
 
 OUTPUT FORMAT (use these exact Spanish headings):
@@ -12775,9 +12777,11 @@ ${fullScript}
 Por favor genera:
 
 1. **10 TÍTULOS CLICKBAIT** (cada uno en una línea, numerados):
-  - Usa palabras que generen curiosidad
-  - Que sean polémicos pero relacionados al contenido
-  - maximo 10 palabras, minimo 5.
+  - Usa palabras que generen curiosidad.
+  - Si el contenido es una lista (ej. 5 cosas), el título DEBE incluir el número.
+  - Estructura: "Las [Número] [Adjetivo] [Sujeto] en [Tema/Juego]". Ej: "Las 5 Armas Más Difíciles de Conseguir en World of Warcraft".
+  - Menciona el juego o tema específico explícitamente.
+  - Máximo 12 palabras, mínimo 6.
 
 2. **DESCRIPCIÓN PARA VIDEO** (optimizada para SEO):
   - Entre 150-300 palabras
@@ -12785,7 +12789,7 @@ Por favor genera:
   - Menciona el contenido principal del video
   - Incluye call-to-action para suscribirse
   - Formato atractivo con emojis${chaptersTimestamps ? `
-  - IMPORTANTE: Al final de la descripción, añade una línea en blanco y luego incluye TODOS los timestamps de capítulos proporcionados arriba (formato: "MM:SS Título" o "H:MM:SS Título")` : ''}
+  - IMPORTANTE: Al final de la descripción, añade una línea en blanco y luego incluye los timestamps de capítulos. Usa los tiempos proporcionados pero REESCRIBE los títulos para que sean MUY CORTOS (máximo 6 palabras). Formato: "MM:SS Título Corto"` : ''}
 
 3. **25 ETIQUETAS** (separadas por comas):
   - Palabras clave relacionadas al tema
@@ -12796,13 +12800,12 @@ Por favor genera:
    
   FORMATO OBLIGATORIO - DEBES SEGUIR ESTA ESTRUCTURA EXACTA PARA CADA UNO DE LOS 5 PROMPTS:
    
-  "Miniatura de YouTube 16:9 mostrando [descripción visual muy detallada del contenido relacionado al tema, mínimo 25 palabras] con texto superpuesto '[frase clickbait específica relacionada al contenido]' con el texto aplicando el siguiente estilo: ${thumbnailInstructions}"
+  "Miniatura de YouTube 16:9 mostrando [descripción visual muy detallada del contenido relacionado al tema, mínimo 25 palabras]. Alta calidad, resolución 8k, iluminación cinematográfica. IMPORTANTE: La imagen NO debe contener ningún texto, letras ni palabras."
    
   REGLAS ESTRICTAS - NO GENERAR PROMPTS CORTOS O INCOMPLETOS:
   - CADA prompt debe tener mínimo 25 palabras de descripción visual
-  - CADA prompt debe incluir una frase clickbait específica entre comillas
-  - CADA prompt debe terminar con la frase completa del estilo
-  - NO generar prompts como "el texto con contorno negro" - ESO ESTÁ PROHIBIDO
+  - NO incluyas instrucciones de texto superpuesto.
+  - La imagen debe ser totalmente limpia de texto.
   - TODOS los prompts deben seguir el formato completo
    
   EJEMPLO DE FORMATO CORRECTO (SEGUIR EXACTAMENTE ESTA ESTRUCTURA):
@@ -17761,10 +17764,22 @@ if __name__ == "__main__":
         sendStatus('Transcripción completada. Traduciendo...', 50);
 
         // 3. Translate and Generate Audio
-        const languages = ['en', 'fr', 'de', 'pt', 'ru', 'zh', 'ko', 'ja']; 
+        let languages = ['en', 'fr', 'de', 'pt', 'it', 'ru', 'zh', 'ko', 'ja']; 
+
+        if (req.body.targetLanguages) {
+            try {
+                const userLangs = JSON.parse(req.body.targetLanguages);
+                if (Array.isArray(userLangs)) {
+                    languages = userLangs;
+                }
+            } catch (e) {
+                console.error("Error parsing targetLanguages for video translation:", e);
+            }
+        }
+
         const langNames = {
             'en': 'English', 'fr': 'French', 'de': 'German', 
-            'pt': 'Portuguese', 'ru': 'Russian',
+            'pt': 'Portuguese', 'it': 'Italian', 'ru': 'Russian',
             'zh': 'Chinese', 'ko': 'Korean', 'ja': 'Japanese'
         };
         
@@ -17774,6 +17789,7 @@ if __name__ == "__main__":
             'fr': 'fr-FR-HenriNeural',
             'de': 'de-DE-ConradNeural',
             'pt': 'pt-BR-AntonioNeural',
+            'it': 'it-IT-DiegoNeural',
             'ru': 'ru-RU-DmitryNeural',
             'zh': 'zh-CN-YunxiNeural',
             'ko': 'ko-KR-InJoonNeural',

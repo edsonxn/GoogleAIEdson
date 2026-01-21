@@ -16247,6 +16247,11 @@ document.addEventListener('DOMContentLoaded', function() {
         const ttsProvider = document.querySelector('input[name="ttsProvider"]:checked')?.value || 'applio';
         formData.append('ttsProvider', ttsProvider);
 
+        // Obtener idiomas seleccionados
+        const selectedLanguages = Array.from(document.querySelectorAll('input[name="targetLanguages"]:checked'))
+            .map(cb => cb.value);
+        formData.append('targetLanguages', JSON.stringify(selectedLanguages));
+
         // Agregar la voz de Google seleccionada
         const googleVoice = document.getElementById('googleVoiceSelect')?.value || 'Kore';
         formData.append('googleVoice', googleVoice);
