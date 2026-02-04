@@ -17849,9 +17849,10 @@ if __name__ == "__main__":
                     result = await model.generateContent(prompt);
                 } catch (error) {
                     const isRateLimit = error.message.includes('429') || (error.status === 429) || error.message.includes('Too Many Requests') || error.message.includes('Quota exceeded');
+                    const isOverloaded = error.message.includes('503') || (error.status === 503) || error.message.includes('overloaded') || error.message.includes('Overloaded');
                     
-                    if (isRateLimit) {
-                        console.warn(`⚠️ API gratuita saturada (429) durante traducción. Reintentando con API PRINCIPAL...`);
+                    if (isRateLimit || isOverloaded) {
+                        console.warn(`⚠️ API gratuita ${isRateLimit ? 'saturada (429)' : 'sobrecargada (503)'} durante traducción. Reintentando con API PRINCIPAL...`);
                         // Forzar uso de API principal
                         const { model } = await getGoogleAI("gemini-2.5-flash", { context: 'llm', forcePrimary: true });
                         result = await model.generateContent(prompt);
