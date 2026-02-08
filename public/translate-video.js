@@ -218,6 +218,9 @@ window.startVideoTranslation = async function(isRetry = false) {
 
         const googleVoice = document.getElementById('googleVoiceSelect')?.value || 'Kore';
         formData.append('googleVoice', googleVoice);
+
+        const translationModel = document.querySelector('input[name="translationModel"]:checked')?.value || 'gemini-3-flash-preview';
+        formData.append('translationModel', translationModel);
     }
 
     const startTime = Date.now();

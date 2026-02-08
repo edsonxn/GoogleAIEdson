@@ -17845,8 +17845,11 @@ if __name__ == "__main__":
                 
                 let result;
                 try {
-                     // Using gemini-3-flash-preview as requested
-                    const { model } = await getGoogleAI("gemini-3-flash-preview", { context: 'llm' });
+                    // Seleccionar modelo (default a 3.0 si no se especifica)
+                    const selectedModel = req.body.translationModel || "gemini-3-flash-preview";
+                    console.log(`🤖 Usando modelo de traducción: ${selectedModel}`);
+                    
+                    const { model } = await getGoogleAI(selectedModel, { context: 'llm' });
                     result = await model.generateContent(prompt);
                 } catch (error) {
                     const isRateLimit = error.message.includes('429') || (error.status === 429) || error.message.includes('Too Many Requests') || error.message.includes('Quota exceeded');
@@ -17854,9 +17857,25 @@ if __name__ == "__main__":
                     
                     if (isRateLimit || isOverloaded) {
                         console.warn(`⚠️ API gratuita ${isRateLimit ? 'saturada (429)' : 'sobrecargada (503)'} durante traducción. Reintentando con API PRINCIPAL...`);
-                        // Forzar uso de API principal con el modelo actualizado
-                        const { model } = await getGoogleAI("gemini-3-flash-preview", { context: 'llm', forcePrimary: true });
-                        result = await model.generateContent(prompt);
+                        
+                        // Forzar uso de API principal con el modelo seleccionado (o fallback a 3.0)
+                        const selectedModel = req.body.translationModel || "gemini-3-flash-preview";
+                        
+                        try {
+                            const { model } = await getGoogleAI(selectedModel, { context: 'llm', forcePrimary: true });
+                            result = await model.generateContent(prompt);
+                        } catch (primaryError) {
+                            const isPrimaryOverloaded = primaryError.message.includes('503') || (primaryError.status === 503) || primaryError.message.includes('overloaded') || primaryError.message.includes('Overloaded');
+                            
+                            // Si falla la API principal con 503 y estabamos usando flash 3, intentar fallback a 2.5
+                            if (isPrimaryOverloaded && selectedModel === 'gemini-3-flash-preview') {
+                                console.warn(`⚠️ Gemini 3 Flash saturado incluso en API PRINCIPAL (503). Intentando fallback a Gemini 2.5 Flash...`);
+                                const { model: fallbackModel } = await getGoogleAI("gemini-2.5-flash", { context: 'llm', forcePrimary: true });
+                                result = await fallbackModel.generateContent(prompt);
+                            } else {
+                                throw primaryError;
+                            }
+                        }
                     } else {
                         throw error; // Re-lanzar si no es error de cuota
                     }
