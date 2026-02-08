@@ -1,0 +1,1456 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Generador de Imágenes con Gemini AI</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Barra lateral izquierda colapsable -->
+  <div class="sidebar" id="sidebar">
+    <button id="menuToggleBtn" class="menu-btn" title="Menú" onclick="
+      try {
+        console.log('🖱️ Menu clickeado via HTML onclick'); 
+        const sidebar = document.getElementById('sidebar');
+        const body = document.body;
+        console.log('Sidebar antes:', sidebar.className);
+        console.log('Body antes:', body.className);
+        console.log('Width antes:', getComputedStyle(sidebar).width);
+        
+        if (sidebar && body) {
+          // Hacer toggle manual más explícito
+          if (sidebar.classList.contains('expanded')) {
+            sidebar.classList.remove('expanded');
+            body.classList.remove('sidebar-expanded');
+            console.log('📌 Removiendo clases expanded');
+          } else {
+            sidebar.classList.add('expanded');
+            body.classList.add('sidebar-expanded');
+            console.log('📌 Agregando clases expanded');
+          }
+          
+          console.log('Sidebar después:', sidebar.className);
+          console.log('Body después:', body.className);
+          
+          // Verificar width después de un momento
+          setTimeout(() => {
+            console.log('Width después:', getComputedStyle(sidebar).width);
+            // Forzar width si no se aplicó
+            if (sidebar.classList.contains('expanded') && getComputedStyle(sidebar).width !== '280px') {
+              console.log('🔧 Forzando width a 280px');
+              sidebar.style.width = '280px';
+            }
+          }, 50);
+          
+          console.log('✅ Toggle ejecutado');
+        } else {
+          console.error('❌ Elementos no encontrados');
+        }
+      } catch (error) {
+        console.error('❌ Error en menu onclick:', error);
+      }
+    ">
+      <i class="fas fa-bars"></i>
+    </button>
+    
+    <!-- Contenido expandible de la barra lateral -->
+    <div class="sidebar-content">
+      <div class="sidebar-section">
+        <h4><i class="fas fa-palette"></i> Estilos</h4>
+      </div>
+      
+      <div class="sidebar-section">
+        <button id="createStyleFromSidebar" class="sidebar-btn create-btn">
+          <i class="fas fa-plus"></i>
+          <span>Crear Estilo</span>
+        </button>
+      </div>
+      
+      <div class="sidebar-section">
+        <button id="manageStylesFromSidebar" class="sidebar-btn manage-btn">
+          <i class="fas fa-cog"></i>
+          <span>Gestionar</span>
+        </button>
+      </div>
+
+      <!-- NUEVA SECCIÓN DE PROYECTOS -->
+      <div class="sidebar-section">
+        <h4><i class="fas fa-folder-open"></i> Proyectos</h4>
+      </div>
+      
+      <div class="sidebar-section">
+        <button id="saveProjectBtn" class="sidebar-btn save-btn" onclick="console.log('💾 Onclick: Guardar Proyecto'); if(typeof saveCurrentProject === 'function') saveCurrentProject();">
+          <i class="fas fa-save"></i>
+          <span>Guardar Proyecto</span>
+        </button>
+      </div>
+      
+      <div class="sidebar-section">
+        <button id="loadProjectBtn" class="sidebar-btn load-btn" onclick="console.log('📂 Onclick: Cargar Proyecto'); if(typeof showLoadProjectModal === 'function') showLoadProjectModal();">
+          <i class="fas fa-folder-open"></i>
+          <span>Cargar Proyecto</span>
+        </button>
+      </div>
+      
+      <div class="sidebar-section">
+        <button id="manageProjectsBtn" class="sidebar-btn manage-btn" onclick="console.log('🔧 Onclick: Gestionar Proyectos'); if(typeof showManageProjectsModal === 'function') showManageProjectsModal();">
+          <i class="fas fa-tasks"></i>
+          <span>Gestionar Proyectos</span>
+        </button>
+      </div>
+      
+      <div class="sidebar-section">
+        <button id="extractTextBtn" class="sidebar-btn extract-btn">
+          <i class="fas fa-file-text"></i>
+          <span>Extraer Texto</span>
+        </button>
+      </div>
+      
+      <div class="sidebar-section">
+        <h4><i class="fas fa-image"></i> Miniaturas</h4>
+      </div>
+      
+      <div class="sidebar-section">
+        <button id="createThumbnailStyleFromSidebar" class="sidebar-btn create-btn">
+          <i class="fas fa-plus"></i>
+          <span>Crear Estilo Miniatura</span>
+        </button>
+      </div>
+      
+      <div class="sidebar-section">
+        <button id="manageThumbnailStylesFromSidebar" class="sidebar-btn manage-btn">
+          <i class="fas fa-cog"></i>
+          <span>Gestionar Miniaturas</span>
+        </button>
+      </div>
+
+      <div class="sidebar-section">
+        <h4><i class="fas fa-tools"></i> Herramientas</h4>
+      </div>
+
+      <div class="sidebar-section">
+        <button id="openTranslatePageBtn" class="sidebar-btn create-btn" onclick="window.open('translate-video.html', '_blank')">
+          <i class="fas fa-language"></i>
+          <span>Traducir Videos</span>
+        </button>
+      </div>
+      
+      <div class="sidebar-section">
+        <div class="sidebar-info">
+          <p><i class="fas fa-info-circle"></i> Estilos disponibles:</p>
+          <ul>
+            <li>Profesional</li>
+            <li>Comedia</li>
+            <li>Personalizados</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Panel lateral derecho para prompts -->
+  <div class="prompts-sidebar" id="promptsSidebar">
+    <div class="prompts-sidebar-header">
+      <h3><i class="fas fa-images"></i> Prompts de Imágenes</h3>
+      <button id="promptsSidebarToggle" class="prompts-toggle-btn" title="Mostrar panel de prompts">
+        <i class="fas fa-chevron-left"></i>
+      </button>
+    </div>
+    
+    <div class="prompts-sidebar-content" id="promptsSidebarContent">
+      <div class="prompts-empty-state" id="promptsEmptyState">
+        <i class="fas fa-image"></i>
+        <p>Los prompts aparecerán aquí conforme generes las secciones</p>
+      </div>
+      
+      <div class="prompts-list" id="promptsList">
+        <!-- Los prompts se añadirán dinámicamente aquí -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal para crear nuevo estilo -->
+  <div id="styleModal" class="style-modal">
+    <div class="style-modal-content">
+      <div class="style-modal-header">
+        <h3><i class="fas fa-palette"></i> Crear Nuevo Estilo de Guión</h3>
+        <button id="closeStyleModal" class="close-modal-btn">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <div class="style-modal-body">
+        <div class="form-group">
+          <label for="styleName">Nombre del Estilo:</label>
+          <input type="text" id="styleName" placeholder="Ej: Épico, Misterioso, Humorístico, etc." maxlength="30">
+        </div>
+        <div class="form-group">
+          <label for="styleDescription">Descripción del Estilo:</label>
+          <textarea id="styleDescription" rows="4" placeholder="Describe cómo debe ser el tono y estilo del guión. Ej: Tono épico y dramático con referencias heroicas, voz profunda y solemne..."></textarea>
+        </div>
+        <div class="form-group">
+          <label for="styleInstructions">Instrucciones Detalladas para la IA:</label>
+          <textarea id="styleInstructions" rows="6" placeholder="Instrucciones específicas para la IA sobre cómo generar este estilo. Ej: Usa un lenguaje formal, incluye metáforas épicas, evita groserías, incluye referencias a la mitología..."></textarea>
+        </div>
+      </div>
+      <div class="style-modal-footer">
+        <button id="cancelStyleBtn" class="cancel-btn">
+          <i class="fas fa-times"></i>
+          Cancelar
+        </button>
+        <button id="saveStyleBtn" class="save-btn">
+          <i class="fas fa-save"></i>
+          Guardar Estilo
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal para gestionar estilos -->
+  <div id="manageStylesModal" class="style-modal">
+    <div class="style-modal-content manage-styles-content">
+      <div class="style-modal-header">
+        <h3><i class="fas fa-cog"></i> Gestionar Estilos Personalizados</h3>
+        <button id="closeManageStylesModal" class="close-modal-btn">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <div class="style-modal-body">
+        <div class="styles-list-container">
+          <div id="stylesList" class="styles-list">
+            <!-- Los estilos se cargarán dinámicamente aquí -->
+          </div>
+          <div id="noStylesMessage" class="no-styles-message" style="display: none;">
+            <i class="fas fa-palette"></i>
+            <p>No tienes estilos personalizados aún</p>
+            <p>Crea tu primer estilo usando el botón "Crear Nuevo Estilo"</p>
+          </div>
+        </div>
+      </div>
+      <div class="style-modal-footer">
+        <button id="closeManageStylesBtn" class="cancel-btn">
+          <i class="fas fa-times"></i>
+          Cerrar
+        </button>
+      </div>
+    </div>
+  </div>
+
+
+<!-- ELIMINADO: Modal TranslateVideoModal (Ahora es una página separada) -->
+
+
+  <!-- Modal para editar estilo -->
+  <div id="editStyleModal" class="style-modal">
+    <div class="style-modal-content">
+      <div class="style-modal-header">
+        <h3><i class="fas fa-edit"></i> Editar Estilo de Guión</h3>
+        <button id="closeEditStyleModal" class="close-modal-btn">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <div class="style-modal-body">
+        <div class="form-group">
+          <label for="editStyleName">Nombre del Estilo:</label>
+          <input type="text" id="editStyleName" placeholder="Ej: Épico, Misterioso, Humorístico, etc." maxlength="30">
+        </div>
+        <div class="form-group">
+          <label for="editStyleDescription">Descripción del Estilo:</label>
+          <textarea id="editStyleDescription" rows="4" placeholder="Describe cómo debe ser el tono y estilo del guión..."></textarea>
+        </div>
+        <div class="form-group">
+          <label for="editStyleInstructions">Instrucciones Detalladas para la IA:</label>
+          <textarea id="editStyleInstructions" rows="6" placeholder="Instrucciones específicas para la IA sobre cómo generar este estilo..."></textarea>
+        </div>
+      </div>
+      <div class="style-modal-footer">
+        <button id="cancelEditStyleBtn" class="cancel-btn">
+          <i class="fas fa-times"></i>
+          Cancelar
+        </button>
+        <button id="saveEditStyleBtn" class="save-btn">
+          <i class="fas fa-save"></i>
+          Guardar Cambios
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal para crear nuevo estilo de miniatura -->
+  <div id="thumbnailStyleModal" class="style-modal">
+    <div class="style-modal-content">
+      <div class="style-modal-header">
+        <h3><i class="fas fa-image"></i> Crear Nuevo Estilo de Miniatura</h3>
+        <button id="closeThumbnailStyleModal" class="close-modal-btn">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <div class="style-modal-body">
+        <div class="form-group">
+          <label for="thumbnailStyleName">Nombre del Estilo:</label>
+          <input type="text" id="thumbnailStyleName" placeholder="Ej: Dorado Épico, Verde Retro, Azul Cyberpunk, etc." maxlength="30">
+        </div>
+        <div class="form-group">
+          <label for="thumbnailStyleDescription">Descripción del Estilo:</label>
+          <textarea id="thumbnailStyleDescription" rows="4" placeholder="Describe el estilo visual de la miniatura. Ej: Estilo épico con colores dorados y efectos brillantes..."></textarea>
+        </div>
+        <div class="form-group">
+          <label for="thumbnailPrimaryColor">Color Principal del Texto:</label>
+          <input type="text" id="thumbnailPrimaryColor" placeholder="Ej: dorado, rojo brillante, azul neón, etc." maxlength="20">
+        </div>
+        <div class="form-group">
+          <label for="thumbnailSecondaryColor">Color Secundario del Texto:</label>
+          <input type="text" id="thumbnailSecondaryColor" placeholder="Ej: blanco, negro, plata, etc." maxlength="20">
+        </div>
+        <div class="form-group">
+          <label for="thumbnailInstructions">Instrucciones Detalladas del Estilo:</label>
+          <textarea id="thumbnailInstructions" rows="6" placeholder="Instrucciones específicas para la IA sobre este estilo de miniatura. Ej: Texto con efecto de resplandor dorado, contorno negro grueso, fondo con efectos de partículas..."></textarea>
+        </div>
+      </div>
+      <div class="style-modal-footer">
+        <button id="cancelThumbnailStyleBtn" class="cancel-btn">
+          <i class="fas fa-times"></i>
+          Cancelar
+        </button>
+        <button id="saveThumbnailStyleBtn" class="save-btn">
+          <i class="fas fa-save"></i>
+          Guardar Estilo
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal para gestionar estilos de miniatura -->
+  <div id="manageThumbnailStylesModal" class="style-modal">
+    <div class="style-modal-content manage-styles-content">
+      <div class="style-modal-header">
+        <h3><i class="fas fa-cog"></i> Gestionar Estilos de Miniatura</h3>
+        <button id="closeManageThumbnailStylesModal" class="close-modal-btn">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <div class="style-modal-body">
+        <div class="styles-list-container">
+          <div id="thumbnailStylesList" class="styles-list">
+            <!-- Los estilos se cargarán dinámicamente aquí -->
+          </div>
+          <div id="noThumbnailStylesMessage" class="no-styles-message" style="display: none;">
+            <i class="fas fa-image"></i>
+            <p>No tienes estilos de miniatura personalizados aún</p>
+            <p>Crea tu primer estilo usando el botón "Crear Estilo Miniatura"</p>
+          </div>
+        </div>
+      </div>
+      <div class="style-modal-footer">
+        <button id="closeManageThumbnailStylesBtn" class="cancel-btn">
+          <i class="fas fa-times"></i>
+          Cerrar
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal para editar estilo de miniatura -->
+  <div id="editThumbnailStyleModal" class="style-modal">
+    <div class="style-modal-content">
+      <div class="style-modal-header">
+        <h3><i class="fas fa-edit"></i> Editar Estilo de Miniatura</h3>
+        <button id="closeEditThumbnailStyleModal" class="close-modal-btn">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <div class="style-modal-body">
+        <div class="form-group">
+          <label for="editThumbnailStyleName">Nombre del Estilo:</label>
+          <input type="text" id="editThumbnailStyleName" placeholder="Ej: Dorado Épico, Verde Retro, Azul Cyberpunk, etc." maxlength="30">
+        </div>
+        <div class="form-group">
+          <label for="editThumbnailStyleDescription">Descripción del Estilo:</label>
+          <textarea id="editThumbnailStyleDescription" rows="4" placeholder="Describe el estilo visual de la miniatura..."></textarea>
+        </div>
+        <div class="form-group">
+          <label for="editThumbnailPrimaryColor">Color Principal del Texto:</label>
+          <input type="text" id="editThumbnailPrimaryColor" placeholder="Ej: dorado, rojo brillante, azul neón, etc." maxlength="20">
+        </div>
+        <div class="form-group">
+          <label for="editThumbnailSecondaryColor">Color Secundario del Texto:</label>
+          <input type="text" id="editThumbnailSecondaryColor" placeholder="Ej: blanco, negro, plata, etc." maxlength="20">
+        </div>
+        <div class="form-group">
+          <label for="editThumbnailInstructions">Instrucciones Detalladas del Estilo:</label>
+          <textarea id="editThumbnailInstructions" rows="6" placeholder="Instrucciones específicas para la IA sobre este estilo de miniatura..."></textarea>
+        </div>
+      </div>
+      <div class="style-modal-footer">
+        <button id="cancelEditThumbnailStyleBtn" class="cancel-btn">
+          <i class="fas fa-times"></i>
+          Cancelar
+        </button>
+        <button id="saveEditThumbnailStyleBtn" class="save-btn">
+          <i class="fas fa-save"></i>
+          Guardar Cambios
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="container">
+   
+    <div class="header">
+      <div class="header-content">
+        <div class="header-title">
+          <h1><i class="fas fa-gamepad"></i> Zia</h1>
+          <p class="subtitle">Generador de guiones para YouTube con IA</p>
+        </div>
+        <div class="header-actions">
+          <button id="showPromptsPanel" class="prompts-panel-btn" title="Mostrar panel de prompts">
+            <i class="fas fa-images"></i>
+            <span>Prompts</span>
+          </button>
+        </div>
+      </div>
+      <div class="header-meta">
+        <div class="meta-card">
+          <div class="meta-icon">
+            <i class="fas fa-magic"></i>
+          </div>
+          <div class="meta-content">
+            <p class="meta-title">Flujo creativo completo</p>
+            <p class="meta-subtitle">Genera guión, audio, imágenes y video en una sola plataforma.</p>
+          </div>
+        </div>
+        <div class="meta-card">
+          <div class="meta-icon">
+            <i class="fas fa-diagram-project"></i>
+          </div>
+          <div class="meta-content">
+            <p class="meta-title">Organiza tus proyectos</p>
+            <p class="meta-subtitle">Guarda estilos, gestiona versiones y recupera ideas al instante.</p>
+          </div>
+        </div>
+        <div class="meta-card">
+          <div class="meta-icon">
+            <i class="fas fa-wave-square"></i>
+          </div>
+          <div class="meta-content">
+            <p class="meta-title">Optimización inteligente</p>
+            <p class="meta-subtitle">Configuraciones balanceadas para lograr resultados consistentes.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <div class="main-form">
+      <!-- Campos principales (topics y carpetas) -->
+      <div class="primary-fields">
+        <div class="project-list-card">
+          <div class="project-list-header">
+            <div class="project-list-title">
+              <i class="fas fa-folder-tree"></i>
+              <span>Carpetas y temas</span>
+            </div>
+            <div class="project-header-actions">
+              <button id="addProjectEntryBtn" type="button" class="project-add-btn">
+                <i class="fas fa-plus"></i>
+                <span>Agregar tema</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="project-entry primary-project" data-project-index="0">
+            <div class="field-group">
+              <label for="folderName" class="field-label">
+                <i class="fas fa-folder"></i>
+                Carpeta:
+              </label>
+              <input type="text" id="folderName" class="field-input project-folder-input" placeholder="Ej: lore_de_los_kokiri" data-project-role="folder" />
+            </div>
+
+            <div class="field-group topic-group">
+              <label for="prompt" class="field-label">
+                <i class="fas fa-edit"></i>
+                Tema del Guión:
+              </label>
+              <textarea id="prompt" class="topic-textarea project-topic-input" rows="3" placeholder="Describe tu guión... Ej: 'Lore de Saria en Zelda Ocarina of Time'" data-project-role="topic"></textarea>
+            </div>
+          </div>
+
+          <div id="additionalProjectsContainer" class="project-entry-list"></div>
+        </div>
+      </div>
+
+      <!-- Grid de configuraciones -->
+      <div class="config-grid">
+        <!-- Columna 1: Configuración básica -->
+        <div class="config-column">
+          <h3 class="column-title"><i class="fas fa-cog"></i> Configuración</h3>
+          
+          <div class="field-group">
+            <label for="sectionsNumber" class="field-label">
+              <i class="fas fa-list-ol"></i> Secciones:
+            </label>
+            <div class="number-input-group">
+              <button type="button" class="number-btn decrease-btn" onclick="changeSectionCount(-1)" title="Disminuir secciones">
+                <i class="fas fa-minus"></i>
+              </button>
+              <input type="number" id="sectionsNumber" class="number-input" value="3" min="1" max="150" placeholder="3">
+              <button type="button" class="number-btn increase-btn" onclick="changeSectionCount(1)" title="Aumentar secciones">
+                <i class="fas fa-plus"></i>
+              </button>
+            </div>
+          </div>
+
+          <div class="field-group">
+            <label for="wordsPerSection" class="field-label">
+              <i class="fas fa-align-left"></i> Palabras por sección:
+            </label>
+            <div class="words-input-group">
+              <div class="words-range">
+                <input type="number" id="minWords" class="words-input" value="120" min="0" max="5000" placeholder="120">
+                <span class="words-separator">-</span>
+                <input type="number" id="maxWords" class="words-input" value="130" min="0" max="5000" placeholder="130">
+              </div>
+              <span class="words-label">palabras</span>
+            </div>
+          </div>
+
+          <div class="field-group">
+            <label for="styleSelect" class="field-label">
+              <i class="fas fa-palette"></i> Estilo:
+            </label>
+            <select id="styleSelect" class="field-select">
+              <option value="professional" selected>Profesional</option>
+              <option value="comedy">Cómico</option>
+            </select>
+          </div>
+
+          <div class="field-group">
+            <label for="imagesSelect" class="field-label">
+              <i class="fas fa-images"></i> Imágenes:
+            </label>
+            <select id="imagesSelect" class="field-select">
+              <option value="1">1 Imagen</option>
+              <option value="2">2 Imágenes</option>
+              <option value="3">3 Imágenes</option>
+              <option value="4">4 Imágenes</option>
+              <option value="5">5 Imágenes</option>
+              <option value="8">8 Imágenes</option>
+              <option value="10"selected>10 Imágenes</option>
+              <option value="15">15 Imágenes</option>
+              <option value="20">20 Imágenes</option>
+              <option value="25">25 Imágenes</option>
+              <option value="30">30 Imágenes</option>
+              <option value="35">35 Imágenes</option>
+              <option value="40">40 Imágenes</option>
+              <option value="45">45 Imágenes</option>
+              <option value="50">50 Imágenes</option>
+            </select>
+          </div>
+
+          <div class="field-group">
+            <label for="aspectRatioSelect" class="field-label">
+              <i class="fas fa-expand-arrows-alt"></i> Formato de Imagen:
+            </label>
+            <select id="aspectRatioSelect" class="field-select">
+              <option value="16:9" selected>16:9 (Horizontal/Paisaje)</option>
+              <option value="9:16">9:16 (Vertical/Retrato)</option>
+              <option value="1:1">1:1 (Cuadrado)</option>
+            </select>
+          </div>
+
+          <div class="field-group">
+            <label for="imageModelSelect" class="field-label">
+              <i class="fas fa-robot"></i> Modelo de Imagen:
+            </label>
+            <select id="imageModelSelect" class="field-select">
+              <option value="gemini2" selected>Gemini 2.0 Flash</option>
+              <option value="gemini25">Gemini 2.5 Flash (Nuevo)</option>
+            </select>
+          </div>
+
+          <div class="field-group">
+            <label for="llmModelSelect" class="field-label">
+              <i class="fas fa-brain"></i> Modelo LLM:
+            </label>
+            <select id="llmModelSelect" class="field-select">
+              <option value="gemini-3-pro-preview">Gemini 3 Pro (Preview)</option>
+              <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+              <option value="gemini-3-flash-preview" selected>Gemini 3 Flash Preview</option>
+              <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+              <option value="gpt-5">GPT-5</option>
+              <option value="gpt-5-mini">GPT-5 Mini</option>
+              <option value="gpt-5-nano">GPT-5 Nano</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Columna 2: Audio y opciones -->
+        <div class="config-column">
+          <h3 class="column-title"><i class="fas fa-volume-up"></i> Audio</h3>
+
+          <div class="checkbox-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="autoGenerateAudio" class="checkbox-input">
+              <span class="checkbox-custom"></span>
+              <i class="fas fa-volume-up"></i>
+              Incluir audio automático (Google)
+            </label>
+          </div>
+
+          <!-- Configuraciones de voz Google (inicialmente ocultas) -->
+          <div id="googleVoiceGroup" style="display: none; margin-top: 10px; margin-left: 20px;">
+            <div class="field-group">
+              <label for="voiceSelect" class="field-label">
+                <i class="fas fa-microphone-alt"></i> Voz Google:
+              </label>
+              <select id="voiceSelect" class="field-select">
+                <option value="Zephyr">Zephyr</option>
+                <option value="Puck">Puck</option>
+                <option value="Charon">Charon</option>
+                <option value="Kore">Kore</option>
+                <option value="Fenrir">Fenrir</option>
+                <option value="Leda">Leda</option>
+                <option value="Orus" selected>Orus</option>
+                <option value="Aoede">Aoede</option>
+                <option value="Callirrhoe">Callirrhoe</option>
+                <option value="Enceladus">Enceladus</option>
+                <option value="Iapetus">Iapetus</option>
+                <option value="Umbriel">Umbriel</option>
+                <option value="Algeba">Algeba</option>
+                <option value="Despina">Despina</option>
+                <option value="Erinome">Erinome</option>
+                <option value="Algenib">Algenib</option>
+                <option value="Rasalgethi">Rasalgethi</option>
+                <option value="Laomedeia">Laomedeia</option>
+                <option value="Achernar">Achernar</option>
+                <option value="Alnilam">Alnilam</option>
+                <option value="Schedar">Schedar</option>
+                <option value="Gacrux">Gacrux</option>
+                <option value="Pulcherrima">Pulcherrima</option>
+                <option value="Achird">Achird</option>
+                <option value="Zubenelgenubi">Zubenelgenubi</option>
+                <option value="Vindematrix">Vindematrix</option>
+                <option value="Sadachbia">Sadachbia</option>
+                <option value="Sadaltager">Sadaltager</option>
+                <option value="Sulafat">Sulafat</option>
+                <option value="Autonoe">Autonoe</option>
+              </select>
+            </div>
+
+            <div class="checkbox-group nested-checkbox" style="margin-top: 4px;">
+              <label class="checkbox-label" for="randomGoogleVoice">
+                <input type="checkbox" id="randomGoogleVoice" class="checkbox-input">
+                <span class="checkbox-custom"></span>
+                <i class="fas fa-random"></i>
+                Voz aleatoria por proyecto
+              </label>
+              <p class="checkbox-hint">Asigna una voz distinta de la lista para cada guión generado.</p>
+            </div>
+
+            <div class="field-group">
+              <label for="narrationStyle" class="field-label">
+                <i class="fas fa-theater-masks"></i> Estilo:
+              </label>
+              <input type="text" id="narrationStyle" class="field-input" placeholder="Ej: épico y dramático" />
+            </div>
+          </div>
+
+          <div class="checkbox-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="autoGenerateApplioAudio" class="checkbox-input">
+              <span class="checkbox-custom"></span>
+              <i class="fas fa-microphone"></i>
+              Incluir audio Applio
+            </label>
+          </div>
+
+          <div class="checkbox-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="includeTranslations" class="checkbox-input">
+              <span class="checkbox-custom"></span>
+              <i class="fas fa-language"></i>
+              Incluir Traducciones
+            </label>
+          </div>
+
+          <!-- Dropdown de voces de Applio (inicialmente oculto) -->
+          <div class="field-group" id="applioVoiceGroup" style="display: none; margin-top: 10px; margin-left: 20px;">
+            <label for="applioVoiceSelect" class="field-label">
+              <i class="fas fa-user-alt"></i> Voz Applio:
+            </label>
+            <select id="applioVoiceSelect" class="field-select">
+              <option value="logs\\VOCES\\RemyOriginal.pth">Cargando voces...</option>
+            </select>
+            
+            <!-- Control de Modelo TTS -->
+            <div class="field-group" style="margin-top: 15px;">
+              <label for="applioModelSelect" class="field-label">
+                <i class="fas fa-microphone"></i> Modelo TTS:
+              </label>
+              <select id="applioModelSelect" class="field-select">
+                <option value="fr-FR-RemyMultilingualNeural" selected>fr-FR-RemyMultilingualNeural</option>
+                <option value="es-VE-SebastianNeural">es-VE-SebastianNeural</option>
+                <option value="en-US-AndrewNeural">en-US-AndrewNeural</option>
+                <option value="en-GB-RyanNeural">en-GB-RyanNeural</option>
+                <option value="en-US-AndrewMultilingualNeural">en-US-AndrewMultilingualNeural</option>
+
+
+              </select>
+            </div>
+            
+            <!-- Control de Velocidad -->
+            <div class="field-group" style="margin-top: 15px;">
+              <label for="applioSpeed" class="field-label">
+                <i class="fas fa-tachometer-alt"></i> Velocidad: <span id="speedValue">0</span>
+              </label>
+              <input type="range" id="applioSpeed" class="pitch-slider" min="-20" max="20" value="0" step="1">
+              <div class="pitch-labels">
+                <span>-20</span>
+                <span>0</span>
+                <span>+20</span>
+              </div>
+            </div>
+
+            <!-- Control de Pitch -->
+            <div class="field-group" style="margin-top: 15px;">
+              <label for="applioPitch" class="field-label">
+                <i class="fas fa-sliders-h"></i> Pitch: <span id="pitchValue">0</span>
+              </label>
+              <input type="range" id="applioPitch" class="pitch-slider" min="-20" max="20" value="0" step="1">
+              <div class="pitch-labels">
+                <span>-20</span>
+                <span>0</span>
+                <span>+20</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="checkbox-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="googleImages" class="checkbox-input">
+              <span class="checkbox-custom"></span>
+              <i class="fab fa-google"></i>
+              Imágenes de Google
+            </label>
+          </div>
+
+          <div class="checkbox-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="localAIImages" class="checkbox-input">
+              <span class="checkbox-custom"></span>
+              <i class="fas fa-brain"></i>
+              Generar imágenes con IA
+            </label>
+          </div>
+
+
+
+          <div class="checkbox-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="generateVideo" class="checkbox-input">
+              <span class="checkbox-custom"></span>
+              <i class="fas fa-video"></i>
+              Generar Video
+            </label>
+          </div>
+        </div>
+
+        <!-- Columna 3: Instrucciones adicionales -->
+        <div class="config-column">
+          <h3 class="column-title"><i class="fas fa-paint-brush"></i> Personalización</h3>
+          
+          <div class="field-group">
+            <label for="promptModifier" class="field-label">
+              <i class="fas fa-magic"></i> Instrucciones para Imágenes:
+            </label>
+            <textarea id="promptModifier" class="field-textarea" rows="4" placeholder="Personaliza el estilo visual de las imágenes generadas...">Low poly style, Dark, Oscuro</textarea>
+          </div>
+
+          <div class="field-group">
+            <label for="thumbnailStyleSelect" class="field-label">
+              <i class="fas fa-image"></i> Estilo de Miniatura:
+            </label>
+            <select id="thumbnailStyleSelect" class="field-select">
+              <option value="default" selected>Amarillo y Blanco (Predeterminado)</option>
+              <option value="gaming_red">Rojo Gaming</option>
+              <option value="neon_blue">Azul Neón</option>
+              <option value="retro_purple">Púrpura Retro</option>
+            </select>
+          </div>
+
+          <div class="info-box">
+            <i class="fas fa-info-circle"></i>
+            <div class="info-text">
+              <p><strong>Profesional:</strong> Tono educativo y serio</p>
+              <p><strong>Cómico:</strong> Humor negro y sarcasmo</p>
+              <p><strong>Gen. Automática:</strong> Genera todas las secciones</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Botones de acción -->
+      <div class="action-buttons">
+        <button id="generateBtn" class="btn btn-primary">
+          <i class="fas fa-video"></i>
+          <span>Generar Sección 1</span>
+        </button>
+
+        <button id="generateAudioBtn" class="btn btn-audio" style="display: none;">
+          <i class="fas fa-microphone"></i>
+          <span>Generar Audio</span>
+        </button>
+      </div>
+
+      <!-- Barra de progreso para generación por lotes -->
+      <div id="progressContainer" class="progress-card" style="display: none;">
+        <div class="progress-header">
+          <div class="progress-title">
+            <div class="progress-icon">
+              <i class="fas fa-tasks"></i>
+            </div>
+            <div class="progress-heading">
+              <span class="progress-label">Progreso de generación</span>
+              <h4 class="progress-subheading">Seguimiento en tiempo real</h4>
+            </div>
+          </div>
+          <div class="progress-summary">
+            <span class="phase-pill" id="currentPhase">Iniciando...</span>
+            <span class="progress-percentage" id="progressPercentage">0%</span>
+          </div>
+        </div>
+
+        <!-- Nueva estructura de progreso detallado -->
+        <div class="detailed-progress-grid">
+            <!-- Progreso de Guiones -->
+            <div class="progress-detail-card" id="scriptProgressCard">
+                <div class="detail-header">
+                    <div class="detail-icon"><i class="fas fa-pen-nib"></i></div>
+                    <span class="detail-title">Guiones</span>
+                    <span class="detail-count" id="scriptCount">0/0</span>
+                </div>
+                <div class="detail-bar-container">
+                    <div class="detail-bar" id="scriptProgressBar" style="width: 0%"></div>
+                </div>
+                <div class="detail-status" id="scriptStatus">Pendiente</div>
+            </div>
+
+            <!-- Progreso de Audios -->
+            <div class="progress-detail-card" id="audioProgressCard">
+                <div class="detail-header">
+                    <div class="detail-icon"><i class="fas fa-microphone-lines"></i></div>
+                    <span class="detail-title">Audios</span>
+                    <span class="detail-count" id="audioCount">0/0</span>
+                </div>
+                <div class="detail-bar-container">
+                    <div class="detail-bar" id="audioProgressBar" style="width: 0%"></div>
+                </div>
+                <div class="detail-status" id="audioStatus">Pendiente</div>
+            </div>
+        </div>
+
+        <div class="progress-body">
+          <div class="progress-stats">
+            <div class="stat-item">
+              <span class="stat-label">Tiempo transcurrido</span>
+              <span class="stat-value" id="elapsedTime">0:00</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label">Tiempo restante</span>
+              <span class="stat-value" id="estimatedTime">Calculando...</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="current-task">
+          <i class="fas fa-cog fa-spin" id="currentTaskIcon"></i>
+          <span id="currentTask">Preparando generación...</span>
+        </div>
+      </div>
+    </div>
+
+    <div id="output"></div>
+
+    <!-- Botón de Generación de Video Manual -->
+    <div id="videoGenerationContainer" style="display: none;" class="video-generation-section">
+      <div class="video-generation-wrapper">
+        <button id="regenerateApplioAudiosBtn" class="regenerate-audio-btn" style="display: none;">
+          <i class="fas fa-microphone-alt"></i>
+          <span>Generar Audios Faltantes</span>
+        </button>
+
+        <button id="generateYouTubeMetadataBtn" class="generate-youtube-metadata-btn" style="display: none;">
+          <i class="fas fa-youtube"></i>
+          <span>Generar Metadatos</span>
+        </button>
+
+        <!-- Panel de Traducción -->
+        <div id="translationPanel" class="translation-panel" style="display: none;">
+          <div class="panel-header">
+            <div class="panel-title">
+              <i class="fas fa-language"></i>
+              <span>Localización y Doblaje</span>
+            </div>
+            <span class="panel-badge">Multi-idioma</span>
+          </div>
+          
+          <div class="panel-content">
+            <p class="panel-description">
+              Traduce guiones y genera doblajes sincronizados automáticamente.
+            </p>
+
+            <div class="translation-actions">
+              <!-- Paso 1: Traducción -->
+              <div class="action-group">
+                <button id="translateAllBtn" class="action-btn primary-action">
+                  <div class="btn-icon"><i class="fas fa-globe"></i></div>
+                  <div class="btn-text">
+                    <span class="btn-title">Traducir Todo</span>
+                    <span class="btn-subtitle">EN, FR, DE, KO, RU, PT, ZH</span>
+                  </div>
+                </button>
+              </div>
+
+              <!-- Paso 2: Generación de Audio -->
+              <div class="action-group">
+                <button id="generateTranslatedAudiosBtn" class="action-btn secondary-action">
+                  <div class="btn-icon"><i class="fas fa-microphone-alt"></i></div>
+                  <div class="btn-text">
+                    <span class="btn-title">Generar Doblaje</span>
+                    <span class="btn-subtitle">Crear audios con Applio</span>
+                  </div>
+                </button>
+              </div>
+
+              <!-- Configuración de Tiempo -->
+              <div class="time-config-container">
+                <div class="time-input-wrapper">
+                  <i class="fas fa-clock"></i>
+                  <label for="targetDurationInput">Duración Objetivo</label>
+                  <input type="text" id="targetDurationInput" placeholder="MM:SS" maxlength="5">
+                </div>
+                <div class="time-hint">Ajusta el audio final a este tiempo exacto</div>
+              </div>
+            </div>
+
+            <!-- Progreso -->
+            <div id="translationProgress" class="translation-progress-container" style="display: none;">
+              <div class="progress-info">
+                <span id="translationStatus">Procesando...</span>
+                <span id="translationPercent">0%</span>
+              </div>
+              <div class="progress-track">
+                <div id="translationProgressBar" class="progress-fill"></div>
+              </div>
+            </div>
+
+            <hr style="border: 0; border-top: 1px solid var(--color-border-soft); margin: 20px 0;">
+            
+            <!-- Traducción de Títulos -->
+            <div class="title-translation-section">
+              <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 15px; color: var(--color-accent-2); font-weight: 600;">
+                <i class="fas fa-heading"></i> Traducción de Títulos
+              </div>
+              
+              <div class="input-group" style="margin-bottom: 15px;">
+                <input type="text" id="titleInput" placeholder="Ingresa el título del video aquí..." style="width: 100%; padding: 12px; border-radius: var(--radius-sm); background: var(--color-bg-900); border: 1px solid var(--color-border); color: var(--text-primary); margin-bottom: 10px; outline: none;">
+                <button id="translateTitleBtn" class="action-btn primary-action" style="width: 100%; justify-content: center;">
+                  <i class="fas fa-language"></i> Traducir Título a Todos los Idiomas
+                </button>
+              </div>
+
+              <div id="translatedTitlesList" class="translated-titles-list" style="display: none; display: grid; gap: 10px;">
+                <!-- Items generated dynamically -->
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <button id="regenerateMissingScriptsBtn" class="regenerate-scripts-btn" style="display: none;">
+          <i class="fas fa-file-alt"></i>
+          <span>Regenerar Guiones Vacíos</span>
+        </button>
+
+        <details class="video-generation-collapsible" style="margin-top: 20px; background: rgba(0,0,0,0.2); border-radius: 8px; border: 1px solid #4a5568;">
+          <summary style="padding: 15px; cursor: pointer; font-weight: bold; color: #e2e8f0; list-style: none; display: flex; justify-content: space-between; align-items: center;">
+            <span><i class="fas fa-video"></i> Generación de Video y Clips</span>
+            <i class="fas fa-chevron-down"></i>
+          </summary>
+          <div style="padding: 15px; border-top: 1px solid #4a5568;">
+            <p class="video-description" style="margin-top: 0;">Convierte todas las secciones generadas en un video compilado con transiciones y audio sincronizado.</p>
+            
+            <button id="generateSimpleVideoBtn" class="generate-simple-video-btn">
+              <i class="fas fa-images"></i>
+              <span>Video Simple (Sin Animación)</span>
+            </button>
+            
+            <button id="generateSeparateVideosBtn" class="generate-separate-videos-btn">
+              <i class="fas fa-video"></i>
+              <span>Clips Separados por Sección</span>
+            </button>
+
+            <div id="sectionClipsContainer" class="section-clips-container" style="display: none;">
+              <div class="section-clips-header">
+                <i class="fas fa-cut"></i>
+                <span>Generar clips individuales por sección</span>
+              </div>
+              <div id="sectionClipsButtons" class="section-clips-grid">
+                <!-- Botones dinámicos por sección -->
+              </div>
+            </div>
+
+            <div id="clipProgressContainer" class="clip-progress-container" style="display: none;">
+              <div class="clip-progress-header">
+                <i class="fas fa-chart-bar"></i>
+                <span>Progreso de clips por sección</span>
+              </div>
+              <div id="clipProgressSummary" class="clip-progress-summary">Preparando progreso...</div>
+              <div id="clipProgressColumns" class="clip-progress-columns">
+                <!-- Columnas de progreso dinámicas -->
+              </div>
+            </div>
+
+            <hr style="border: 0; border-top: 1px solid #4a5568; margin: 20px 0;">
+
+            <div id="generateMissingImagesControls" class="generate-missing-images-controls" style="display: none;">
+              <div id="googleApiSelector" class="google-api-selector" style="display: none;">
+                <div class="google-api-selector__header">
+                  <i class="fas fa-plug"></i>
+                  <span>Selecciona las APIs de Google</span>
+                </div>
+                <div id="googleApiOptions" class="google-api-options">
+                  <!-- Opciones de APIs de Google se insertan dinámicamente -->
+                </div>
+                <p class="google-api-selector__hint">Se enviarán 5 imágenes por lote y se esperarán 10 segundos entre cada intento.</p>
+              </div>
+              <button id="generateMissingImagesBtn" class="generate-missing-images-btn">
+                <i class="fas fa-image"></i>
+                <span>Generar Imágenes Faltantes</span>
+              </button>
+              <button id="cancelMissingImagesBtn" class="cancel-missing-images-btn" style="display: none;">
+                <i class="fas fa-stop-circle"></i>
+                <span>Detener Generación</span>
+              </button>
+              <label for="attemptComfyCheckbox" class="attempt-comfy-toggle">
+                <input type="checkbox" id="attemptComfyCheckbox">
+                <span>Intentar con Comfy</span>
+              </label>
+            </div>
+
+            <div id="sectionImagesContainer" class="section-images-container" style="display: none;">
+              <div class="section-images-header">
+                <i class="fas fa-images"></i>
+                <span>Generar imágenes por sección</span>
+              </div>
+              <div id="sectionImagesButtons" class="section-images-grid">
+                <!-- Botones dinámicos por sección -->
+              </div>
+            </div>
+
+            <div id="sectionImagesProgressContainer" class="section-images-progress" style="display: none;">
+              <div class="section-images-progress-header">
+                <i class="fas fa-bars-progress"></i>
+                <span>Progreso de imágenes por sección</span>
+                <span id="sectionImagesProgressSummary" class="section-images-progress-summary">Sin datos</span>
+              </div>
+              <div id="sectionImagesProgressBars" class="section-images-progress-bars">
+                <!-- Barras de progreso por sección -->
+              </div>
+            </div>
+            
+            <button id="generateMissingPromptsBtn" class="generate-missing-prompts-btn" style="display: none;">
+              <i class="fas fa-file-text"></i>
+              <span>Generar Prompts de Imágenes Faltantes</span>
+            </button>
+          </div>
+        </details>
+        
+        <div id="videoProgressContainer" class="video-progress-container" style="display: none;">
+          <div class="video-progress-label">Generando video...</div>
+          <div class="video-progress-bar">
+            <div id="videoProgressFill" class="video-progress-fill"></div>
+          </div>
+          <div id="videoProgressText" class="video-progress-text">0%</div>
+          <div id="videoProgressInfo" class="video-progress-info"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Carrusel de Imágenes -->
+    <div id="carousel-container" style="display: none;">
+      <div class="carousel-wrapper">
+        <div class="carousel-header">
+          <h3><i class="fas fa-film"></i> Secuencia Visual - <span id="carousel-section-title">Sección 1</span></h3>
+          <div class="carousel-counter">
+            <span id="current-image">1</span> / <span id="total-images">5</span>
+          </div>
+        </div>
+        
+        <div class="carousel">
+          <button class="carousel-btn carousel-prev" id="prevBtn">
+            <i class="fas fa-chevron-left"></i>
+          </button>
+          
+          <div class="carousel-track-container">
+            <div class="carousel-track" id="carouselTrack">
+              <!-- Las imágenes se insertarán aquí dinámicamente -->
+            </div>
+          </div>
+          
+          <button class="carousel-btn carousel-next" id="nextBtn">
+            <i class="fas fa-chevron-right"></i>
+          </button>
+        </div>
+        
+        <div class="carousel-indicators" id="carouselIndicators">
+          <!-- Los indicadores se insertarán aquí dinámicamente -->
+        </div>
+      </div>
+    </div>
+
+    <div id="script-section" style="display: none;">
+      <div class="script-container">
+        <div class="script-header">
+          <h3><i class="fas fa-file-alt"></i> Guión Generado - <span id="section-title">Sección 1</span></h3>
+          <div id="chapter-title-container" style="margin-top: 5px; margin-bottom: 10px; display: none;">
+            <h4 style="color: #666; font-weight: normal; margin: 0; font-size: 14px;">
+              <i class="fas fa-bookmark"></i> <span id="chapter-title"></span>
+            </h4>
+          </div>
+          <div id="token-usage-container" style="margin-top: 5px; margin-bottom: 10px; display: none;">
+            <div style="display: flex; gap: 15px; font-size: 12px; color: #666; background: #f8f9fa; padding: 8px 12px; border-radius: 6px; border-left: 3px solid #4299e1;">
+              <span><i class="fas fa-arrow-right" style="color: #38a169;"></i> <strong>Entrada:</strong> <span id="input-tokens">-</span> tokens</span>
+              <span><i class="fas fa-arrow-left" style="color: #e53e3e;"></i> <strong>Salida:</strong> <span id="output-tokens">-</span> tokens</span>
+              <span><i class="fas fa-calculator" style="color: #4299e1;"></i> <strong>Total:</strong> <span id="total-tokens">-</span> tokens</span>
+              <span><i class="fas fa-robot" style="color: #9f7aea;"></i> <strong>Modelo:</strong> <span id="model-used">-</span></span>
+            </div>
+          </div>
+          <div class="script-navigation">
+            <div class="section-nav-buttons">
+              <button id="prevSectionBtn" class="nav-section-btn" title="Sección anterior" disabled>
+                <i class="fas fa-chevron-left"></i>
+                <span>Anterior</span>
+              </button>
+              <div class="progress-indicator">
+                <span id="current-section">1</span> / <span id="total-sections">3</span>
+              </div>
+              <button id="nextSectionBtn" class="nav-section-btn" title="Sección siguiente" disabled>
+                <span>Siguiente</span>
+                <i class="fas fa-chevron-right"></i>
+              </button>
+            </div>
+          </div>
+          <div class="audio-controls" id="audio-controls" style="display: none;">
+            <div class="audio-player">
+              <button id="playBtn" class="audio-btn">
+                <i class="fas fa-play"></i>
+                <span>Escuchar Narración</span>
+              </button>
+              <button id="pauseBtn" class="audio-btn" style="display: none;">
+                <i class="fas fa-pause"></i>
+                <span>Pausar</span>
+              </button>
+              
+              <div class="audio-timeline">
+                <div class="time-display">
+                  <span id="currentTime">0:00</span>
+                  <span class="time-separator">/</span>
+                  <span id="totalTime">0:00</span>
+                </div>
+                
+                <div class="audio-progress-container">
+                  <div class="audio-progress-bar" id="audioProgressBar">
+                    <div class="progress-fill" id="audioProgressFill"></div>
+                    <div class="progress-handle" id="audioProgressHandle"></div>
+                  </div>
+                </div>
+                
+                <div class="volume-control">
+                  <i class="fas fa-volume-up"></i>
+                  <input type="range" id="volumeSlider" min="0" max="100" value="80" class="volume-slider">
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div id="script-content"></div>
+        <audio id="scriptAudio" preload="auto"></audio>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal para extraer texto de audio/video -->
+  <div id="extractTextModal" class="modal" style="display: none;">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2><i class="fas fa-file-text"></i> Extraer Texto de Audio/Video</h2>
+        <span class="close" id="closeExtractModal">&times;</span>
+      </div>
+      <div class="modal-body">
+        <div id="extractDropzone" class="dropzone">
+          <div id="extractDropzoneText" class="dropzone-text">
+            <i class="fas fa-cloud-upload-alt"></i>
+            <p>Arrastra tu archivo MP4/MP3 aquí o haz click para seleccionar</p>
+            <small>Formatos soportados: MP4, MP3, WAV, M4A</small>
+          </div>
+          <input type="file" id="extractFileInput" accept=".mp4,.mp3,.wav,.m4a" style="display: none;">
+        </div>
+        
+        <div id="extractFileName" class="file-name" style="display: none;"></div>
+        
+        <!-- Selector de pista de audio para MP4 -->
+        <div id="extractAudioTrackContainer" style="display: none; margin: 1rem 0;">
+          <label for="extractAudioTrackSelect" style="margin-right: 0.5rem; color: var(--text-secondary);">Pista de audio:</label>
+          <select id="extractAudioTrackSelect" class="form-select">
+            <option>Selecciona una pista...</option>
+          </select>
+        </div>
+        
+        <!-- Configuraciones de transcripción -->
+        <div class="transcription-config" style="margin: 1rem 0; padding: 1rem; background: rgba(0, 0, 0, 0.2); border-radius: 8px;">
+          <h4 style="margin: 0 0 1rem 0; color: #00ff7f;">⚙️ Configuración de Transcripción</h4>
+          
+          <!-- Selector de método -->
+          <div class="config-group" style="margin-bottom: 1rem;">
+            <label style="display: block; margin-bottom: 0.5rem; color: #e2e8f0; font-weight: 500;">
+              <i class="fas fa-cogs"></i> Método de transcripción:
+            </label>
+            <select id="transcriptionMethod" class="form-select" style="width: 100%;">
+              <option value="api">🌐 OpenAI API (en la nube)</option>
+              <option value="local">🚀 Whisper Local (GPU)</option>
+            </select>
+            <small style="color: #94a3b8; margin-top: 0.25rem; display: block;">
+              API: Rápido pero requiere internet | Local: Privado y no consume créditos
+            </small>
+          </div>
+          
+          <!-- Configuraciones para método local -->
+          <div id="localConfig" style="display: none;">
+            <div class="config-group" style="margin-bottom: 1rem;">
+              <label style="display: block; margin-bottom: 0.5rem; color: #e2e8f0; font-weight: 500;">
+                <i class="fas fa-brain"></i> Modelo de Whisper:
+              </label>
+              <select id="whisperModel" class="form-select" style="width: 100%;">
+                <option value="tiny">Tiny (~39MB) - Muy rápido, calidad básica</option>
+                <option value="base">Base (~74MB) - Rápido, calidad media</option>
+                <option value="small">Small (~244MB) - Balanceado</option>
+                <option value="medium" selected>Medium (~769MB) - Buena calidad</option>
+                <option value="large-v3">Large-v3 (~1.5GB) - Mejor calidad</option>
+              </select>
+            </div>
+            
+            <div class="config-group" style="margin-bottom: 1rem;">
+              <label style="display: block; margin-bottom: 0.5rem; color: #e2e8f0; font-weight: 500;">
+                <i class="fas fa-language"></i> Idioma (opcional):
+              </label>
+              <select id="audioLanguage" class="form-select" style="width: 100%;">
+                <option value="">🔍 Auto-detectar</option>
+                <option value="es">🇪🇸 Español</option>
+                <option value="en">🇺🇸 Inglés</option>
+                <option value="fr">🇫🇷 Francés</option>
+                <option value="de">🇩🇪 Alemán</option>
+                <option value="it">🇮🇹 Italiano</option>
+                <option value="pt">🇧🇷 Portugués</option>
+                <option value="ja">🇯🇵 Japonés</option>
+                <option value="ko">🇰🇷 Coreano</option>
+                <option value="zh">🇨🇳 Chino</option>
+              </select>
+              <small style="color: #94a3b8; margin-top: 0.25rem; display: block;">
+                Especificar el idioma puede mejorar la precisión
+              </small>
+            </div>
+            
+            <!-- Estado del modelo local -->
+            <div id="localModelStatus" class="model-status" style="padding: 0.5rem; border-radius: 4px; margin-bottom: 1rem;">
+              <i class="fas fa-circle-notch fa-spin"></i> Verificando estado del modelo...
+            </div>
+          </div>
+        </div>
+        
+        <div class="button-group" style="margin: 1rem 0;">
+          <button id="extractTranscribeBtn" class="primary-btn" disabled>
+            <i class="fas fa-microphone"></i>
+            Transcribir Audio
+          </button>
+        </div>
+        
+        <div class="progress-container" style="margin: 1rem 0;">
+          <progress id="extractProgressBar" value="0" max="100" style="width: 100%; height: 8px;"></progress>
+          <div id="extractProgressText" style="text-align: center; margin-top: 0.5rem; color: var(--text-secondary);"></div>
+        </div>
+        
+        <div id="extractOutput" class="output-text" style="margin-top: 1rem; min-height: 100px; max-height: 300px; overflow-y: auto;"></div>
+        
+        <div class="button-group" id="extractResultActions" style="display: none; margin-top: 1rem;">
+          <button id="copyExtractedText" class="secondary-btn">
+            <i class="fas fa-copy"></i>
+            Copiar Texto
+          </button>
+          <button id="saveExtractedText" class="secondary-btn">
+            <i class="fas fa-download"></i>
+            Guardar TXT
+          </button>
+          <button id="useAsPrompt" class="primary-btn">
+            <i class="fas fa-arrow-right"></i>
+            Usar como Tema
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODALES PARA SISTEMA DE PROYECTOS -->
+  
+  <!-- Modal para cargar proyecto -->
+  <div id="loadProjectModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3><i class="fas fa-folder-open"></i> Cargar Proyecto</h3>
+        <span class="close" data-modal="loadProjectModal" onclick="document.getElementById('loadProjectModal').style.display='none'; console.log('❌ Modal cerrado via onclick');">&times;</span>
+      </div>
+      <div class="modal-body">
+        <div id="projectsListContainer">
+          <div class="loading-indicator">
+            <i class="fas fa-spinner fa-spin"></i>
+            <span>Cargando proyectos...</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <!-- Modal para gestionar proyectos -->
+  <div id="manageProjectsModal" class="modal">
+    <div class="modal-content large-modal">
+      <div class="modal-header">
+        <h3><i class="fas fa-tasks"></i> Gestionar Proyectos</h3>
+        <span class="close" data-modal="manageProjectsModal" onclick="document.getElementById('manageProjectsModal').style.display='none'; console.log('❌ Modal cerrado via onclick');">&times;</span>
+      </div>
+      <div class="modal-body">
+        <div class="projects-toolbar">
+          <button id="refreshProjectsList" class="secondary-btn">
+            <i class="fas fa-sync-alt"></i>
+            Actualizar
+          </button>
+          <div class="search-container">
+            <input type="text" id="projectsSearch" placeholder="Buscar proyectos...">
+            <i class="fas fa-search"></i>
+          </div>
+        </div>
+        <div id="manageProjectsContainer">
+          <div class="loading-indicator">
+            <i class="fas fa-spinner fa-spin"></i>
+            <span>Cargando proyectos...</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal para vista detallada del proyecto -->
+  <div id="projectDetailModal" class="modal">
+    <div class="modal-content large-modal">
+      <div class="modal-header">
+        <h3 id="projectDetailTitle"><i class="fas fa-folder"></i> Detalles del Proyecto</h3>
+        <span class="close" data-modal="projectDetailModal" onclick="document.getElementById('projectDetailModal').style.display='none'; console.log('❌ Modal cerrado via onclick');">&times;</span>
+      </div>
+      <div class="modal-body">
+        <div id="projectDetailContent">
+          <!-- Contenido dinámico del proyecto -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal para confirmar eliminación -->
+  <div id="confirmDeleteModal" class="modal">
+    <div class="modal-content small-modal">
+      <div class="modal-header">
+        <h3><i class="fas fa-exclamation-triangle"></i> Confirmar Eliminación</h3>
+        <span class="close" data-modal="confirmDeleteModal" onclick="document.getElementById('confirmDeleteModal').style.display='none'; console.log('❌ Modal cerrado via onclick');">&times;</span>
+      </div>
+      <div class="modal-body">
+        <p id="deleteConfirmText">¿Estás seguro de que quieres eliminar este proyecto?</p>
+        <div class="button-group">
+          <button id="cancelDelete" class="secondary-btn">Cancelar</button>
+          <button id="confirmDelete" class="danger-btn">
+            <i class="fas fa-trash"></i>
+            Eliminar
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="script.js?v=20251012_4"></script>
+  
+  <!-- Script inline para forzar eventos de proyectos -->
+  <script>
+    console.log('🔧 Script inline cargado - configurando eventos...');
+    
+    function forceProjectEvents() {
+      console.log('🎯 Forzando eventos de proyecto...');
+      
+      const saveBtn = document.getElementById('saveProjectBtn');
+      const loadBtn = document.getElementById('loadProjectBtn');
+      const manageBtn = document.getElementById('manageProjectsBtn');
+      
+      console.log('Elementos encontrados:', {
+        saveBtn: !!saveBtn,
+        loadBtn: !!loadBtn,
+        manageBtn: !!manageBtn
+      });
+      
+      if (saveBtn) {
+        saveBtn.onclick = function(e) {
+          console.log('💾 CLICK DIRECTO: Guardar proyecto');
+          e.preventDefault();
+          if (typeof saveCurrentProject === 'function') {
+            saveCurrentProject();
+          }
+          return false;
+        };
+        console.log('✅ Evento onclick configurado para saveBtn');
+      }
+      
+      if (loadBtn) {
+        loadBtn.onclick = function(e) {
+          console.log('📂 CLICK DIRECTO: Cargar proyecto');
+          e.preventDefault();
+          if (typeof showLoadProjectModal === 'function') {
+            showLoadProjectModal();
+          }
+          return false;
+        };
+        console.log('✅ Evento onclick configurado para loadBtn');
+      }
+      
+      if (manageBtn) {
+        manageBtn.onclick = function(e) {
+          console.log('🔧 CLICK DIRECTO: Gestionar proyectos');
+          e.preventDefault();
+          if (typeof showManageProjectsModal === 'function') {
+            showManageProjectsModal();
+          }
+          return false;
+        };
+        console.log('✅ Evento onclick configurado para manageBtn');
+      }
+    }
+    
+    // Ejecutar inmediatamente
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', forceProjectEvents);
+    } else {
+      forceProjectEvents();
+    }
+    
+    // Backup después de 2 segundos
+    setTimeout(forceProjectEvents, 2000);
+    
+    console.log('🚀 Script inline completado');
+  </script>
+</body>
+</html>

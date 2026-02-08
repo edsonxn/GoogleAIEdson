@@ -1,0 +1,47 @@
+{
+  "name": "ai-script-generator",
+  "version": "1.0.0",
+  "description": "Generador automático de guiones con IA - Crea contenido, imágenes y audio para cualquier tema",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node index.js",
+    "test": "echo \"No tests specified\" && exit 0"
+  },
+  "keywords": [
+    "script-generator",
+    "content-generator",
+    "ai",
+    "gemini",
+    "tts",
+    "applio",
+    "automation",
+    "youtube",
+    "content-creation",
+    "text-to-speech"
+  ],
+  "author": "Edson Jair Iniguez",
+  "license": "MIT",
+  "dependencies": {
+    "@google-cloud/vertexai": "^1.10.0",
+    "@google/genai": "^1.14.0",
+    "@google/generative-ai": "^0.10.0",
+    "axios": "^1.11.0",
+    "body-parser": "^2.2.0",
+    "canvas": "^3.2.0",
+    "cheerio": "^1.1.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.0.0",
+    "express": "^5.1.0",
+    "ffmpeg-static": "^5.2.0",
+    "fluent-ffmpeg": "^2.1.3",
+    "form-data": "^4.0.4",
+    "multer": "^2.0.2",
+    "node-fetch": "^3.3.2",
+    "openai": "^5.19.1",
+    "uuid": "^13.0.0",
+    "wav": "^1.0.2",
+    "ws": "^8.18.3"
+  }
+}

@@ -1,0 +1,115 @@
+# Archivos de entorno
+.env
+
+# Dependencias de Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Archivos de sistema
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+
+# Archivos temporales
+temp/
+tmp/
+*.tmp
+
+# Archivos de Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Archivos de audio y imagen generados (mantener estructura pero no contenido)
+public/outputs/*
+!public/outputs/.gitkeep
+
+# Modelos de Whisper (muy grandes, se descargan automáticamente)
+whisper_models/
+*.bin
+*.onnx
+
+# Archivos de configuración del IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Archivos de backup
+*.bak
+*.backup
+
+# Archivos de cache
+.cache/
+.parcel-cache/
+
+# Archivos de Applio temporales (si existen)
+assets/audios/*.wav
+!assets/audios/.gitkeep
+
+# Archivos específicos del proyecto
+test_audio.wav
+imagen.png
+
+# Windows
+$RECYCLE.BIN/
+Desktop.ini
+
+# macOS
+.AppleDouble
+.LSOverride
+Icon
+._*
+.Spotlight-V100
+.Trashes
+
+# Linux
+*~
+
+# Archivos de test y desarrollo
+test_*.js
+test_*.wav
+debug_*.js
+*_backup.js
+*_old.js
+*_new.js
+example_*.md
+
+# Archivos compilados de Python
+styles.json
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+*.pyo
+
+# Frames temporales de video
+temp_frames/
+frame_*.jpg
+frame_*.png
+
+# Binarios de FFmpeg
+*.exe
+*.dll
