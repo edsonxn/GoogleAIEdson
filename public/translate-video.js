@@ -32,6 +32,27 @@ document.addEventListener('DOMContentLoaded', () => {
              }
         });
     }
+
+    // Setup Promo Markers
+    const addMarkerBtn = document.getElementById('addPromoMarkerBtn');
+    if (addMarkerBtn) {
+        addMarkerBtn.addEventListener('click', (e) => {
+             e.preventDefault();
+             const container = document.getElementById('promoMarkersContainer');
+             const div = document.createElement('div');
+             div.className = 'promo-marker-row';
+             div.style.cssText = 'display: flex; gap: 8px; align-items: center;';
+             div.innerHTML = `
+                  <input type="text" class="promoTimeInput" placeholder="Min:Seg (ej: 01:00)" 
+                         style="background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); color: #fff; padding: 6px 10px; border-radius: 4px; flex: 1; text-align: center;">
+                  <button class="remove-marker-btn" type="button" style="background: rgba(239, 68, 68, 0.2); border: 1px solid rgba(239, 68, 68, 0.3); color: #f87171; border-radius: 4px; padding: 6px 10px; cursor: pointer;">
+                      <i class="fas fa-trash"></i>
+                  </button>
+             `;
+             div.querySelector('.remove-marker-btn').onclick = () => div.remove();
+             container.appendChild(div);
+        });
+    }
 });
 
 window.switchTab = function(tabName) {
@@ -242,10 +263,17 @@ window.startVideoTranslation = async function(isRetry = false) {
         const usePodcastStyle = document.getElementById('podcastStyleCheckbox')?.checked || false;
         formData.append('podcastStyle', usePodcastStyle);
 
-        // Add Promo Time
-        const promoTime = document.getElementById('promoTimeInput')?.value || '';
-        if (promoTime) {
-            formData.append('promoStartTime', promoTime);
+        // Collect all promo markers
+        const promoInputs = document.querySelectorAll('.promoTimeInput');
+        const promoStartTimes = [];
+        promoInputs.forEach(input => {
+            if (input.value && input.value.trim()) {
+                promoStartTimes.push(input.value.trim());
+            }
+        });
+
+        if (promoStartTimes.length > 0) {
+            formData.append('promoStartTimes', JSON.stringify(promoStartTimes));
         }
 
         const translationModel = document.querySelector('input[name="translationModel"]:checked')?.value || 'gemini-3-flash-preview';

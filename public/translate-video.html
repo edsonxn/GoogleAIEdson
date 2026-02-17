@@ -494,16 +494,26 @@
                       </div>
 
                       <div class="tv-form-group" style="margin-top: 15px;">
-                          <label class="tv-option-label" style="display: flex; align-items: center; gap: 8px;">
-                              <i class="fas fa-stopwatch" style="color: #f59e0b;"></i>
-                              <span>Sincronizar Promo (Minuto)</span>
+                          <label class="tv-option-label" style="display: flex; align-items: center; gap: 8px; justify-content: space-between;">
+                              <div style="display: flex; align-items: center; gap: 8px;">
+                                  <i class="fas fa-stopwatch" style="color: #f59e0b;"></i>
+                                  <span>Marcas de Sección / Promo</span>
+                              </div>
+                              <button id="addPromoMarkerBtn" style="background: rgba(245, 158, 11, 0.2); border: 1px solid rgba(245, 158, 11, 0.3); color: #f59e0b; border-radius: 4px; padding: 2px 8px; cursor: pointer; font-size: 0.8em;">
+                                  <i class="fas fa-plus"></i> Añadir Marca
+                              </button>
                           </label>
-                          <div style="display: flex; gap: 8px; align-items: center; margin-top: 5px;">
-                              <input type="text" id="promoTimeInput" placeholder="Ej: 01:00 o 60" 
-                                     style="background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); color: #fff; padding: 6px 10px; border-radius: 4px; width: 100px; text-align: center;">
-                              <span style="font-size: 0.8rem; color: #94a3b8;">(Minuto:Segundo o Segundos)</span>
+                          <div id="promoMarkersContainer" style="display: flex; flex-direction: column; gap: 8px; margin-top: 10px;">
+                              <!-- Marker Input Template -->
+                              <div class="promo-marker-row" style="display: flex; gap: 8px; align-items: center;">
+                                  <input type="text" class="promoTimeInput" placeholder="Min:Seg (ej: 01:00)" 
+                                         style="background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); color: #fff; padding: 6px 10px; border-radius: 4px; flex: 1; text-align: center;">
+                                  <button class="remove-marker-btn" onclick="this.parentElement.remove()" style="background: rgba(239, 68, 68, 0.2); border: 1px solid rgba(239, 68, 68, 0.3); color: #f87171; border-radius: 4px; padding: 6px 10px; cursor: pointer;">
+                                      <i class="fas fa-trash"></i>
+                                  </button>
+                              </div>
                           </div>
-                          <p style="font-size: 0.75rem; color: #64748b; margin-top: 4px;">Fuerza la sincronización en este momento exacto.</p>
+                          <p style="font-size: 0.75rem; color: #64748b; margin-top: 8px;">Agrega marcas de tiempo para dividir la traducción y sincronizar cada sección (ej: inicio de promo, fin de promo, etc).</p>
                       </div>
                   </div>
 
