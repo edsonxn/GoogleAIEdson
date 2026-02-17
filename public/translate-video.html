@@ -442,19 +442,76 @@
                   <div id="googleVoiceSelectContainer" class="tv-form-group" style="display: none;">
                       <label style="display: block; margin-bottom: 8px; font-size: 0.9em; color:#94a3b8;">Voz de Google:</label>
                       <select id="googleVoiceSelect">
-                          <option value="Kore">Kore (Firme - Default)</option>
-                          <option value="Zephyr">Zephyr (Brillo)</option>
-                          <option value="Fenrir">Fenrir (Excitabilidad)</option>
+                          <!-- Voces Femeninas -->
+                          <option value="Zephyr">Zephyr (Brillante)</option>
+                          <option value="Kore">Kore (Firme)</option>
+                          <option value="Leda">Leda (Juvenil)</option>
                           <option value="Aoede">Aoede (Breezy)</option>
+                          <option value="Callirrhoe">Callirrhoe (Relajada)</option>
+                          <option value="Autonoe">Autonoe (Brillo)</option>
+                          <option value="Algieba">Algieba (Suave)</option>
+                          <option value="Despina">Despina (Suave)</option>
+                          <option value="Erinome">Erinome (Despejado)</option>
+                          <option value="Algenib">Algenib (Arenoso)</option>
+                          <option value="Rasalgethi">Rasalgethi (Informativa)</option>
+                          <option value="Laomedeia">Laomedeia (Optimista)</option>
+                          <option value="Achernar">Achernar (Suave)</option>
+                          <option value="Gacrux">Gacrux (Contenido para mayores)</option>
+                          <option value="Pulcherrima">Pulcherrima (Reenviar)</option>
+                          <option value="Achird">Achird (Amistoso)</option>
+                          <option value="Vindemiatrix">Vindemiatrix (Suave)</option>
+                          <option value="Sadachbia">Sadachbia (Animada)</option>
+                          <option value="Sadaltager">Sadaltager (Conocimiento)</option>
+                          <option value="Sulafat">Sulafat (Cálida)</option>
+
+                          <!-- Voces Masculinas -->
+                          <option value="Puck">Puck (Optimista)</option>
+                          <option value="Charon">Charon (Informativa)</option>
+                          <option value="Fenrir">Fenrir (Excitabilidad)</option>
+                          <option value="Orus">Orus (Firme)</option>
+                          <option value="Enceladus">Enceladus (Sin aliento)</option>
+                          <option value="Iapetus">Iapetus (Claro)</option>
+                          <option value="Umbriel">Umbriel (Relajado)</option>
+                          <option value="Alnilam">Alnilam (Firme)</option>
+                          <option value="Schedar">Schedar (Par)</option>
+                          <option value="Zubenelgenubi">Zubenelgenubi (Informal)</option>
                       </select>
+                      
+                      <div style="margin-top: 10px; display: flex; align-items: center; gap: 8px;">
+                        <input type="checkbox" id="randomVoiceCheckbox" style="margin: 0; cursor: pointer;">
+                        <label for="randomVoiceCheckbox" style="margin: 0; cursor: pointer; color: #cbd5e1; font-size: 0.9em;">
+                          <i class="fas fa-dice" style="color: #60a5fa; margin-right: 4px;"></i>
+                          Usar voz aleatoria por párrafo
+                        </label>
+                      </div>
+                      
+                      <div style="margin-top: 10px; display: flex; align-items: center; gap: 8px;">
+                          <input type="checkbox" id="podcastStyleCheckbox" style="margin: 0; cursor: pointer;">
+                          <label for="podcastStyleCheckbox" style="margin: 0; cursor: pointer; color: #cbd5e1; font-size: 0.9em;">
+                            <i class="fas fa-microphone-lines" style="color: #34d399; margin-right: 4px;"></i>
+                            Estilo Podcast (Natural y Conversacional)
+                          </label>
+                      </div>
+
+                      <div class="tv-form-group" style="margin-top: 15px;">
+                          <label class="tv-option-label" style="display: flex; align-items: center; gap: 8px;">
+                              <i class="fas fa-stopwatch" style="color: #f59e0b;"></i>
+                              <span>Sincronizar Promo (Minuto)</span>
+                          </label>
+                          <div style="display: flex; gap: 8px; align-items: center; margin-top: 5px;">
+                              <input type="text" id="promoTimeInput" placeholder="Ej: 01:00 o 60" 
+                                     style="background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); color: #fff; padding: 6px 10px; border-radius: 4px; width: 100px; text-align: center;">
+                              <span style="font-size: 0.8rem; color: #94a3b8;">(Minuto:Segundo o Segundos)</span>
+                          </div>
+                          <p style="font-size: 0.75rem; color: #64748b; margin-top: 4px;">Fuerza la sincronización en este momento exacto.</p>
+                      </div>
                   </div>
 
                   <div class="tv-form-group" style="margin-top: 25px;">
                       <div class="tv-section-title">
                           <i class="fas fa-globe"></i> Idiomas de destino
                       </div>
-                      <div class="tv-checkbox-grid" style="grid-template-columns: 1fr 1fr; gap: 12px;">
-                          <label class="tv-option-label"><input type="checkbox" name="targetLanguages" value="en" checked><span>Inglés 🇺🇸</span></label>
+                      <div class="tv-checkbox-grid" style="grid-template-columns: 1fr 1fr; gap: 12px;">                          <label class="tv-option-label"><input type="checkbox" name="targetLanguages" value="es" checked><span>Español 🇪🇸</span></label>                          <label class="tv-option-label"><input type="checkbox" name="targetLanguages" value="en" checked><span>Inglés 🇺🇸</span></label>
                           <label class="tv-option-label"><input type="checkbox" name="targetLanguages" value="fr" checked><span>Francés 🇫🇷</span></label>
                           <label class="tv-option-label"><input type="checkbox" name="targetLanguages" value="de" checked><span>Alemán 🇩🇪</span></label>
                           <label class="tv-option-label"><input type="checkbox" name="targetLanguages" value="it" checked><span>Italiano 🇮🇹</span></label>
@@ -565,7 +622,16 @@
                         
                         <div class="tv-audio-grid">
                             <div class="tv-audio-card">
-                                <label>🇺🇸 Inglés (en)</label>
+                                <label>�🇸 Español (es)</label>
+                                <div id="dropZone_manual_es" class="tv-drop-zone" style="padding: 15px; min-height: 80px;">
+                                    <i class="fas fa-file-audio" style="font-size: 1.5rem; margin-bottom: 5px;"></i>
+                                    <span style="font-size: 0.8rem; display: block; color: #94a3b8;">Subir audio ES</span>
+                                    <input type="file" id="manual_audio_es" accept=".mp3,.wav" style="display: none;">
+                                    <p id="fileName_manual_es" class="tv-file-name" style="font-size: 0.75em; margin-top: 5px;"></p>
+                                </div>
+                            </div>
+                            <div class="tv-audio-card">
+                                <label>�🇺🇸 Inglés (en)</label>
                                 <div id="dropZone_manual_en" class="tv-drop-zone" style="padding: 15px; min-height: 80px;">
                                     <i class="fas fa-file-audio" style="font-size: 1.5rem; margin-bottom: 5px;"></i>
                                     <span style="font-size: 0.8rem; display: block; color: #94a3b8;">Subir audio EN</span>

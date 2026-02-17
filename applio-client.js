@@ -60,16 +60,57 @@ class ApplioClient {
     }
 
     async _executeTextToSpeech(text, outputPath, options) {
-        const {
+        let {
             model = "fr-FR-RemyMultilingualNeural",
             speed = 0,
             pitch = 0,
             voicePath = "logs\\VOCES\\RemyOriginal.pth"
         } = options;
 
+        // Extraer nombre del modelo (si viene como ruta)
+        let rvcModelBase = path.basename(voicePath);
+        
+        // --- ELIMINADO: Fallback a Italia.pth (Causaba errores) ---
+        // Se respeta "logs/VOCES/RemyOriginal.pth" si el usuario lo provee
+        
+        // NOTA: No forzamos ruta absoluta porque Applio parece preferir "logs/VOCES/..." relativo
+        // Sin embargo, verificamos existencia usando la ruta absoluta para loguear advertencias.
+        const absoluteVoicePath = path.isAbsolute(voicePath) 
+            ? voicePath 
+            : path.join(this.applioRoot, voicePath);
+
+        // Verificar si el modelo existe
+        if (!fs.existsSync(absoluteVoicePath)) {
+            console.warn(`⚠️ ADVERTENCIA: El modelo RVC no se encuentra en: ${absoluteVoicePath}`);
+            console.warn(`   Applio podría fallar si no encuentra el archivo.`);
+            
+            // Intentar buscar en subcarpetas comunes si falla
+            const possiblePaths = [
+                path.join(this.applioRoot, 'logs', 'VOCES', path.basename(voicePath)),
+                path.join(this.applioRoot, 'logs', path.basename(voicePath)),
+                path.join(this.applioRoot, 'weights', path.basename(voicePath))
+            ];
+            
+            for (const p of possiblePaths) {
+                if (fs.existsSync(p)) {
+                    console.log(`✅ Modelo encontrado en ruta alternativa: ${p}`);
+                    // Usamos la ruta relativa desde applioRoot para enviar al servidor, o absoluta si está fuera
+                    // Para mayor seguridad según payload de usuario: usar relativa si está dentro de root
+                    voicePath = path.relative(this.applioRoot, p);
+                    break;
+                }
+            }
+        }
+        // Si ya era absoluta y existía, la dejamos como estaba o la convertimos a relativa si el cliente lo prefiere?
+        // El usuario reportó payload exitoso con: "logs\\VOCES\\RemyOriginal.pth"
+        // Así que si la ruta es absoluta y está dentro de ApplioRoot, mejor convertir a relativa.
+        if (path.isAbsolute(voicePath) && voicePath.startsWith(this.applioRoot)) {
+             voicePath = path.relative(this.applioRoot, voicePath);
+        }
+
         console.log(`\n🎬 Iniciando TTS (En cola): «${text.substring(0, 100)}...»`);
-        console.log(`🎛️ Modelo: ${model}`);
-            console.log(`🎤 Voz: ${voicePath}`);
+        console.log(`🎛️ TTS Model: ${model}`);
+            console.log(`🎤 Voice Path: ${voicePath}`);
             console.log(`🚀 Velocidad: ${speed}`);
             console.log(`🎵 Pitch: ${pitch}`);
             console.log(`🔑 Session: ${this.sessionHash}\n`);
@@ -78,39 +119,39 @@ class ApplioClient {
             // Obtener timestamp del archivo antes de la solicitud
             const beforeTimestamp = await this._getFileTimestamp();
             
-            // Payload para Applio
+            // Payload ajustado para fn_index 94 (Interfaz Original probada por usuario)
             const data = [
-                true,                           // enable_vc
-                "",                             // speaker_wav
-                text,                           // input_text
-                model,                          // model_name  
-                speed,                          // speed
-                pitch,                          // pitch
-                0.75,                           // index_rate
-                1,                              // volume_envelope
-                0.5,                            // protect
-                "rmvpe",                        // f0_method
-                this.outputPaths[1],            // tts_output.wav
-                this.outputPaths[0],            // tts_rvc_output.wav
-                voicePath,                      // Usar la voz seleccionada dinámicamente
-                "",                             // Index file path (dejamos vacío para evitar errores)
-                false,                          // split_audio
-                false,                          // autotune
-                1,                              // clean_audio
-                false,                          
-                155,                            // clean_strength (Ajustado a 155 según payload de referencia)
-                false,                          // export_format_enabled
-                0.5,                            // upscale_audio
-                "WAV",                          // export_format
+                true,                           // 0. enable_vc (Según payload exitoso del usuario)
+                "",                             // 1. speaker_wav
+                text,                           // 2. input_text
+                model,                          // 3. tts_model
+                speed,                          // 4. speed
+                pitch,                          // 5. pitch
+                0.75,                           // 6. index_rate
+                1,                              // 7. volume_envelope
+                0.5,                            // 8. protect
+                "rmvpe",                        // 9. f0_method
+                this.outputPaths[1],            // 10. tts_output.wav path
+                this.outputPaths[0],            // 11. tts_rvc_output.wav path
+                voicePath,                      // 12. voice_path (Ruta completa)
+                "",                             // 13. index_path
+                false,                          // 14. split_audio
+                false,                          // 15. autotune
+                1,                              // 16. clean_audio
+                false,                          // 17. 
+                155,                            // 18. clean_strength
+                false,                          // 19. export_format_enabled
+                0.5,                            // 20. upscale_audio
+                "WAV",                          // 21. export_format
                 "contentvec",                   // embedder_model
-                null,                           // custom_model
-                0                               // legacy placeholder (UI expects fixed value)
+                null,                           // 23. custom_model
+                0                               // 24. legacy
             ];
 
             const joinPayload = {
                 data: data,
                 event_data: null,
-                fn_index: 101,                  // Actualizado a 101 según versión de Applio
+                fn_index: 94,                   // Actualizado a 94 según la prueba exitosa del usuario
                 session_hash: this.sessionHash,
                 trigger_id: Math.floor(Math.random() * 1000)
             };

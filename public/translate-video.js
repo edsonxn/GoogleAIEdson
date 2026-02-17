@@ -13,7 +13,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setupDropZone('dropZone_manual_video', 'videoUploadManual', 'fileName_manual_video', 'video', () => updateGenerateButton());
     setupDropZone('dropZone_manual_music', 'musicUploadManual', 'fileName_manual_music', 'audio');
 
-    ['en', 'fr', 'de', 'it', 'pt', 'ru', 'zh', 'ko', 'ja'].forEach(lang => {
+    ['es', 'en', 'fr', 'de', 'it', 'pt', 'ru', 'zh', 'ko', 'ja'].forEach(lang => {
         setupDropZone(`dropZone_manual_${lang}`, `manual_audio_${lang}`, `fileName_manual_${lang}`, 'audio', () => updateGenerateButton());
     });
 
@@ -164,12 +164,29 @@ window.startVideoTranslation = async function(isRetry = false) {
              alert("Por favor selecciona un archivo de video.");
              return;
         }
+
+        // Check if video already exists on server
+        if (file && !isRetry) {
+            try {
+                const checkRes = await fetch(`/api/check-video-exists?videoName=${file.name}`);
+                const checkData = await checkRes.json();
+                
+                if (checkData.exists) {
+                    const useExisting = confirm(`El video "${file.name}" ya existe en el servidor.\n¿Deseas usar la versión existente para ahorrar tiempo de subida?`);
+                    if (useExisting) {
+                        isRetry = true;
+                    }
+                }
+            } catch (e) {
+                console.warn('Could not check if video exists:', e);
+            }
+        }
     }
 
     // Start Process
     if (generateBtn) generateBtn.disabled = true;
     progressContainer.style.display = 'block';
-    statusText.textContent = isRetry ? 'Reanudando proceso...' : 'Iniciando subida...';
+    statusText.textContent = isRetry ? 'Reanudando proceso (usando archivo existente)...' : 'Iniciando subida...';
     progressBar.style.width = '0%';
     if (percentText) percentText.textContent = '0%';
 
@@ -218,6 +235,18 @@ window.startVideoTranslation = async function(isRetry = false) {
 
         const googleVoice = document.getElementById('googleVoiceSelect')?.value || 'Kore';
         formData.append('googleVoice', googleVoice);
+
+        const useRandomVoice = document.getElementById('randomVoiceCheckbox')?.checked || false;
+        formData.append('randomVoice', useRandomVoice);
+
+        const usePodcastStyle = document.getElementById('podcastStyleCheckbox')?.checked || false;
+        formData.append('podcastStyle', usePodcastStyle);
+
+        // Add Promo Time
+        const promoTime = document.getElementById('promoTimeInput')?.value || '';
+        if (promoTime) {
+            formData.append('promoStartTime', promoTime);
+        }
 
         const translationModel = document.querySelector('input[name="translationModel"]:checked')?.value || 'gemini-3-flash-preview';
         formData.append('translationModel', translationModel);

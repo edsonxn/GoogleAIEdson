@@ -6153,6 +6153,28 @@ VERIFICACIÓN FINAL: Tu respuesta debe contener exactamente ${numImages - 1} ocu
     
     console.log(`\n✅ FASE 1 COMPLETADA:`);
     console.log(`📝 ${allSections.length} guiones generados`);
+
+    // =======================================================================
+    // GENERAR ARCHIVO DE GUIÓN COMBINADO (TODO UNIDO)
+    // =======================================================================
+    try {
+        console.log(`📑 Generando archivo de guión combinado...`);
+        const fullScriptPath = path.join(process.cwd(), 'public', 'outputs', projectKey, `${projectKey}_guion_completo.txt`);
+        
+        // Unir todos los guiones limpios separados por saltos de línea dobles
+        // Usamos 'script' original pero quitamos markdown básico para que quede lo más limpio posible si se desea, 
+        // o usamos 'cleanScript' que ya tiene un replace hecho. El usuario pidió "unicamente el guion".
+        const fullScriptContent = allSections
+            .sort((a, b) => a.section - b.section) // Asegurar orden correcto
+            .map(s => s.cleanScript)
+            .join('\n\n');
+
+        fs.writeFileSync(fullScriptPath, fullScriptContent, 'utf8');
+        console.log(`✅ Guión completo guardado en: ${fullScriptPath}`);
+    } catch (combineError) {
+        console.error("❌ Error generando guión combinado:", combineError);
+    }
+
     console.log(`🎨 ${allImagePrompts.length} sets de prompts de imágenes generados`);
 
     // =======================================================================
@@ -17418,19 +17440,40 @@ async function mergeAudioFiles(files, outputPath) {
     });
 }
 
-async function generateGoogleTTSWithSplitting(text, outputPath, lang, selectedVoice = 'Kore', modelName = 'gemini-2.5-flash-preview-tts') {
+async function generateGoogleTTSWithSplitting(text, outputPath, lang, selectedVoice = 'Kore', modelName = 'gemini-2.5-flash-preview-tts', randomVoice = false) {
     // Split text into paragraphs based on double newlines
     let rawParagraphs = text.split(/\n\s*\n/).filter(p => p.trim().length > 0);
     
-    // Group every 2 paragraphs together
+    // Group paragraphs intelligently based on length limits (MAX: 1600 chars or 300 words)
+    // If combining 2 paragraphs exceeds limit, keep separate. Otherwise combine.
+    const MAX_CHARS = 1600;
+    const MAX_WORDS = 300;
+
     let paragraphs = [];
-    for (let i = 0; i < rawParagraphs.length; i += 2) {
+    // We iterate manually
+    for (let i = 0; i < rawParagraphs.length; i++) {
+        const currentPara = rawParagraphs[i].trim();
+        
+        // If there's a next paragraph, try to combine
         if (i + 1 < rawParagraphs.length) {
-            // Join current paragraph and next paragraph
-            paragraphs.push(rawParagraphs[i].trim() + "\n\n" + rawParagraphs[i+1].trim());
+            const nextPara = rawParagraphs[i+1].trim();
+            const combined = currentPara + "\n\n" + nextPara;
+            
+            const combinedWordCount = combined.split(/\s+/).length;
+            
+            // Check limits. If SAFE, combine them and skip next iteration
+            if (combined.length <= MAX_CHARS && combinedWordCount <= MAX_WORDS) {
+                paragraphs.push(combined);
+                i++; // Skip next paragraph
+            } else {
+                // EXCEEDS LIMIT, process current paragraph alone
+                // Next iteration will process the next paragraph
+                console.log(`⚠️ Paragraph split enforced: Combined length ${combined.length} chars / ${combinedWordCount} words exceeds limit.`);
+                paragraphs.push(currentPara);
+            }
         } else {
-            // Last odd paragraph
-            paragraphs.push(rawParagraphs[i].trim());
+            // Last paragraph alone
+            paragraphs.push(currentPara);
         }
     }
     
@@ -17439,6 +17482,14 @@ async function generateGoogleTTSWithSplitting(text, outputPath, lang, selectedVo
 
     const tempFiles = [];
     const tempDir = path.dirname(outputPath);
+
+    // List of Google TTS voices to choose from randomly
+    // Mix of Male and Female voices for variety
+    const googleVoicesList = [
+        'Zephyr', 'Kore', 'Leda', 'Aoede', 'Callirrhoe', 'Autonoe', 'Algieba', 'Despina', 'Erinome', 'Algenib',
+        'Rasalgethi', 'Laomedeia', 'Achernar', 'Gacrux', 'Pulcherrima', 'Achird', 'Vindemiatrix', 'Sadachbia', 'Sadaltager', 'Sulafat',
+        'Puck', 'Charon', 'Fenrir', 'Orus', 'Enceladus', 'Iapetus', 'Umbriel', 'Alnilam', 'Schedar', 'Zubenelgenubi'
+    ];
 
     try {
         // Filter paragraphs first
@@ -17463,7 +17514,15 @@ async function generateGoogleTTSWithSplitting(text, outputPath, lang, selectedVo
                         return;
                     }
                 }
-                await generateSingleGoogleTTS(paragraph, filePath, lang, selectedVoice, modelName);
+                
+                // Select voice: Random or Fixed (per paragraph)
+                let voiceToUse = selectedVoice;
+                if (randomVoice) {
+                    voiceToUse = googleVoicesList[Math.floor(Math.random() * googleVoicesList.length)];
+                    console.log(`🎲 Random Voice for part ${i}: ${voiceToUse}`);
+                }
+                
+                await generateSingleGoogleTTS(paragraph, filePath, lang, voiceToUse, modelName);
             };
         });
 
@@ -17505,6 +17564,35 @@ async function generateGoogleTTSWithSplitting(text, outputPath, lang, selectedVo
         throw error;
     }
 }
+
+
+// Endpoint para verificar si un proyecto de video ya existe
+app.get('/api/check-video-exists', (req, res) => {
+    try {
+        const { videoName } = req.query;
+        if (!videoName) {
+            return res.status(400).json({ exists: false, error: 'Nombre de video requerido' });
+        }
+        
+        const name = path.parse(videoName).name;
+        const outputDir = path.join(process.cwd(), 'public', 'outputs', name);
+        
+        // Verificar existencia del directorio y del video original
+        if (fs.existsSync(outputDir)) {
+             const files = fs.readdirSync(outputDir);
+             const hasOriginalVideo = files.some(f => f.startsWith('original_video'));
+             
+             if (hasOriginalVideo) {
+                 return res.json({ exists: true, message: 'Proyecto encontrado con video original.' });
+             }
+        }
+        
+        res.json({ exists: false });
+    } catch (error) {
+        console.error('Error checking video existence:', error);
+        res.status(500).json({ exists: false, error: error.message });
+    }
+});
 
 // --- Endpoint para Traducir Videos ---
 app.post('/api/translate-video', upload.fields([{ name: 'video', maxCount: 1 }, { name: 'music', maxCount: 1 }]), async (req, res) => {
@@ -17761,10 +17849,80 @@ if __name__ == "__main__":
         if (!originalText) {
             throw new Error('La transcripción del audio falló o devolvió texto vacío.');
         }
+
+        // --- PROMO SYNC LOGIC ---
+        let promoSplitEnabled = false;
+        let promoStartTimeVal = 0;
+        let originalTextA = "";
+        let originalTextB = "";
+
+        if (req.body.promoStartTime) {
+            const valStr = req.body.promoStartTime.toString().trim();
+            if (valStr) {
+                if (valStr.includes(':')) {
+                    const parts = valStr.split(':');
+                    if (parts.length === 2) {
+                        promoStartTimeVal = parseInt(parts[0]) * 60 + parseFloat(parts[1]);
+                    }
+                } else {
+                    promoStartTimeVal = parseFloat(valStr);
+                }
+
+                if (!isNaN(promoStartTimeVal) && promoStartTimeVal > 0 && promoStartTimeVal < videoDuration) {
+                    console.log(`⏱️ Promo Sync habilitado en: ${promoStartTimeVal} segundos`);
+                    
+                    if (transcriptionResult.segments && transcriptionResult.segments.length > 0) {
+                        // Split based on segments
+                        const segsA = [];
+                        const segsB = [];
+                        
+                        // Encontrar el primer segmento que comienza DESPUÉS del tiempo de corte
+                        // O que cruza el tiempo de corte significativamente
+                        let cutIndex = -1;
+                        
+                        // Buffer de toleranica para evitar duplicados
+                        // Regla estricta: Si el segmento termina DESPUÉS del tiempo de corte, pertenece a la PARTE B.
+                        // Esto evita que el inicio de la promo se cuele al final de la Parte A.
+                        
+                        for (let i = 0; i < transcriptionResult.segments.length; i++) {
+                            const seg = transcriptionResult.segments[i];
+                            
+                            // Si el segmento termina después del tiempo de corte (con un pequeño margen de 0.5s),
+                            // asumimos que pertenece a la siguiente sección o cruza el límite.
+                            if (seg.end > promoStartTimeVal - 0.5) {
+                                cutIndex = i;
+                                break;
+                            }
+                        }
+
+                        if (cutIndex !== -1) {
+                            segsA.push(...transcriptionResult.segments.slice(0, cutIndex));
+                            segsB.push(...transcriptionResult.segments.slice(cutIndex));
+                        } else {
+                            // Si todos terminan antes... todo es A.
+                            segsA.push(...transcriptionResult.segments);
+                        }
+
+                        originalTextA = segsA.map(s => s.text).join(" ").trim();
+                        originalTextB = segsB.map(s => s.text).join(" ").trim();
+                        
+                        if (originalTextA && originalTextB) {
+                            promoSplitEnabled = true;
+                            console.log(`✂️ Transcripción dividida: Parte A (${segsA.length} segs) | Parte B (${segsB.length} segs)`);
+                        } else {
+                            console.warn("⚠️ No se pudo dividir el texto correctamente para la promo (una parte está vacía). Usando modo normal.");
+                        }
+                    } else {
+                         console.warn("⚠️ Transcripción no tiene segmentos detallados. Usando modo normal.");
+                    }
+                }
+            }
+        }
+
         sendStatus('Transcripción completada. Traduciendo...', 50);
 
         // 3. Translate and Generate Audio
-        let languages = ['en', 'fr', 'de', 'pt', 'it', 'ru', 'zh', 'ko', 'ja']; 
+        let languages = ['es', 'en', 'fr', 'de', 'pt', 'it', 'ru', 'zh', 'ko', 'ja']; 
 
         if (req.body.targetLanguages) {
             try {
@@ -17778,13 +17936,14 @@ if __name__ == "__main__":
         }
 
         const langNames = {
-            'en': 'English', 'fr': 'French', 'de': 'German', 
+            'es': 'Spanish', 'en': 'English', 'fr': 'French', 'de': 'German', 
             'pt': 'Portuguese', 'it': 'Italian', 'ru': 'Russian',
             'zh': 'Chinese', 'ko': 'Korean', 'ja': 'Japanese'
         };
         
         // Mapa de voces TTS para cada idioma (Edge TTS)
         const voiceMap = {
+            'es': 'es-ES-AlvaroNeural',
             'en': 'en-US-ChristopherNeural',
             'fr': 'fr-FR-HenriNeural',
             'de': 'de-DE-ConradNeural',
@@ -17814,7 +17973,164 @@ if __name__ == "__main__":
             let translatedText = "";
             const scriptPath = path.join(outputDir, `script_${lang}.txt`);
 
-            if (fs.existsSync(scriptPath)) {
+            // --- PROMO SYNC ENABLED ---
+            if (promoSplitEnabled) {
+                console.log(`🔀 Modo Promo Sync para ${langNames[lang]}`);
+                const scriptPathA = path.join(outputDir, `script_${lang}_A.txt`);
+                const scriptPathB = path.join(outputDir, `script_${lang}_B.txt`);
+                
+                let textA = "";
+                let textB = "";
+
+                // Función helper interna para traducir
+                const translatePart = async (textToTranslate, partName) => {
+                    if (fs.existsSync(partName === 'A' ? scriptPathA : scriptPathB)) {
+                        return fs.readFileSync(partName === 'A' ? scriptPathA : scriptPathB, 'utf8');
+                    }
+                    
+                    const prompt = `
+                    Translate the following video script content to ${langNames[lang]}.
+                    Maintain the tone, style, and formatting.
+                    OUTPUT ONLY THE TRANSLATED TEXT.
+                    
+                    SCRIPT:
+                    ${textToTranslate}
+                    `;
+                    
+                    const { model } = await getGoogleAI("gemini-3-flash-preview", { context: 'llm' });
+                    const result = await model.generateContent(prompt);
+                    let txt = result.response.text();
+                    txt = txt.replace(/```[\s\S]*?```/g, '').trim();
+                    if (!txt) txt = result.response.text();
+                    
+                    // Guardar
+                    fs.writeFileSync(partName === 'A' ? scriptPathA : scriptPathB, txt);
+                    return txt;
+                };
+
+                try {
+                    textA = await translatePart(originalTextA, 'A');
+                    textB = await translatePart(originalTextB, 'B');
+                    
+                    // Combinar para referencia (aunque usaremos las partes para audio)
+                    translatedText = textA + "\n\n" + textB;
+                    fs.writeFileSync(scriptPath, translatedText);
+                    
+                    // GENERAR AUDIOS SEPARADOS
+                    const audioPathA = path.join(outputDir, `audio_${lang}_A.wav`);
+                    const audioPathB = path.join(outputDir, `audio_${lang}_B.wav`);
+                    
+                    const ttsProvider = req.body.ttsProvider || 'applio';
+                    const googleVoice = req.body.googleVoice || 'Kore';
+                    const isGoogle = ttsProvider === 'google' || ttsProvider === 'google_pro';
+                    
+                    // Helper para TTS
+                    const generatePartTTS = async (txt, outPath) => {
+                         if (!txt || txt === 'undefined') return;
+                         if (isGoogle) {
+                             const isPro = ttsProvider === 'google_pro';
+                             const ttsModelName = isPro ? 'gemini-2.5-pro-preview-tts' : 'gemini-2.5-flash-preview-tts';
+                             await generateGoogleTTSWithSplitting(txt, outPath, lang, googleVoice, ttsModelName, req.body.randomVoice === 'true');
+                         } else {
+                             // Applio
+                            const ttsModel = voiceMap[lang] || 'en-US-ChristopherNeural';
+                            await applioClient.textToSpeech(txt, outPath, { model: ttsModel, speed: 0, pitch: 0 });
+                         }
+                    };
+
+                    sendStatus(`Generando audio PARTE A para ${langNames[lang]}...`, progress);
+                    await generatePartTTS(textA, audioPathA);
+                    
+                    sendStatus(`Generando audio PARTE B para ${langNames[lang]}...`, progress);
+                    await generatePartTTS(textB, audioPathB);
+                    
+                    // AJUSTAR DURACIONES Y UNIR
+                    const adjustedPathA = path.join(outputDir, `audio_${lang}_A_adj.wav`);
+                    const adjustedPathB = path.join(outputDir, `audio_${lang}_B_adj.wav`);
+                    
+                    // Duraciones Objetivo
+                    const targetDurA = promoStartTimeVal; 
+                    const targetDurB = Math.max(1, videoDuration - promoStartTimeVal);
+                    
+                    // Helper para Ajustar Velocidad (Misma lógica que abajo pero encapsulada)
+                    const adjustSpeed = async (inPath, outPath, targetDuration) => {
+                         let currentDur = 0;
+                         // Get Duration
+                         await new Promise(r => {
+                            const p = spawn('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', inPath]);
+                            let o = ''; p.stdout.on('data', d => o += d); p.on('close', () => { currentDur = parseFloat(o); r(); });
+                         });
+                         
+                         if(currentDur <= 0 || isNaN(currentDur)) {
+                             // Si falló el TTS o audio vacío, crear silencio
+                             await new Promise(r => { spawn('ffmpeg', ['-y', '-f', 'lavfi', '-i', `anullsrc=r=24000:cl=mono`, '-t', targetDuration, outPath]).on('close', r); });
+                             return;
+                         }
+
+                         const speedFactor = currentDur / targetDuration;
+                         let filters = [];
+                         let s = speedFactor;
+                         while (s > 2.0) { filters.push('atempo=2.0'); s /= 2.0; }
+                         while (s < 0.5) { filters.push('atempo=0.5'); s /= 0.5; }
+                         filters.push(`atempo=${s}`);
+                         
+                         // Aplicar filtro
+                         await new Promise((resolve, reject) => {
+                            const args = ['-y', '-i', inPath, '-af', filters.join(','), outPath];
+                            const p = spawn('ffmpeg', args);
+                            p.on('close', c => c===0?resolve():reject(new Error('FFmpeg speed adjust failed')));
+                         });
+                    };
+
+                    sendStatus(`Sincronizando tiempos para ${langNames[lang]}...`, progress);
+                    
+                    // Ajustar A para que termine EXACTAMENTE en promoStartTimeVal
+                    await adjustSpeed(audioPathA, adjustedPathA, targetDurA);
+                    
+                    // Ajustar B para el resto
+                    // Para B, aplicamos el silencio normal al final si corresponde (20s)
+                    const isShortVideo = req.body.isShortVideo === 'true';
+                    const silenceDuration = isShortVideo ? 0 : 20;
+                    const speechTargetB = Math.max(1, targetDurB - silenceDuration); // Dejamos espacio para silencio
+                    
+                    await adjustSpeed(audioPathB, adjustedPathB, speechTargetB);
+                    
+                    // Unir A + B en audioOutputPath (que es lo que espera el código original para mezclar música)
+                    // audioOutputPath = outputs/.../audio_es.wav
+                    const audioOutputPath = path.join(outputDir, `audio_${lang}.wav`);
+                    
+                    await new Promise((resolve, reject) => {
+                         // Concatenar A_adj + B_adj + Silencio? 
+                         // No, adjustSpeed ya fijó la duración de A.
+                         // B se ajustó a (Target - 20).
+                         // Agregamos pad al final de B para llegar al final total?
+                         // Mejor: Concatenamos A y B. Luego el código "legacy" de abajo hará su propia magia?
+                         // EL CODIGO DE ABAJO HACE "ADJUST DURATION" OTRA VEZ.
+                         // DEBEMOS EVITAR ESO.
+                         
+                         // Crearemos un archivo de audio FINAL que tenga la duración correcta.
+                         // Y saltaremos la lógica de abajo usando 'continue' o flag.
+                         
+                         // Concat A (adjusted) + B (adjusted)
+                         const filter = `[0:a][1:a]concat=n=2:v=0:a=1[out]`;
+                         const args = ['-y', '-i', adjustedPathA, '-i', adjustedPathB, '-filter_complex', filter, '-map', '[out]', audioOutputPath];
+                         const p = spawn('ffmpeg', args);
+                         p.on('close', c=>c===0?resolve():reject(new Error('Concat failed')));
+                    });
+                    
+                    // IMPORTANTE: Ya hemos generado audio_${lang}.wav con la duración PERFECTA A + B.
+                    // Ahora debemos saltar la lógica estándar de traducción y TTS y ajuste.
+                    // Pero necesitamos mezclar la música.
+                    // El bloque de abajo hace: Check TTS -> Generate -> Adjust Duration -> Mix Music.
+                    // Podemos hackearlo: 
+                    // Set variable 'audioReady = true'.
+                    
+                } catch (errSpl) {
+                    console.error("Error en Promo Sync:", errSpl);
+                    throw errSpl;
+                }
+
+            } else if (fs.existsSync(scriptPath)) {
                 console.log(`✅ Guión traducido para ${langNames[lang]} ya existe, cargando.`);
                 translatedText = fs.readFileSync(scriptPath, 'utf8');
             } else {
@@ -17832,6 +18148,28 @@ if __name__ == "__main__":
                     `;
                 }
                 
+
+                // Lógica para estilo podcast/conversacional
+                const isPodcastStyle = req.body.podcastStyle === 'true';
+                if (isPodcastStyle) {
+                    specialInstruction += `
+                    STYLE AND TONE (CRITICAL):
+                    - Conversational and casual, but informative.
+                    - Include natural speech elements: "um", "uh", brief pauses.
+                    - Use conversational fillers: "you know", "I mean", "it's like" (translated naturally to target language).
+                    - Include some light laughter indicators where appropriate (e.g., "haha", "hehe") but don't overdo it.
+                    - Make it sound like a REAL PODCAST TRANSCRIPT, not a read script.
+                    
+                    DISFLUENCIES AND NATURALNESS (VERY IMPORTANT):
+                    - Include natural pauses indicated by "..."
+                    - Add occasional filler words appropriate for ${langNames[lang]}.
+                    - Allow sentences to have slight restarts or hesitation.
+                    
+                    LENGTH CONSTRAINT:
+                    - Keep the total word count similar to the original. Do not make it significantly longer.
+                    `;
+                }
+
                 // Translate
                 const prompt = `
                 Translate the following video script content to ${langNames[lang]}.
@@ -17900,132 +18238,153 @@ if __name__ == "__main__":
                 sendStatus(`Texto traducido para ${langNames[lang]} guardado.`, progress);
                 continue; // Skip audio generation logic
             }
-
-            sendStatus(`Generando audio para ${langNames[lang]}...`, progress + (progressStep / 2));
-
-            // Generate Audio
-            const audioOutputPath = path.join(outputDir, `audio_${lang}.wav`);
             
-            if (ttsProvider === 'google' || ttsProvider === 'google_pro') {
-                const isPro = ttsProvider === 'google_pro';
-                const ttsModelName = isPro ? 'gemini-2.5-pro-preview-tts' : 'gemini-2.5-flash-preview-tts';
-                
-                if (!translatedText || translatedText === 'undefined') {
-                    throw new Error(`Error en la traducción a ${langNames[lang]}: Texto vacío o inválido.`);
-                }
-                
-                sendStatus(`Generando audio con Google TTS (${googleVoice} - ${ttsModelName}) para ${langNames[lang]}...`, progress + (progressStep / 2));
-                try {
-                    if (isPro) {
-                        // Pro model supports up to 40k chars, send full text at once
-                        await generateSingleGoogleTTS(translatedText, audioOutputPath, lang, googleVoice, ttsModelName);
-                    } else {
-                        // Flash model needs splitting
-                        await generateGoogleTTSWithSplitting(translatedText, audioOutputPath, lang, googleVoice, ttsModelName);
-                    }
-                } catch (err) {
-                    console.error(`Error Google TTS for ${lang}:`, err);
-                    
-                    // Check for Rate Limit Error
-                    const isRateLimit = err.message.includes('429') || (err.status === 429) || err.message.includes('Quota exceeded') || err.message.includes('RESOURCE_EXHAUSTED');
-                    
-                    if (isRateLimit) {
-                        sendStatus(`⚠️ Cuota de API agotada para ${langNames[lang]}. Esperando 5 minutos...`, progress, false, "RATE_LIMIT_EXCEEDED");
-                        // We throw a specific error that the frontend can recognize if needed, 
-                        // but since we sent a status with error field, the frontend might handle it.
-                        // However, to stop the loop here:
-                        throw new Error(`RATE_LIMIT_EXCEEDED: Se han agotado las cuotas de API para ${langNames[lang]}. Por favor espera unos minutos y vuelve a intentar.`);
-                    }
-                    
-                    throw new Error(`Error generando audio con Google TTS para ${lang}: ${err.message}`);
-                }
-            } else {
-                // Applio Logic
-                // Usar la voz correcta para el idioma
-                const ttsModel = voiceMap[lang] || 'en-US-ChristopherNeural';
-                
-                // Asegurar que Applio esté conectado antes de intentar generar
-                let isConnected = false;
-                try {
-                    isConnected = await applioClient.checkConnection();
-                } catch (e) {
-                    isConnected = false;
-                }
+            // Generate Audio logic (only if NOT promo split enabled, because promo split logic handles its own TTS)
+            const audioOutputPath = path.join(outputDir, `audio_${lang}.wav`);
 
-                if (!isConnected) {
-                    console.log("⚠️ Applio no está conectado, intentando iniciar...");
-                    sendStatus("Iniciando servidor Applio...", progress);
+            if (!promoSplitEnabled) {
+                // --- NORMAL TTS LOGIC ---
+                sendStatus(`Generando audio para ${langNames[lang]}...`, progress + (progressStep / 2));
+
+                if (ttsProvider === 'google' || ttsProvider === 'google_pro') {
+                    const isPro = ttsProvider === 'google_pro';
+                    const ttsModelName = isPro ? 'gemini-2.5-pro-preview-tts' : 'gemini-2.5-flash-preview-tts';
+                    const randomVoice = req.body.randomVoice === 'true'; // Get flag from request
+                    
+                    if (!translatedText || translatedText === 'undefined') {
+                        throw new Error(`Error en la traducción a ${langNames[lang]}: Texto vacío o inválido.`);
+                    }
+                    
+                    sendStatus(`Generando audio con Google TTS (${randomVoice ? 'Voces Mixtas' : googleVoice} - ${ttsModelName}) para ${langNames[lang]}...`, progress + (progressStep / 2));
                     try {
-                        await startApplio();
-                        // Esperar un momento extra para asegurar que esté listo
-                        await new Promise(resolve => setTimeout(resolve, 5000));
-                    } catch (startError) {
-                        throw new Error("No se pudo iniciar Applio automáticamente: " + startError.message);
+                        // Siempre usar splitting, incluso para Pro (para mantener consistencia y evitar timeouts en textos muy largos)
+                        await generateGoogleTTSWithSplitting(translatedText, audioOutputPath, lang, googleVoice, ttsModelName, randomVoice);
+                    } catch (err) {
+                        console.error(`Error Google TTS for ${lang}:`, err);
+                        
+                        // Check for Rate Limit Error
+                        const isRateLimit = err.message.includes('429') || (err.status === 429) || err.message.includes('Quota exceeded') || err.message.includes('RESOURCE_EXHAUSTED');
+                        
+                        if (isRateLimit) {
+                            sendStatus(`⚠️ Cuota de API agotada para ${langNames[lang]}. Esperando 5 minutos...`, progress, false, "RATE_LIMIT_EXCEEDED");
+                            // We throw a specific error that the frontend can recognize if needed, 
+                            // but since we sent a status with error field, the frontend might handle it.
+                            // However, to stop the loop here:
+                            throw new Error(`RATE_LIMIT_EXCEEDED: Se han agotado las cuotas de API para ${langNames[lang]}. Por favor espera unos minutos y vuelve a intentar.`);
+                        }
+                        
+                        throw new Error(`Error generando audio con Google TTS para ${lang}: ${err.message}`);
                     }
-                }
+                } else {
+                    // Applio Logic
+                    // Usar la voz correcta para el idioma
+                    const ttsModel = voiceMap[lang] || 'en-US-ChristopherNeural';
+                    
+                    // Asegurar que Applio esté conectado antes de intentar generar
+                    let isConnected = false;
+                    try {
+                        isConnected = await applioClient.checkConnection();
+                    } catch (e) {
+                        isConnected = false;
+                    }
 
-                if (!translatedText || translatedText === 'undefined') {
-                    throw new Error(`Error en la traducción a ${langNames[lang]}: Texto vacío o inválido.`);
-                }
+                    if (!isConnected) {
+                        console.log("⚠️ Applio no está conectado, intentando iniciar...");
+                        sendStatus("Iniciando servidor Applio...", progress);
+                        try {
+                            await startApplio();
+                            // Esperar un momento extra para asegurar que esté listo
+                            await new Promise(resolve => setTimeout(resolve, 5000));
+                        } catch (startError) {
+                            throw new Error("No se pudo iniciar Applio automáticamente: " + startError.message);
+                        }
+                    }
 
-                await applioClient.textToSpeech(translatedText, audioOutputPath, {
-                    model: ttsModel,
-                    speed: 0,
-                    pitch: 0
-                });
-            }
+                    if (!translatedText || translatedText === 'undefined') {
+                        throw new Error(`Error en la traducción a ${langNames[lang]}: Texto vacío o inválido.`);
+                    }
+
+                    await applioClient.textToSpeech(translatedText, audioOutputPath, {
+                        model: ttsModel,
+                        speed: 0,
+                        pitch: 0
+                    });
+                }
+            } // End if !promoSplitEnabled
 
             // 4. Adjust Duration (Pad/Trim) with Time Stretching
-            // const finalAudioPath = path.join(outputDir, `${langNames[lang]}.mp3`); // Defined at start of loop
+            // NOTE: If promoSplitEnabled, we ALREADY adjusted the duration. 
+            // We just need to handle the Music Mix part now.
+            // But the original code merges duration adjustment and final mix in one big block.
+            // We need to bypass the 'atrim' / 'atempo' logic if promoSplitEnabled.
             
-            // Get TTS Audio Duration
-            let ttsDuration = 0;
-            try {
-                await new Promise((resolve) => {
-                    const ffprobe = spawn('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', audioOutputPath]);
-                    let output = '';
-                    ffprobe.stdout.on('data', (data) => output += data.toString());
-                    ffprobe.on('close', (code) => {
-                        if (code === 0) ttsDuration = parseFloat(output);
-                        resolve();
-                    });
-                });
-            } catch (e) {
-                console.error("Error getting TTS duration:", e);
-            }
-
             let filterString = `apad,atrim=0:${videoDuration}`; // Default fallback
 
-            if (ttsDuration > 0) {
-                // Verificar si es un Short/Reel para omitir el silencio
-                const isShortVideo = req.body.isShortVideo === 'true';
-                const silenceDuration = isShortVideo ? 0 : 20;
+            // If Promo Sync, we trust the audio is already correct length.
+             // But we might need 'apad' just in case it's slightly short? No, we used concat.
+             // We can just use a simple pass-through filter or just skip to mixing.
+             
+            if (!promoSplitEnabled) {
+                // --- NORMAL DURATION ADJUST MENT ---
+                // ... (Existing duration logic)
                 
-                // Ensure we don't have negative target duration, minimum 1 second for speech
-                const targetSpeechDuration = Math.max(1.0, videoDuration - silenceDuration);
-                
-                // Calculate speed factor (Input / Target)
-                const speedFactor = ttsDuration / targetSpeechDuration;
-                
-                let filters = [];
-                let currentSpeed = speedFactor;
-                
-                // Handle extreme speed changes by chaining filters (atempo limit: 0.5 - 2.0)
-                while (currentSpeed > 2.0) {
-                    filters.push('atempo=2.0');
-                    currentSpeed /= 2.0;
+                // Get TTS Audio Duration
+                let ttsDuration = 0;
+                try {
+                    await new Promise((resolve) => {
+                        const ffprobe = spawn('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', audioOutputPath]);
+                        let output = '';
+                        ffprobe.stdout.on('data', (data) => output += data.toString());
+                        ffprobe.on('close', (code) => {
+                            if (code === 0) ttsDuration = parseFloat(output);
+                            resolve();
+                        });
+                    });
+                } catch (e) {
+                    console.error("Error getting TTS duration:", e);
                 }
-                while (currentSpeed < 0.5) {
-                    filters.push('atempo=0.5');
-                    currentSpeed /= 0.5;
+
+                if (ttsDuration > 0) {
+                    // Verificar si es un Short/Reel para omitir el silencio
+                    const isShortVideo = req.body.isShortVideo === 'true';
+                    const silenceDuration = isShortVideo ? 0 : 20;
+                    
+                    // Ensure we don't have negative target duration, minimum 1 second for speech
+                    const targetSpeechDuration = Math.max(1.0, videoDuration - silenceDuration);
+                    
+                    // Calculate speed factor (Input / Target)
+                    const speedFactor = ttsDuration / targetSpeechDuration;
+                    
+                    let filters = [];
+                    let currentSpeed = speedFactor;
+                    
+                    // Handle extreme speed changes by chaining filters (atempo limit: 0.5 - 2.0)
+                    while (currentSpeed > 2.0) {
+                        filters.push('atempo=2.0');
+                        currentSpeed /= 2.0;
+                    }
+                    while (currentSpeed < 0.5) {
+                        filters.push('atempo=0.5');
+                        currentSpeed /= 0.5;
+                    }
+                    filters.push(`atempo=${currentSpeed}`);
+                    
+                    filterString = filters.join(',') + `,apad,atrim=0:${videoDuration}`;
                 }
-                filters.push(`atempo=${currentSpeed}`);
-                
-                filterString = filters.join(',') + `,apad,atrim=0:${videoDuration}`;
+            } else {
+                 // For Promo Sync, filter is null (no internal change) but we need to ensure duration matches video
+                 // We already built it to exact specs. Just pad/trim end to be safe?
+                 filterString = `apad,atrim=0:${videoDuration}`;
+                 // Note: we can't use 'atempo' here because different parts have different speeds.
+                 // We just rely on the fact that audio_${lang}.wav is already perfect.
             }
             
             await new Promise((resolve, reject) => {
                 let ffmpegArgs = [];
+                
+                // Need to use a DIFFERENT input because we can't overwrite input with output directly in one step if same name?
+                // Logic above uses audioOutputPath (audio_es.wav) and outputs to finalAudioPath (Spanish.mp3)
+                // That is safe.
                 
                 if (musicFile) {
                     // Complex filter for mixing
@@ -18033,24 +18392,48 @@ if __name__ == "__main__":
                     // Input 1: Music (musicFile.path) - Looped
                     // Note: We apply the time-stretch/pad filter to input 0 first
                     
-                    ffmpegArgs = [
-                        '-y',
-                        '-i', audioOutputPath,
-                        '-stream_loop', '-1', '-i', musicFile.path,
-                        // Fix: Reduce bgm volume to 12% and disable amix normalization to keep voice volume high
-                        '-filter_complex', `[0:a]${filterString}[speech];[1:a]volume=0.12[bgm];[speech][bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[out]`,
-                        '-map', '[out]',
-                        '-acodec', 'libmp3lame',
-                        finalAudioPath
-                    ];
+                    if (promoSplitEnabled) {
+                        // Use simpler filter for Promo Sync (no speed change, just mix)
+                        ffmpegArgs = [
+                            '-y',
+                            '-i', audioOutputPath,
+                            '-stream_loop', '-1', '-i', musicFile.path,
+                            // Just pad to ensuring same length if needed, then mix
+                            '-filter_complex', `[0:a]apad,atrim=0:${videoDuration}[speech];[1:a]volume=0.70[bgm];[speech][bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[out]`,
+                            '-map', '[out]',
+                            '-acodec', 'libmp3lame',
+                            finalAudioPath
+                        ];
+                    } else {
+                        ffmpegArgs = [
+                            '-y',
+                            '-i', audioOutputPath,
+                            '-stream_loop', '-1', '-i', musicFile.path,
+                            // Fix: Set bgm volume to 70% and disable amix normalization to keep voice volume high
+                            '-filter_complex', `[0:a]${filterString}[speech];[1:a]volume=0.70[bgm];[speech][bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[out]`,
+                            '-map', '[out]',
+                            '-acodec', 'libmp3lame',
+                            finalAudioPath
+                        ];
+                    }
                 } else {
-                    ffmpegArgs = [
-                        '-y',
-                        '-i', audioOutputPath,
-                        '-af', filterString,
-                        '-acodec', 'libmp3lame',
-                        finalAudioPath
-                    ];
+                    if (promoSplitEnabled) {
+                         // Just convert to mp3
+                         ffmpegArgs = [
+                            '-y',
+                            '-i', audioOutputPath,
+                            '-acodec', 'libmp3lame',
+                            finalAudioPath
+                        ];
+                    } else {
+                        ffmpegArgs = [
+                            '-y',
+                            '-i', audioOutputPath,
+                            '-af', filterString,
+                            '-acodec', 'libmp3lame',
+                            finalAudioPath
+                        ];
+                    }
                 }
 
                 const ffmpegCmd = spawn('ffmpeg', ffmpegArgs);
@@ -18090,7 +18473,7 @@ if __name__ == "__main__":
 const manualUploadFields = [
     { name: 'video', maxCount: 1 },
     { name: 'music', maxCount: 1 },
-    ...['en', 'fr', 'de', 'it', 'pt', 'ru', 'zh', 'ko', 'ja'].map(lang => ({ name: `audio_${lang}`, maxCount: 1 }))
+    ...['es', 'en', 'fr', 'de', 'it', 'pt', 'ru', 'zh', 'ko', 'ja'].map(lang => ({ name: `audio_${lang}`, maxCount: 1 }))
 ];
 
 app.post('/api/manual-translate-video', upload.fields(manualUploadFields), async (req, res) => {
@@ -18206,8 +18589,8 @@ app.post('/api/manual-translate-video', upload.fields(manualUploadFields), async
                         '-y',
                         '-i', langAudioPath,
                         '-stream_loop', '-1', '-i', musicFile.path,
-                        // Fix: Reduce bgm volume to 12% and disable amix normalization
-                        '-filter_complex', `[0:a]${filterString}[speech];[1:a]volume=0.12[bgm];[speech][bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[out]`,
+                        // Fix: Set bgm volume to 70% and disable amix normalization
+                        '-filter_complex', `[0:a]${filterString}[speech];[1:a]volume=0.70[bgm];[speech][bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[out]`,
                         '-map', '[out]',
                         '-acodec', 'libmp3lame',
                         finalOutputPath
