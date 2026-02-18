@@ -17440,9 +17440,18 @@ async function mergeAudioFiles(files, outputPath) {
     });
 }
 
-async function generateGoogleTTSWithSplitting(text, outputPath, lang, selectedVoice = 'Kore', modelName = 'gemini-2.5-flash-preview-tts', randomVoice = false) {
-    // Split text into paragraphs based on double newlines
-    let rawParagraphs = text.split(/\n\s*\n/).filter(p => p.trim().length > 0);
+async function generateGoogleTTSWithSplitting(text, outputPath, lang, selectedVoice = 'Kore', modelName = 'gemini-2.5-flash-preview-tts', randomVoice = false, disableParagraphSplitting = false, keepTempFiles = false, sectionUniqueId = '') {
+    // Determine initial chunks based on splitting preference
+    let rawParagraphs;
+    
+    if (disableParagraphSplitting) {
+        // Try to keep it as one block, but we still might need to split if it's too huge later
+        // But for the initial "logical" split, we keep it together
+        rawParagraphs = [text];
+    } else {
+        // Split text into paragraphs based on double newlines
+        rawParagraphs = text.split(/\n\s*\n/).filter(p => p.trim().length > 0);
+    }
     
     // Group paragraphs intelligently based on length limits (MAX: 1600 chars or 300 words)
     // If combining 2 paragraphs exceeds limit, keep separate. Otherwise combine.
@@ -17454,21 +17463,67 @@ async function generateGoogleTTSWithSplitting(text, outputPath, lang, selectedVo
     for (let i = 0; i < rawParagraphs.length; i++) {
         const currentPara = rawParagraphs[i].trim();
         
-        // If there's a next paragraph, try to combine
+        // If we are in disableParagraphSplitting mode, we try to process the whole text as one block.
+        // However, if the text is excessively large (e.g. > 4000 chars), we MUST split it to avoid API errors.
+        if (disableParagraphSplitting && (currentPara.length > 4000)) {
+             console.log(`⚠️ Text section is too large (${currentPara.length} chars) even for forced-single-mode. Falling back to splitting.`);
+             
+             // Try splitting by double newlines first
+             let subParts = currentPara.split(/\n\s*\n/).filter(p => p.trim().length > 0);
+             
+             // If no double newlines (single block), try single newlines
+             if (subParts.length <= 1) {
+                 subParts = currentPara.split(/\n/).filter(p => p.trim().length > 0);
+             }
+             
+             // If still single block (no newlines at all), force character chunking
+             if (subParts.length <= 1) {
+                 subParts = currentPara.match(/.{1,4000}(?:\s|$)/g) || [currentPara];
+             }
+
+             // Append smaller parts to the end of the queue to be processed
+             // This works because the loop condition checks rawParagraphs.length dynamically
+             for(const sub of subParts) {
+                 // Push only if it's actually smaller or different to avoid infinite loop
+                 if (sub !== currentPara) {
+                    rawParagraphs.push(sub);
+                 } else {
+                    // If we couldn't split it further, we just have to accept it and hope for the best
+                    // (It will fall through to the logic below and be added as is)
+                    break;
+                 }
+             }
+             
+             if (subParts.length > 1 || subParts[0] !== currentPara) {
+                 continue; // Skip processing this large chunk, we'll handle the pieces later
+             }
+        }
+
+        // Standard combination logic (works for both modes)
+        // If disableParagraphSplitting is true, we likely have [ "Big Text" ] or maybe [ "Big Text", "Overflow" ]
+        // The loop will just push them.
+        
         if (i + 1 < rawParagraphs.length) {
             const nextPara = rawParagraphs[i+1].trim();
             const combined = currentPara + "\n\n" + nextPara;
             
             const combinedWordCount = combined.split(/\s+/).length;
             
-            // Check limits. If SAFE, combine them and skip next iteration
+            // Check limits. If SAFE OR if we disabled splitting, combine them and skip next iteration
+            // Note: If disableParagraphSplitting is true, we want to combine everything unless it's huge (handled above).
+            // But actually, rawParagraphs is already [text] if disableParagraphSplitting is true, so this loop runs once and i+1 is false.
+            // So we don't need to change logic here. The loop naturally falls through to "Last paragraph alone" branch.
+            
             if (combined.length <= MAX_CHARS && combinedWordCount <= MAX_WORDS) {
                 paragraphs.push(combined);
                 i++; // Skip next paragraph
             } else {
                 // EXCEEDS LIMIT, process current paragraph alone
                 // Next iteration will process the next paragraph
-                console.log(`⚠️ Paragraph split enforced: Combined length ${combined.length} chars / ${combinedWordCount} words exceeds limit.`);
+                if (!disableParagraphSplitting) {
+                   // Only warn if we intended to split but couldn't combine
+                   // console.log(`⚠️ Paragraph split enforced...`);
+                }
                 paragraphs.push(currentPara);
             }
         } else {
@@ -17497,7 +17552,9 @@ async function generateGoogleTTSWithSplitting(text, outputPath, lang, selectedVo
         
         // Pre-generate file paths to ensure order
         // Use deterministic names for resumption: temp_tts_{lang}_part_{index}.wav
-        const filePaths = cleanParagraphs.map((_, i) => path.join(tempDir, `temp_tts_${lang}_part_${i}.wav`));
+        // A unique ID is critical when processing multiple sections in parallel to avoid collisions
+        const safeUniqueId = sectionUniqueId ? `_${sectionUniqueId}` : '';
+        const filePaths = cleanParagraphs.map((_, i) => path.join(tempDir, `temp_tts_${lang}${safeUniqueId}_part_${i}.wav`));
         
         // Add to tempFiles for cleanup
         filePaths.forEach(f => tempFiles.push(f));
@@ -17551,11 +17608,15 @@ async function generateGoogleTTSWithSplitting(text, outputPath, lang, selectedVo
         // This avoids issues where a direct copy might carry over weird header issues
         await mergeAudioFiles(tempFiles, outputPath);
 
-        // Cleanup temp files ONLY on success
-        for (const file of tempFiles) {
-            if (fs.existsSync(file)) {
-                try { fs.unlinkSync(file); } catch(e) { console.error("Error deleting temp file:", e); }
+        // Cleanup temp files ONLY on success AND if NOT keepTempFiles
+        if (!keepTempFiles) {
+            for (const file of tempFiles) {
+                if (fs.existsSync(file)) {
+                    try { fs.unlinkSync(file); } catch(e) { console.error("Error deleting temp file:", e); }
+                }
             }
+        } else {
+            console.log(`💾 Keeping temp files for debugging: ${tempFiles.length} files`);
         }
 
     } catch (error) {
@@ -18021,23 +18082,25 @@ if __name__ == "__main__":
                 const sectionAudioPaths = [];
                 const translatedSections = [];
 
+
                 // Helper para TTS
                 const ttsProvider = req.body.ttsProvider || 'applio';
                 const googleVoice = req.body.googleVoice || 'Kore';
                 const isGoogle = ttsProvider === 'google' || ttsProvider === 'google_pro';
                 
-                const generatePartTTS = async (txt, outPath) => {
+                const generatePartTTS = async (txt, outPath, sectionIndex) => {
                          if (!txt || txt === 'undefined' || !txt.trim()) return false;
                          if (isGoogle) {
                              const isPro = ttsProvider === 'google_pro';
                              const ttsModelName = isPro ? 'gemini-2.5-pro-preview-tts' : 'gemini-2.5-flash-preview-tts';
-                             await generateGoogleTTSWithSplitting(txt, outPath, lang, googleVoice, ttsModelName, req.body.randomVoice === 'true');
-                         } else {
-                             // Applio
-                            const ttsModel = voiceMap[lang] || 'en-US-ChristopherNeural';
-                            await applioClient.textToSpeech(txt, outPath, { model: ttsModel, speed: 0, pitch: 0 });
+                             // Usamos disableParagraphSplitting = true para que genere un solo audio por sección (marca)
+                             const keepTemp = req.body.keepTempFiles === 'true';
+                             // Add a unique ID for this section to prevent temp file collisions
+                             const sectionUniqueId = `sec${sectionIndex}`;
+                             await generateGoogleTTSWithSplitting(txt, outPath, lang, googleVoice, ttsModelName, req.body.randomVoice === 'true', true, keepTemp, sectionUniqueId);
+                             return true;
                          }
-                         return true;
+                         return false;
                 };
 
                 // Helper para Ajustar Velocidad
@@ -18072,22 +18135,45 @@ if __name__ == "__main__":
                 };
 
                 try {
-                    // Iterar por cada sección
+                    // FASE 1: Generar todos los Textos (Traducción)
+                    console.log(`📝 Fase 1: Generando/Cargando textos para ${sectionData.length} secciones (${langNames[lang]})...`);
+                    
                     for(let i=0; i<sectionData.length; i++) {
                         const sec = sectionData[i];
                         const secScriptPath = path.join(outputDir, `script_${lang}_part_${i}.txt`);
-                        const secAudioPath = path.join(outputDir, `audio_${lang}_part_${i}.wav`);
-                        const secAudioAdjPath = path.join(outputDir, `audio_${lang}_part_${i}_adj.wav`);
                         
                         let secText = "";
                         
-                        // 1. Traducir
                         if (fs.existsSync(secScriptPath)) {
                             secText = fs.readFileSync(secScriptPath, 'utf8');
                         } else if (sec.text && sec.text.trim()) {
-                            // Translate
+                            
+                            let specialInstruction = "";
+                            // Lógica para estilo podcast/conversacional
+                            const isPodcastStyle = req.body.podcastStyle === 'true';
+                            if (isPodcastStyle) {
+                                specialInstruction += `
+                                STYLE AND TONE (CRITICAL):
+                                - Conversational and casual, but informative.
+                                - Include natural speech elements: "um", "uh", brief pauses.
+                                - Use conversational fillers: "you know", "I mean", "it's like" (translated naturally to target language).
+                                - Include some light laughter indicators where appropriate (e.g., "haha", "hehe") but don't overdo it.
+                                - Make it sound like a REAL PODCAST TRANSCRIPT, not a read script.
+                                
+                                DISFLUENCIES AND NATURALNESS (VERY IMPORTANT):
+                                - Include natural pauses indicated by "..."
+                                - Add occasional filler words appropriate for ${langNames[lang]}.
+                                - Allow sentences to have slight restarts or hesitation.
+                                
+                                LENGTH CONSTRAINT:
+                                - Keep the total word count similar to the original. Do not make it significantly longer.
+                                `;
+                            }
+
+                            // Prompt de traducción
                             const prompt = `
                             Translate the following video script content to ${langNames[lang]}.
+                            ${specialInstruction}
                             Maintain the tone, style, and formatting.
                             OUTPUT ONLY THE TRANSLATED TEXT.
                             
@@ -18095,41 +18181,156 @@ if __name__ == "__main__":
                             ${sec.text}
                             `;
                             
-                            const { model } = await getGoogleAI("gemini-3-flash-preview", { context: 'llm' });
-                            const result = await model.generateContent(prompt);
-                            let txt = result.response.text();
-                            txt = txt.replace(/```[\s\S]*?```/g, '').trim();
-                            if (!txt) txt = result.response.text();
-                            secText = txt;
-                            fs.writeFileSync(secScriptPath, secText);
+                            // Reintentos con backoff exponencial y cambio de estrategia
+                            let retries = 3;
+                            
+                            while(retries > 0) {
+                                try {
+                                    // Determinar si debemos forzar el uso de la key primaria en el último intento
+                                    const forcePrimary = (retries === 1); 
+                                    
+                                    const { model } = await getGoogleAI("gemini-3-flash-preview", { 
+                                        context: 'llm',
+                                        forcePrimary: forcePrimary
+                                    });
+                                    
+                                    const result = await model.generateContent(prompt);
+                                    let txt = result.response.text();
+                                    txt = txt.replace(/```[\s\S]*?```/g, '').trim();
+                                    if (!txt) txt = result.response.text();
+                                    secText = txt;
+                                    fs.writeFileSync(secScriptPath, secText);
+                                    break;
+                                } catch (err) {
+                                    console.warn(`⚠️ Error en traducción sección ${i+1} (intento ${4-retries}/3): ${err.message}`);
+                                    
+                                    const isRateLimit = err.message.includes('429') || (err.status === 429) || 
+                                                       err.message.includes('Too Many Requests') || 
+                                                       err.message.includes('Quota exceeded');
+
+                                    retries--;
+                                    if(retries === 0) throw err;
+                                    
+                                    // Esperar antes de reintentar (backoff: 2s, 5s)
+                                    const delay = (3 - retries) * 2000 + 1000;
+                                    console.log(`⏳ Esperando ${delay}ms antes del reintento...`);
+                                    await new Promise(r => setTimeout(r, delay));
+                                }
+                            }
                         }
                         
                         translatedSections.push(secText);
+                        sendStatus(`Texto traducido sección ${i+1}/${sectionData.length} para ${langNames[lang]}...`, progress);
+                    }
+
+                    // FASE 2: Generación de Audio en Paralelo (Max 3)
+                    console.log(`🔊 Fase 2: Generando audios en paralelo (Max 3 threads) para ${langNames[lang]}...`);
+                    
+                    // Preparamos array del tamaño correcto para mantener orden
+                    const processedAudioPaths = new Array(sectionData.length);
+                    
+                    // Función constructora de tareas
+                    const createTask = (index) => async () => {
+                        const i = index;
+                        const secText = translatedSections[i];
+                        const sec = sectionData[i];
+                        const secAudioPath = path.join(outputDir, `audio_${lang}_part_${i}.wav`);
+                        const secAudioAdjPath = path.join(outputDir, `audio_${lang}_part_${i}_adj.wav`);
                         
-                        // 2. Generar Audio
-                        const hasAudio = await generatePartTTS(secText, secAudioPath);
-                        
-                        // 3. Ajustar Duración
-                        // Calculate target duration for this section
-                        let targetDuration = sec.duration;
-                        
-                        // Aplicar silencio al final de la ÚLTIMA sección si no es short
-                        if (i === sectionData.length - 1) {
-                            const isShortVideo = req.body.isShortVideo === 'true';
-                            if (!isShortVideo) targetDuration = Math.max(1, targetDuration - 20);
+                        try {
+                            // Generar Audio si hay texto
+                            // Aplicamos reintentos también al audio
+                            let audioRetries = 2;
+                            let hasAudio = false;
+                            
+
+                            while(audioRetries > 0) {
+                                try {
+                                    hasAudio = await generatePartTTS(secText, secAudioPath, i);
+                                    break;
+                                } catch(e) {
+                                    console.warn(`⚠️ Error generando audio para sección ${i+1}, reintentando...`);
+                                    audioRetries--;
+                                    if(audioRetries===0) throw e;
+                                    await new Promise(r => setTimeout(r, 2000));
+                                }
+                            }
+                            
+                            // Ajustar Duración
+                            let targetDuration = sec.duration;
+                            
+                            // Aplicar silencio al final de la ÚLTIMA sección si no es short
+                            if (i === sectionData.length - 1) {
+                                const isShortVideo = req.body.isShortVideo === 'true';
+                                // Si NO es short, restamos 20s para que el TTS vaya más rápido (dure menos),
+                                // dejando espacio de silencio al final.
+                                if (!isShortVideo) targetDuration = Math.max(1, targetDuration - 20);
+                            }
+                            
+                            if (hasAudio && fs.existsSync(secAudioPath)) {
+                                 await adjustSpeed(secAudioPath, secAudioAdjPath, targetDuration);
+                                 
+                                 // Si es la última y no es short, agregar padding de silencio REAL al archivo final
+                                 if (i === sectionData.length - 1) {
+                                     const isShortVideo = req.body.isShortVideo === 'true';
+                                     // NO agregar padding adicional si es Short
+                                     if (!isShortVideo) {
+                                         const paddedPath = secAudioAdjPath.replace('.wav', '_padded.wav');
+                                         await new Promise((resolve, reject) => {
+                                             console.log('🔇 Agregando 20 segundos de silencio al final del audio...');
+                                             // Opción alternativa: generar silencio primero y luego concatenar
+                                             const silencePath = secAudioAdjPath.replace('.wav', '_silence.wav');
+                                             
+                                             // 1. Generar silencio de 20s
+                                             const p1 = spawn('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'anullsrc=r=24000:cl=mono', '-t', '20', silencePath]);
+                                             p1.on('close', (c1) => {
+                                                 if(c1!==0) { reject(new Error('Silence gen failed')); return; }
+                                                 
+                                                 // 2. Concatenar audio + silencio
+                                                 const p2 = spawn('ffmpeg', ['-y', '-i', secAudioAdjPath, '-i', silencePath, '-filter_complex', '[0:a][1:a]concat=n=2:v=0:a=1', paddedPath]);
+                                                 p2.on('close', (c2) => {
+                                                     try { fs.unlinkSync(silencePath); } catch(e){}
+                                                     if (c2 === 0) {
+                                                         if (fs.existsSync(paddedPath)) {
+                                                             try { fs.unlinkSync(secAudioAdjPath); } catch(e){}
+                                                             fs.renameSync(paddedPath, secAudioAdjPath);
+                                                         }
+                                                         resolve();
+                                                     } else {
+                                                         reject(new Error('Padding concat failed'));
+                                                     }
+                                                 });
+                                             });
+                                         });
+                                     }
+                                 }
+                                 
+                                 processedAudioPaths[i] = secAudioAdjPath;
+                            } else {
+                                 // Generar silencio
+                                 await new Promise(r => { spawn('ffmpeg', ['-y', '-f', 'lavfi', '-i', `anullsrc=r=24000:cl=mono`, '-t', targetDuration, secAudioAdjPath]).on('close', r); });
+                                 processedAudioPaths[i] = secAudioAdjPath;
+                            }
+                            
+                            sendStatus(`Audio generado sección ${i+1}/${sectionData.length} para ${langNames[lang]}...`, progress);
+                        } catch (err) {
+                            console.error(`Error generando audio sección ${i}:`, err);
+                            throw err; 
                         }
-                        
-                        if (hasAudio && fs.existsSync(secAudioPath)) {
-                             await adjustSpeed(secAudioPath, secAudioAdjPath, targetDuration);
-                        } else {
-                             // Generar silencio exacto para la duración de la sección
-                             await new Promise(r => { spawn('ffmpeg', ['-y', '-f', 'lavfi', '-i', `anullsrc=r=24000:cl=mono`, '-t', targetDuration, secAudioAdjPath]).on('close', r); });
-                        }
-                        
-                        sectionAudioPaths.push(secAudioAdjPath);
-                        sendStatus(`Procesada sección ${i+1}/${sectionData.length} para ${langNames[lang]}...`, progress);
+                    };
+
+                    // Ejecutar en lotes de 3
+                    const audioTasks = sectionData.map((_, i) => createTask(i));
+                    const BATCH_SIZE = 3;
+                    
+                    for (let i = 0; i < audioTasks.length; i += BATCH_SIZE) {
+                        const batch = audioTasks.slice(i, i + BATCH_SIZE);
+                        await Promise.all(batch.map(task => task()));
                     }
                     
+                    // Asignar al array final en orden
+                    processedAudioPaths.forEach(p => sectionAudioPaths.push(p));
+
                     // 4. Combinar Audio Final
                     translatedText = translatedSections.join("\n\n");
                     fs.writeFileSync(scriptPath, translatedText);
@@ -18150,11 +18351,13 @@ if __name__ == "__main__":
                     console.log(`✅ Audio multi-sección generado para ${lang}: ${audioOutputPath}`);
                     audioAlreadyGenerated = true; // Flag to skip legacy generation
                     
+
+
+
                 } catch (errSpl) {
                     console.error("Error en Multi-Section Sync:", errSpl);
                     throw errSpl;
                 }
-
             } else if (fs.existsSync(scriptPath)) {
                 console.log(`✅ Guión traducido para ${langNames[lang]} ya existe, cargando.`);
                 translatedText = fs.readFileSync(scriptPath, 'utf8');

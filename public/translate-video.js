@@ -263,6 +263,9 @@ window.startVideoTranslation = async function(isRetry = false) {
         const usePodcastStyle = document.getElementById('podcastStyleCheckbox')?.checked || false;
         formData.append('podcastStyle', usePodcastStyle);
 
+        const keepTempFiles = document.getElementById('keepTempCheckbox')?.checked || false;
+        formData.append('keepTempFiles', keepTempFiles);
+
         // Collect all promo markers
         const promoInputs = document.querySelectorAll('.promoTimeInput');
         const promoStartTimes = [];
