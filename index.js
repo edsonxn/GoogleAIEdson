@@ -13283,6 +13283,9 @@ async function concatenateTranslatedAudios(projectDir, folderName, totalSections
       
       // 1. Unir audios (y ajustar duración si es necesario)
       if (targetDuration) {
+        // En este punto ya tenemos el WAV unido de las partes
+        // Vamos a asegurarnos de que la salida final sea WAV de alta calidad (48kHz)
+        
         const tempOutputPath = path.join(outputDir, `temp_${outputFileName}`);
         
         await new Promise((resolve, reject) => {
@@ -13376,17 +13379,19 @@ async function concatenateTranslatedAudios(projectDir, folderName, totalSections
 
           await new Promise((resolve, reject) => {
             ffmpeg()
-              .input(outputPath) // Input 0: Voz
+              .input(outputPath) // Input 0: Voz (WAV)
               .input(musicPath)  // Input 1: Música
               .complexFilter([
-                // Ajustar volumen de la música (ej: 0.3 para que no tape la voz)
+                // Ajustar volumen de la música (ej: 0.2 para que no tape la voz)
                 `[1:a]volume=0.2,aloop=loop=-1:size=2e+09[music]`, 
                 // Recortar música a la duración exacta de la voz
                 `[music]atrim=duration=${voiceDuration}[music_trimmed]`,
-                // Mezclar voz y música
-                `[0:a][music_trimmed]amix=inputs=2:duration=first:dropout_transition=2[out]`
+                // Mezclar voz y música.
+                // IMPORTANTE: aresample=48000 para evitar que el audio de 24kHz baje la calidad de todo
+                `[0:a]aresample=48000[voice_resampled];[voice_resampled][music_trimmed]amix=inputs=2:duration=first:dropout_transition=2,volume=2[out]`
               ])
               .map('[out]')
+              .audioFrequency(48000) // Forzar 48kHz en la salida final
               .on('error', reject)
               .on('end', resolve)
               .save(tempWithMusic);
@@ -18060,7 +18065,7 @@ if __name__ == "__main__":
         const progressStep = 40 / languages.length;
 
         for (const lang of languages) {
-            const finalAudioPath = path.join(outputDir, `${langNames[lang]}.mp3`);
+            const finalAudioPath = path.join(outputDir, `${langNames[lang]}.wav`);
             
             if (fs.existsSync(finalAudioPath)) {
                 console.log(`✅ Audio final para ${langNames[lang]} ya existe, saltando.`);
@@ -18238,6 +18243,14 @@ if __name__ == "__main__":
                         const secAudioAdjPath = path.join(outputDir, `audio_${lang}_part_${i}_adj.wav`);
                         
                         try {
+                            // SKIP IF EXISTS
+                            if (fs.existsSync(secAudioAdjPath)) {
+                                console.log(`⏩ Audio sección ${i+1}/${sectionData.length} ya existe (${secAudioAdjPath}). Saltando generación.`);
+                                processedAudioPaths[i] = secAudioAdjPath;
+                                sendStatus(`Audio ya existe para sección ${i+1}/${sectionData.length} (${langNames[lang]})...`, progress);
+                                return;
+                            }
+
                             // Generar Audio si hay texto
                             // Aplicamos reintentos también al audio
                             let audioRetries = 2;
@@ -18582,9 +18595,9 @@ if __name__ == "__main__":
                             '-y',
                             '-i', audioOutputPath,
                             '-stream_loop', '-1', '-i', musicFile.path,
-                            '-filter_complex', `[0:a]apad,atrim=0:${videoDuration}[speech];[1:a]volume=0.70[bgm];[speech][bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[out]`,
+                            '-filter_complex', `[0:a]aresample=48000,apad,atrim=0:${videoDuration}[speech];[1:a]aresample=48000,volume=0.2[bgm];[speech][bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,volume=2[out]`,
                             '-map', '[out]',
-                            '-acodec', 'libmp3lame',
+                            '-acodec', 'pcm_s16le',
                             finalAudioPath
                         ];
                     } else {
@@ -18592,9 +18605,9 @@ if __name__ == "__main__":
                             '-y',
                             '-i', audioOutputPath,
                             '-stream_loop', '-1', '-i', musicFile.path,
-                            '-filter_complex', `[0:a]${filterString}[speech];[1:a]volume=0.70[bgm];[speech][bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[out]`,
+                            '-filter_complex', `[0:a]aresample=48000${filterString}[speech];[1:a]aresample=48000,volume=0.2[bgm];[speech][bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,volume=2[out]`,
                             '-map', '[out]',
-                            '-acodec', 'libmp3lame',
+                            '-acodec', 'pcm_s16le',
                             finalAudioPath
                         ];
                     }
@@ -18603,15 +18616,16 @@ if __name__ == "__main__":
                          ffmpegArgs = [
                             '-y',
                             '-i', audioOutputPath,
-                            '-acodec', 'libmp3lame',
+                             '-af', 'aresample=48000',
+                            '-acodec', 'pcm_s16le',
                             finalAudioPath
                         ];
                     } else {
                         ffmpegArgs = [
                             '-y',
                             '-i', audioOutputPath,
-                            '-af', filterString,
-                            '-acodec', 'libmp3lame',
+                            '-af', `aresample=48000,${filterString}`,
+                            '-acodec', 'pcm_s16le',
                             finalAudioPath
                         ];
                     }
@@ -18727,7 +18741,7 @@ app.post('/api/manual-translate-video', upload.fields(manualUploadFields), async
             const langAudioFile = req.files[`audio_${lang}`][0];
             const langAudioPath = langAudioFile.path;
             const finalName = langNames[lang] || lang;
-            const finalOutputPath = path.join(outputDir, `${finalName}.mp3`);
+            const finalOutputPath = path.join(outputDir, `${finalName}.wav`);
 
             sendStatus(`Procesando audio: ${finalName}...`, currentProgress);
 
@@ -18767,21 +18781,20 @@ app.post('/api/manual-translate-video', upload.fields(manualUploadFields), async
                 if (musicFile) {
                     ffmpegArgs = [
                         '-y',
-                        '-i', langAudioPath,
-                        '-stream_loop', '-1', '-i', musicFile.path,
-                        // Fix: Set bgm volume to 70% and disable amix normalization
-                        '-filter_complex', `[0:a]${filterString}[speech];[1:a]volume=0.70[bgm];[speech][bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[out]`,
-                        '-map', '[out]',
-                        '-acodec', 'libmp3lame',
-                        finalOutputPath
-                    ];
-                } else {
-                    ffmpegArgs = [
-                        '-y',
-                        '-i', langAudioPath,
-                        '-af', filterString,
-                        '-acodec', 'libmp3lame',
-                        finalOutputPath
+                            '-i', audioOutputPath,
+                            '-stream_loop', '-1', '-i', musicFile.path,
+                            // Fix: Set bgm volume to 20%, force 48kHz, disable amix normalization, compensate volume
+                            '-filter_complex', `[0:a]aresample=48000${filterString}[speech];[1:a]aresample=48000,volume=0.2[bgm];[speech][bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,volume=2[out]`,
+                            '-map', '[out]',
+                             '-acodec', 'pcm_s16le',
+                            finalOutputPath
+                        ];
+                    } else {
+                        ffmpegArgs = [
+                            '-y',
+                            '-i', langAudioPath,
+                            '-af', `aresample=48000,${filterString}`,
+                             '-acodec', 'pcm_s16le',
                     ];
                 }
 
