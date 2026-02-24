@@ -35,6 +35,25 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Setup Promo Markers
     const addMarkerBtn = document.getElementById('addPromoMarkerBtn');
+    const markersContainer = document.getElementById('promoMarkersContainer');
+
+    function setupPromoInput(input) {
+        input.addEventListener('input', (e) => {
+            let value = e.target.value.replace(/\D/g, ''); // Solo números
+            if (value.length > 4) value = value.slice(0, 4); // Max 4 dígitos
+            
+            if (value.length > 2) {
+                value = value.slice(0, 2) + ':' + value.slice(2);
+            }
+            e.target.value = value;
+        });
+    }
+
+    // Inicializar inputs existentes
+    if (markersContainer) {
+        markersContainer.querySelectorAll('.promoTimeInput').forEach(setupPromoInput);
+    }
+
     if (addMarkerBtn) {
         addMarkerBtn.addEventListener('click', (e) => {
              e.preventDefault();
@@ -49,6 +68,10 @@ document.addEventListener('DOMContentLoaded', () => {
                       <i class="fas fa-trash"></i>
                   </button>
              `;
+             
+             // Configurar el nuevo input
+             setupPromoInput(div.querySelector('.promoTimeInput'));
+             
              div.querySelector('.remove-marker-btn').onclick = () => div.remove();
              container.appendChild(div);
         });

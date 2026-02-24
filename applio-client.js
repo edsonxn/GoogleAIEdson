@@ -7,6 +7,7 @@ class ApplioClient {
         this.applioUrl = applioUrl;
         this.sessionHash = this._generateSessionHash();
         this.queue = Promise.resolve(); // Cola de ejecución secuencial
+        this.fnIndex = null; // Se descubre dinámicamente
         
         // Determinar ruta de Applio desde variable de entorno o usar default
         const envRoot = process.env.APPLIO_ROOT;
@@ -29,6 +30,88 @@ class ApplioClient {
         ];
     }
 
+    async discoverFnIndex() {
+        /**
+         * Descubre automáticamente el fn_index correcto para TTS+RVC
+         * Consultando la configuración de Gradio en Applio
+         * Soporta múltiples versiones de Applio (fn_index puede ser 94, 101, etc.)
+         */
+        try {
+            console.log('🔍 Auto-detectando fn_index para TTS+RVC...');
+            const response = await axios.get(`${this.applioUrl}/config`, { timeout: 5000 });
+            const config = response.data;
+            
+            if (!config.dependencies || config.dependencies.length === 0) {
+                console.warn('⚠️ No se encontraron dependencias en config. Intentando con fn_index: 94...');
+                return 94; // Fallback principal
+            }
+
+            // Buscar la función que tenga los parámetros de TTS+RVC
+            // Criterios: ~25 inputs, input text, f0_method, voice model path
+            let candidates = [];
+            
+            for (let i = 0; i < config.dependencies.length; i++) {
+                const dep = config.dependencies[i];
+                
+                // Contar inputs
+                if (!dep.inputs || !Array.isArray(dep.inputs)) continue;
+                const inputCount = dep.inputs.length;
+                
+                // Obtener labels de los inputs
+                let inputLabels = dep.inputs.map(inputIdx => {
+                    const component = config.components[inputIdx];
+                    return (component?.label || `input_${inputIdx}`).toLowerCase();
+                });
+
+                // Criterios para identificar TTS+RVC
+                const hasTextInput = inputLabels.some(l => l.includes('text') || l.includes('input'));
+                const hasF0Method = inputLabels.some(l => l.includes('f0'));
+                const hasVoicePath = inputLabels.some(l => 
+                    l.includes('voice') || l.includes('model') || l.includes('path') || l.includes('pth')
+                );
+                const hasTTSModel = inputLabels.some(l => l.includes('tts'));
+                const isRightSize = inputCount >= 20 && inputCount <= 30; // TTS+RVC típicamente tiene 25 inputs
+
+                const score = (hasTextInput ? 3 : 0) + 
+                             (hasF0Method ? 3 : 0) + 
+                             (hasVoicePath ? 3 : 0) + 
+                             (hasTTSModel ? 2 : 0) +
+                             (isRightSize ? 2 : 0);
+
+                if (score >= 8) {
+                    candidates.push({ index: i, score, inputCount });
+                    console.log(`  📊 Candidato encontrado en fn_index ${i}: score=${score}, inputs=${inputCount}`);
+                }
+            }
+
+            if (candidates.length > 0) {
+                // Ordenar por score descendente y usar el mejor
+                candidates.sort((a, b) => b.score - a.score);
+                const best = candidates[0];
+                console.log(`✅ fn_index seleccionado: ${best.index} (score: ${best.score})`);
+                return best.index;
+            }
+
+            console.warn('⚠️ No se encontró función TTS+RVC de forma confiable. Intentando con fn_index: 94...');
+            return 94;
+
+        } catch (error) {
+            console.warn(`⚠️ Error auto-detectando fn_index: ${error.message}`);
+            console.warn('   Usando fallback: 94');
+            return 94;
+        }
+    }
+
+    async ensureFnIndex() {
+        /**
+         * Asegura que fnIndex esté cargado, lo descubre si es necesario
+         */
+        if (this.fnIndex === null) {
+            this.fnIndex = await this.discoverFnIndex();
+        }
+        return this.fnIndex;
+    }
+
     _generateSessionHash() {
         const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
         let result = '';
@@ -36,15 +119,6 @@ class ApplioClient {
             result += chars.charAt(Math.floor(Math.random() * chars.length));
         }
         return result;
-    }
-
-    async checkConnection() {
-        try {
-            await axios.get(this.applioUrl, { timeout: 2000 });
-            return true;
-        } catch (error) {
-            throw new Error(`No se puede conectar a Applio en ${this.applioUrl}. Asegúrate de que esté ejecutándose.`);
-        }
     }
 
     async textToSpeech(text, outputPath, options = {}) {
@@ -110,18 +184,19 @@ class ApplioClient {
 
         console.log(`\n🎬 Iniciando TTS (En cola): «${text.substring(0, 100)}...»`);
         console.log(`🎛️ TTS Model: ${model}`);
-            console.log(`🎤 Voice Path: ${voicePath}`);
-            console.log(`🚀 Velocidad: ${speed}`);
-            console.log(`🎵 Pitch: ${pitch}`);
-            console.log(`🔑 Session: ${this.sessionHash}\n`);
+        console.log(`🎤 Voice Path: ${voicePath}`);
+        console.log(`🚀 Velocidad: ${speed}`);
+        console.log(`🎵 Pitch: ${pitch}`);
+        console.log(`🔑 Session: ${this.sessionHash}\n`);
 
         try {
             // Obtener timestamp del archivo antes de la solicitud
             const beforeTimestamp = await this._getFileTimestamp();
             
-            // Payload ajustado para fn_index 94 (Interfaz Original probada por usuario)
+            // Payload ajustado para fn_index 94 (Interfaz Original - TTS+RVC)
+            // Basado exactamente en el payload exitoso del usuario
             const data = [
-                true,                           // 0. enable_vc (Según payload exitoso del usuario)
+                true,                           // 0. enable_vc
                 "",                             // 1. speaker_wav
                 text,                           // 2. input_text
                 model,                          // 3. tts_model
@@ -133,7 +208,7 @@ class ApplioClient {
                 "rmvpe",                        // 9. f0_method
                 this.outputPaths[1],            // 10. tts_output.wav path
                 this.outputPaths[0],            // 11. tts_rvc_output.wav path
-                voicePath,                      // 12. voice_path (Ruta completa)
+                voicePath,                      // 12. voice_path
                 "",                             // 13. index_path
                 false,                          // 14. split_audio
                 false,                          // 15. autotune
@@ -143,20 +218,23 @@ class ApplioClient {
                 false,                          // 19. export_format_enabled
                 0.5,                            // 20. upscale_audio
                 "WAV",                          // 21. export_format
-                "contentvec",                   // embedder_model
+                "contentvec",                   // 22. embedder_model
                 null,                           // 23. custom_model
                 0                               // 24. legacy
             ];
 
+            // Asegurar que tenemos el fn_index correcto (auto-detectado o fallback a 94)
+            const fnIndex = await this.ensureFnIndex();
+            
             const joinPayload = {
                 data: data,
                 event_data: null,
-                fn_index: 94,                   // Actualizado a 94 según la prueba exitosa del usuario
+                fn_index: fnIndex,
                 session_hash: this.sessionHash,
                 trigger_id: Math.floor(Math.random() * 1000)
             };
 
-            console.log('📡 Enviando a Applio...');
+            console.log(`📡 Enviando a Applio (fn_index: ${fnIndex})...`);
             
             const response = await axios.post(`${this.applioUrl}/gradio_api/queue/join`, joinPayload, {
                 headers: { 'Content-Type': 'application/json' },
@@ -260,6 +338,12 @@ class ApplioClient {
             console.log('🔍 Verificando Applio...');
             await axios.get(`${this.applioUrl}/`, { timeout: 5000 });
             console.log('✅ Conectado');
+            
+            // Auto-detectar fn_index cuando se conecta por primera vez
+            if (this.fnIndex === null) {
+                await this.ensureFnIndex();
+            }
+            
             return true;
         } catch (error) {
             console.error('❌ Applio no disponible en puerto 6969');
