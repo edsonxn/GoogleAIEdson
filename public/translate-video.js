@@ -4,6 +4,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Inicializar estado
     window.switchTab('auto');
     window.toggleVoiceSelect();
+    loadApplioVoices();
 
     // Setup Dropzones for Auto Mode
     setupDropZone('videoDropZone', 'videoUpload', 'videoFileName', 'video', () => updateGenerateButton());
@@ -76,6 +77,137 @@ document.addEventListener('DOMContentLoaded', () => {
              container.appendChild(div);
         });
     }
+
+    const addMinuteBtn = document.getElementById('addMinuteMarkerBtn');
+    let nextMinute = 1;
+
+    if (addMinuteBtn) {
+        addMinuteBtn.addEventListener('click', (e) => {
+             e.preventDefault();
+             const container = document.getElementById('promoMarkersContainer');
+             
+             // Format time
+             const timeStr = `${nextMinute.toString().padStart(2, '0')}:00`;
+             nextMinute++;
+
+             const div = document.createElement('div');
+             div.className = 'promo-marker-row';
+             div.style.cssText = 'display: flex; gap: 8px; align-items: center; margin-top: 5px;';
+             div.innerHTML = `
+                  <input type="text" class="promoTimeInput" value="${timeStr}" placeholder="Min:Seg (ej: 01:00)" 
+                         style="background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); color: #fff; padding: 6px 10px; border-radius: 4px; flex: 1; text-align: center;">
+                  <button class="remove-marker-btn" type="button" style="background: rgba(239, 68, 68, 0.2); border: 1px solid rgba(239, 68, 68, 0.3); color: #f87171; border-radius: 4px; padding: 6px 10px; cursor: pointer;">
+                      <i class="fas fa-trash"></i>
+                  </button>
+             `;
+             
+             // Configure new input
+             setupPromoInput(div.querySelector('.promoTimeInput'));
+             
+             div.querySelector('.remove-marker-btn').onclick = () => div.remove();
+             container.appendChild(div);
+        });
+    }
+
+    // Setup Audio Markers Drag and Drop
+    const audioDropzone = document.getElementById('audioMarkersDropzone');
+    const audioInput = document.getElementById('audioMarkersInput');
+    const browseAudioBtn = document.getElementById('browseAudioMarkersBtn');
+
+    if (audioDropzone && audioInput && browseAudioBtn) {
+        browseAudioBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            audioInput.click();
+        });
+
+        audioDropzone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            audioDropzone.style.background = 'rgba(129, 140, 248, 0.15)';
+        });
+
+        audioDropzone.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            audioDropzone.style.background = 'rgba(129, 140, 248, 0.05)';
+        });
+
+        audioDropzone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            audioDropzone.style.background = 'rgba(129, 140, 248, 0.05)';
+            if (e.dataTransfer.files.length > 0) {
+                handleAudioMarkerFiles(Array.from(e.dataTransfer.files));
+            }
+        });
+
+        audioInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                handleAudioMarkerFiles(Array.from(e.target.files));
+            }
+        });
+    }
+
+    async function handleAudioMarkerFiles(files) {
+        // Find only audio files
+        const audioFiles = files.filter(f => f.type.startsWith('audio/') || f.name.match(/\.(mp3|wav|ogg|m4a|aac)$/i));
+        
+        if (audioFiles.length === 0) {
+            alert("No se encontraron archivos de audio válidos.");
+            return;
+        }
+
+        // Sort files alphabetically by name
+        audioFiles.sort((a, b) => a.name.localeCompare(b.name));
+
+        const container = document.getElementById('promoMarkersContainer');
+        container.innerHTML = ''; // Clear existing markers
+
+        let cumulativeDuration = 0;
+
+        for (let i = 0; i < audioFiles.length - 1; i++) { // Ignore the last one because the last point is EOF
+            const file = audioFiles[i];
+            const duration = await getAudioDuration(file);
+            cumulativeDuration += duration;
+
+            // Format mm:ss
+            const minutes = Math.floor(cumulativeDuration / 60);
+            const seconds = Math.floor(cumulativeDuration % 60);
+            const timeStr = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+
+            // Add marker input
+            const div = document.createElement('div');
+            div.className = 'promo-marker-row';
+            div.style.cssText = 'display: flex; gap: 8px; align-items: center; margin-top: 5px;';
+            div.innerHTML = `
+                 <input type="text" class="promoTimeInput" value="${timeStr}" placeholder="Min:Seg (ej: 01:00)" 
+                        style="background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); color: #fff; padding: 6px 10px; border-radius: 4px; flex: 1; text-align: center;">
+                 <button class="remove-marker-btn" type="button" style="background: rgba(239, 68, 68, 0.2); border: 1px solid rgba(239, 68, 68, 0.3); color: #f87171; border-radius: 4px; padding: 6px 10px; cursor: pointer;">
+                     <i class="fas fa-trash"></i>
+                 </button>
+            `;
+            
+            setupPromoInput(div.querySelector('.promoTimeInput'));
+            div.querySelector('.remove-marker-btn').onclick = () => div.remove();
+            container.appendChild(div);
+        }
+
+        alert(`Se han asignado ${audioFiles.length - 1} marcas de tiempo basadas en la duración de los audios.`);
+    }
+
+    function getAudioDuration(file) {
+        return new Promise((resolve) => {
+            const audio = new Audio();
+            audio.src = URL.createObjectURL(file);
+            audio.onloadedmetadata = () => {
+                const duration = audio.duration;
+                URL.revokeObjectURL(audio.src);
+                resolve(duration);
+            };
+            audio.onerror = () => {
+                console.error("Error cargando el archivo para medir duración:", file.name);
+                URL.revokeObjectURL(audio.src);
+                resolve(0); // fallback if it fails
+            };
+        });
+    }
 });
 
 window.switchTab = function(tabName) {
@@ -106,11 +238,52 @@ function updateGenerateButtonText(tabName) {
 
 window.toggleVoiceSelect = function() {
     const selectedProvider = document.querySelector('input[name="ttsProvider"]:checked')?.value;
-    const container = document.getElementById('googleVoiceSelectContainer');
-    if (container) {
-        container.style.display = (selectedProvider === 'google' || selectedProvider === 'google_pro') ? 'block' : 'none';
+    const googleContainer = document.getElementById('googleVoiceSelectContainer');
+    const applioContainer = document.getElementById('applioVoiceSelectContainer');
+    
+    if (googleContainer) {
+        googleContainer.style.display = (selectedProvider === 'google' || selectedProvider === 'google_pro') ? 'block' : 'none';
+    }
+    
+    if (applioContainer) {
+        applioContainer.style.display = (selectedProvider === 'applio') ? 'block' : 'none';
     }
 };
+
+async function loadApplioVoices() {
+    try {
+        const response = await fetch('/api/applio-voices');
+        const data = await response.json();
+        const select = document.getElementById('applioVoiceSelect');
+        
+        if (!select) return;
+
+        select.innerHTML = '';
+        
+        if (data.voices && data.voices.length > 0) {
+            data.voices.forEach(voice => {
+                const option = document.createElement('option');
+                option.value = voice.path || voice;
+                option.textContent = voice.displayName || voice;
+                
+                // Si la voz actual es Remy o rvc_remy, seleccionarla por defecto
+                if (option.textContent.toLowerCase().includes('remy')) {
+                    option.selected = true;
+                }
+                
+                select.appendChild(option);
+            });
+        } else {
+            select.innerHTML = '<option value="logs\\\\VOCES\\\\RemyOriginal.pth">Remy (Por defecto)</option>';
+        }
+    } catch (error) {
+        console.error('Error loading Applio voices:', error);
+        const select = document.getElementById('applioVoiceSelect');
+        if (select) {
+            select.innerHTML = '<option value="logs\\\\VOCES\\\\RemyOriginal.pth">Remy (Por defecto)</option>';
+        }
+    }
+}
 
 function setupDropZone(dropZoneId, inputId, displayId, allowedTypes, onFileSelect) {
     const dropZone = document.getElementById(dropZoneId);
@@ -276,6 +449,9 @@ window.startVideoTranslation = async function(isRetry = false) {
         const selectedLanguages = Array.from(document.querySelectorAll('input[name="targetLanguages"]:checked'))
             .map(cb => cb.value);
         formData.append('targetLanguages', JSON.stringify(selectedLanguages));
+
+        const applioVoice = document.getElementById('applioVoiceSelect')?.value || 'logs\\\\VOCES\\\\RemyOriginal.pth';
+        formData.append('applioVoice', applioVoice);
 
         const googleVoice = document.getElementById('googleVoiceSelect')?.value || 'Kore';
         formData.append('googleVoice', googleVoice);

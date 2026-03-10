@@ -1,6 +1,13 @@
 # 🤖 Guía del Proyecto para GitHub Copilot
 
-## 📋 Descripción General
+## �️ Estilo de Comunicación y Personalidad (IMPORTANTE)
+- Háblale al usuario **sin tanto formalismo ni exceso de respeto**.
+- Sé **confiado, directo y coloquial**. Trátalo como a un pana o colega de programación de toda la vida.
+- Puedes usar **sarcasmo y un tono irónico** de vez en cuando. No seas un robot aburrido ni des respuestas corporativas de "claro que sí, señor".
+- Tienes permiso para ser un poco "sobrado" si te toca arreglar algo obvio, pero **siempre resuelve el problema** de forma eficiente.
+-usas groserias como pinche, puto, cabron, verga, chingada madre, etc. de forma ocasional para darle sabor a tus respuestas y hacerlas más humanas y cercanas. No te excedas, pero tampoco tengas miedo de usarlas cuando la situación lo amerite.
+
+## �📋 Descripción General
 
 Este es un **Generador de Scripts con IA** - una aplicación full-stack que genera guiones, imágenes, audio y video automáticamente usando múltiples APIs de inteligencia artificial.
 
@@ -34,325 +41,64 @@ googleimagenes/
 
 ---
 
-## 🔑 Archivos Clave y Sus Funciones
 
-### `index.js` - Servidor Backend Principal
-**Ubicación:** Raíz del proyecto  
-**Líneas:** ~18,000  
-**Función:** Servidor Express con todos los endpoints API
+## 📝 Registro Histórico y Cambios Recientes
 
-**Secciones importantes:**
-- **Líneas 1-100:** Imports y configuración inicial
-- **Líneas 70-200:** Sistema de API keys con fallback (gratis → principal)
-- **Líneas 150-200:** Funciones `getGoogleAI()` y `getFreeGoogleAPIKeys()`
-- **Líneas 1460-1500:** Endpoints de estilos personalizados
-- **Líneas 5572-6000:** Generación automática batch (`/generate-batch-automatic`)
-- **Líneas 6187-6800:** Generación de audio (`/generate-audio`, Applio, Google TTS)
-- **Líneas 7378-8000:** Generación de imágenes faltantes
-- **Líneas 10068-10500:** Generación batch de imágenes
-- **Líneas 10499-11700:** Endpoint principal `/generate` (generación de contenido)
-- **Líneas 11792-12000:** Generación de audio por sección
-- **Líneas 12119-12600:** ComfyUI status, transcripción, voces Applio
-- **Líneas 12969-13600:** Traducción de proyectos
-- **Líneas 13858-14400:** API de proyectos (listar, cargar, eliminar, duplicar)
-- **Líneas 14761-15100:** Generación de video
-- **Líneas 17510+:** Traducción de video
+**📌 INSTRUCCIÓN PARA COPILOT:**  
+> Cuando el usuario indique que está cómodo o conforme con los cambios realizados en una sesión de trabajo, **deberás actualizar obligatoriamente esta sección del archivo** para documentar las nuevas características implementadas, los archivos afectados y cómo funciona la nueva lógica, para que en siguientes sesiones el modelo no tarde en encontrar y entender el flujo.
 
-### `public/script.js` - Cliente Frontend Principal
-**Ubicación:** public/script.js  
-**Líneas:** ~16,000  
-**Función:** Toda la lógica del frontend
+### Cambios Recientes Implementados (Actualización de Modelos)
+- **Migración a Gemini 3.1 Pro Preview y Variables de Entorno:**
+  - Archivos: `index.js`, `.env`.
+  - Se modularizaron los modelos por defecto. El modelo de texto principal ha sido centralizado apuntando a `gemini-3.1-pro-preview` vía entorno (`process.env.GEMINI_TEXT_MODEL`).
+  - Se agregaron las variables de control (`GEMINI_TEXT_MODEL`, `GEMINI_IMAGE_MODEL`, `GEMINI_TTS_MODEL_FLASH`, `GEMINI_TTS_MODEL_PRO`) al principio de `index.js` garantizando que puedan modificarse desde `.env` sin tener que tocar el código fuente, optimizando el mantenimiento.
 
-**Variables globales importantes:**
-- `globalChapterStructure` - Estructura de capítulos del proyecto
-- `currentImageKeywords` - Keywords de imágenes para regeneración
-- `isGeneratingImages` / `isGeneratingVideo` - Estados de generación
+### Cambios Recientes Implementados (Módulo YouTube Live Comments & TTS)
+- **Modo Continuo (TTS al Instante/Sin cola):**
+  - Archivos: public/youtube-live-comments.html, public/youtube-live-comments.js.
+  - Se implementó la modalidad Continua (casilla dedicada en el panel) que desactiva los conteos de tiempo fijos (	tsBatchTimer) y lee automáticamente un comentario en cuanto llega si no hay audio reproduciéndose. Si actualmente se está dictando un audio, en lugar de bloquearse, la IA agrupa todos los mensajes ocurridos durante el discurso y los envía al LLM en cuanto finalice de hablar.
 
-**Funciones clave:**
-- `normalizeImageModel()` - Normaliza nombres de modelos de imagen
-- `getSelectedImageModel()` - Obtiene modelo seleccionado
-- Manejo de progreso de clips y secciones
-
-### `applio-client.js` - Cliente Applio TTS
-**Ubicación:** Raíz  
-**Función:** Genera audio con voces IA personalizadas
-
-**Clase `ApplioClient`:**
-- `textToSpeech(text, outputPath, options)` - Genera audio TTS
-- `checkConnection()` - Verifica conexión con Applio
-- Cola de ejecución secuencial para peticiones
-
-**Configuración:** Variable `APPLIO_ROOT` en `.env`
-
-### `comfyui-client.js` - Cliente ComfyUI
-**Ubicación:** Raíz  
-**Función:** Genera imágenes con modelos Flux via ComfyUI
-
-**Clase `ComfyUIClient`:**
-- `generateWorkflow(prompt, options)` - Crea workflow de generación
-- Opciones: width, height, steps, cfg, guidance, sampler, scheduler, model
-
-### `transcriber.js` - Transcriptor de Audio
-**Ubicación:** Raíz  
-**Función:** Transcribe audio usando OpenAI Whisper
-
-**Funciones:**
-- `transcribeAudio({ filePath, onUploadProgress, audioTrackIndex })` 
-- `getAudioTracks(filePath)` - Lista pistas de audio de MP4
+- **Corrección de Conexión WebSocket Pytchat:**
+  - Archivos: `index.js`, `youtube_live_reader.py`.
+  - Se diagnosticó y reparó un error que bloqueaba Express por el stream de subprocess. Se actualizó la manera de crear la instancia de pytchat a `pytchat.create()` y se implementó un tag delimitador `---COMMENT---` que WebSocket parsea y envía al panel sin crashear el JSON.
+- **Filtro LLM "Secretaria" con Gemini para Comentarios:**
+  - Archivos: `index.js`, `public/youtube-live-comments.html`, `public/youtube-live-comments.js`.
+  - Se agregó una casilla y un campo de personalidad para que Gemini procese un batch de comentarios en vivo.
+  - El backend intercepta `/api/live-comments-tts`, valida `useLlm: true` y genera una respuesta actuada ("Secretaria sarcástica", etc.) antes de mandar el texto final a Applio TTS.
+- **Sistema de Lotes (Batching) para Comentarios TTS:**
+  - Archivos: `public/youtube-live-comments.js`, `public/youtube-live-comments.html`
+  - Se configuró la captura de comentarios por bloques usando un timer en el cliente (`ttsBatchTimer`, default: 3s). Así se agrupan varios mensajes antes de pasarlos por Gemini/Applio para que suene más orgánico y fluido.
+  - Se implementó un parche RegEx al momento de leer para limpiar emoticones de YouTube crudos tipo `:face_with_rolling_eyes:` antes de llegar a la IA.
+- **Implementación TTS (Applio) en Vivo para Comentarios:**
+  - Archivos: `index.js`, `public/youtube-live-comments.html`, `public/youtube-live-comments.js`.
+  - Se creó el endpoint `/api/live-comments-tts` que invoca `applioClient.textToSpeech` sin la lógica estricta de traducción.
+  - En el panel frontend, se añadió un toggle para activar la lectura por voz de Applio, con selector de voz local, y limitador de longitud de espera en fila (`maxTtsQueue`).
+  - Lógica JavaScript asíncrona dedicada (`ytlcTTS`) para despachar promesas en cascada, encolar audios y reproducirlos secuencialmente (evitando cacofonía).
+  
+### Cambios Recientes Implementados (Módulo Traducción de Video)
+- **Corrección de "Echo" en Textos de Traducción:**
+  - Archivo modificado: `index.js`.
+  - En la generación y traducción por secciones, Gemini estaba repitiendo la frase "SCRIPT PART X/Y:" dentro del texto final. Se añadió a la instrucción `OUTPUT ONLY THE TRANSLATED TEXT. DO NOT INCLUDE ANY LABELS OR PREFIXES (LIKE "SCRIPT PART:")` y se implementó una expresión regular post-procesamiento (`txt.replace(/SCRIPT PART \d+\/\d+:?\s*/gi, '').trim()`) para limpiarlo garantizando audios pulcros sin basura del prompt.
+- **Auto-Cálculo de Marcas de Tiempo con Audios:**
+  - Archivos modificados: `public/translate-video.html`, `public/translate-video.js`.
+  - Se agregó una sub-sección de dropzone para que el usuario pueda arrastrar/cargar múltiples archivos de audio. El sistema los ordena alfabéticamente y extrae su duración sumándola progresivamente para autocompletar el panel de "Marcas de Sección / Promo".
+- **Optimización de Texto para Applio TTS:**
+  - Archivo modificado: `index.js`.
+  - Se agregó una instrucción (`specialInstruction`) al crear los prompts de traducción para Gemini. Si el proveedor de audio es "Applio", se le ordena estrictamente a la IA escribir todos los números con letras (en lugar de dígitos) y remover caracteres especiales indeseados como apóstrofes entre letras de una misma palabra (ej. de "yog'saron" a "yogsaron").
+- **Soporte de Applio en Modo Multi-Sección (Marcas de Tiempo):**
+  - Archivo modificado: `index.js` (en `app.post('/api/translate-video')`).
+  - Se extendió la función interna `generatePartTTS` que antes solo soportaba Google TTS. Ahora, si el usuario seleccionó "Applio", el sistema utilizará `applioClient.textToSpeech` pasándole la voz correspondiente para crear los audios por cada "marca de sección" o "promo" dividida.
+- **Implementación de Listado de Voces Dinámico de Applio:**
+  - Archivos modificados: `public/translate-video.html`, `public/translate-video.js`, `index.js`.
+  - Ahora se llama al endpoint `/api/applio-voices` desde el cliente para poblar dinámicamente el selector `<select id="applioVoiceSelect">`.
+  - El color de fondo del selector se actualizó (`#1e293b`) para hacerlo legible en el modo oscuro.
+- **Optimización en Flujo de Generación de Audio TTS:**
+  - Archivo modificado: `index.js` (en `app.post('/api/translate-video')`).
+  - Se agregó una validación fundamental con `if (fs.existsSync(audioOutputPath))` para **saltar la generación** a través de Google o Applio TTS si el archivo de audio ya existe localmente. Esto reduce de manera drástica los tiempos de espera en re-procesos.
+- **Correcciones en el Procesamiento con FFmpeg:**
+  - Archivo modificado: `index.js` (en la etapa de duración/stretching).
+  - Se corrigió la cadena de comandos del filtro complejo de FFmpeg; se agregó una coma faltante para separar los filtros (ej. `aresample=48000,atempo=...`), evitando el error `Option not found`.
 
 ---
 
-## 🌐 Endpoints API Principales
-
-### 📝 Generación de Contenido
-| Método | Endpoint | Descripción |
-|--------|----------|-------------|
-| POST | `/generate` | Genera guión/contenido principal |
-| POST | `/generate-batch-automatic` | Genera todas las secciones automáticamente |
-| POST | `/generate-batch-automatic/multi` | Genera múltiples proyectos en paralelo |
-| POST | `/generate-missing-scripts` | Genera scripts faltantes |
-
-### 🎨 Generación de Imágenes
-| Método | Endpoint | Descripción |
-|--------|----------|-------------|
-| POST | `/generate-batch-images` | Genera imágenes para todas las secciones |
-| POST | `/api/generate-missing-images` | Genera solo imágenes faltantes |
-| POST | `/api/cancel-missing-images` | Cancela generación de imágenes |
-| POST | `/regenerate-image` | Regenera una imagen específica |
-| POST | `/generate-comfyui-image` | Genera imagen via ComfyUI |
-| POST | `/api/refresh-image` | Refresca/regenera imagen |
-| GET | `/api/comfy-defaults` | Obtiene configuración ComfyUI |
-
-### 🎤 Generación de Audio
-| Método | Endpoint | Descripción |
-|--------|----------|-------------|
-| POST | `/generate-audio` | Genera audio (Google TTS) |
-| POST | `/applio_tts` | Genera audio con Applio |
-| POST | `/generate-section-audio` | Audio para sección específica |
-| POST | `/generate-batch-audio` | Audio para múltiples secciones |
-| POST | `/generate-missing-applio-audios` | Genera audios Applio faltantes |
-| POST | `/generate-missing-google-audios` | Genera audios Google faltantes |
-| POST | `/regenerate-applio-audios` | Regenera audios Applio |
-| GET | `/api/applio-voices` | Lista voces disponibles en Applio |
-
-### 🎬 Generación de Video
-| Método | Endpoint | Descripción |
-|--------|----------|-------------|
-| POST | `/generate-project-video` | Genera video del proyecto completo |
-| POST | `/generate-simple-video` | Genera video simple |
-| POST | `/generate-separate-videos` | Genera videos separados por sección |
-| GET | `/video-progress/:sessionId` | Progreso de generación de video |
-| GET | `/clip-progress/:sessionId` | Progreso de clips |
-
-### 📂 Gestión de Proyectos
-| Método | Endpoint | Descripción |
-|--------|----------|-------------|
-| GET | `/api/projects` | Lista todos los proyectos |
-| GET | `/api/projects/:folderName` | Obtiene datos de un proyecto |
-| GET | `/api/projects/:folderName/diagnose` | Diagnostica problemas |
-| POST | `/api/projects/:folderName/reconstruct` | Reconstruye proyecto |
-| POST | `/api/projects/:folderName/duplicate` | Duplica proyecto |
-| DELETE | `/api/projects/:folderName` | Elimina proyecto |
-| GET | `/api/project-images/:folderName/:sectionNumber` | Imágenes de sección |
-| GET | `/api/section-media-summary/:folderName` | Resumen de media |
-
-### 🌍 Traducción
-| Método | Endpoint | Descripción |
-|--------|----------|-------------|
-| POST | `/translate-project` | Traduce un proyecto |
-| POST | `/translate-project-all` | Traduce proyecto completo |
-| POST | `/translate-title` | Traduce título |
-| POST | `/generate-translated-audios` | Genera audios traducidos |
-| POST | `/api/translate-video` | Traduce video |
-
-### 🎙️ Transcripción
-| Método | Endpoint | Descripción |
-|--------|----------|-------------|
-| POST | `/transcribe-audio` | Transcribe audio (OpenAI) |
-| POST | `/transcribe-audio-local` | Transcribe audio (local) |
-| POST | `/upload-audio` | Sube archivo de audio |
-| POST | `/get-audio-tracks` | Obtiene pistas de audio |
-| GET | `/whisper-local-info` | Info de Whisper local |
-
-### ⚙️ Configuración
-| Método | Endpoint | Descripción |
-|--------|----------|-------------|
-| GET | `/api/custom-styles` | Obtiene estilos personalizados |
-| POST | `/api/custom-styles` | Guarda estilos personalizados |
-| GET | `/api/google-image-apis` | APIs de imagen disponibles |
-| GET | `/comfyui-status` | Estado de ComfyUI |
-| POST | `/test-comfyui-auto` | Test automático ComfyUI |
-| POST | `/test-applio-auto` | Test automático Applio |
-| POST | `/api/open-folder` | Abre carpeta en explorador |
-
-### 🔍 Estado y Progreso
-| Método | Endpoint | Descripción |
-|--------|----------|-------------|
-| GET | `/progress/:projectKey` | Progreso de generación |
-| GET | `/get-project-state/:projectKey` | Estado del proyecto |
-| GET | `/read-script-file/:projectKey/:sectionNumber` | Lee script de sección |
-| GET | `/api/check-section-images` | Verifica imágenes de sección |
-
-### 📺 YouTube
-| Método | Endpoint | Descripción |
-|--------|----------|-------------|
-| POST | `/generate-youtube-metadata` | Genera metadata para YouTube |
-| POST | `/generate-youtube-metadata-for-project` | Metadata para proyecto específico |
-
----
-
-## 🔧 Variables de Entorno (.env)
-
-```env
-# API Keys de Google (sistema de fallback)
-GOOGLE_API_KEY=tu_api_principal
-GOOGLE_API_KEY_GRATIS=api_gratuita_1
-GOOGLE_API_KEY_GRATIS2=api_gratuita_2
-GOOGLE_API_KEY_GRATIS3=api_gratuita_3
-GOOGLE_API_KEY_GRATIS4=api_gratuita_4
-GOOGLE_API_KEY_GRATIS5=api_gratuita_5
-
-# OpenAI (para Whisper)
-OPENAI_API_KEY=tu_openai_key
-
-# ComfyUI (generación de imágenes)
-COMFY_RESOLUTION_16_9=800x400
-COMFY_RESOLUTION_9_16=400x800
-COMFY_RESOLUTION_1_1=800x800
-COMFY_DEFAULT_STEPS=20
-COMFY_DEFAULT_CFG=2.0
-COMFY_DEFAULT_GUIDANCE=3.5
-
-# Applio (voces IA)
-APPLIO_ROOT=C:\ruta\a\Applio
-```
-
----
-
-## 🎯 Modelos de IA Utilizados
-
-### Generación de Texto (LLM)
-- `gemini-3-flash-preview` - Modelo principal
-- `gemini-2.0-flash` - Fallback
-- `gemini-2.5-flash` - Alternativa
-
-### Generación de Imágenes
-- `gemini2` - Gemini 2.0 Flash (nativo)
-- `gemini25` - Gemini 2.5 Flash
-- `gemini3` - Gemini 3 Flash Preview
-- `imagen40` - Imagen 4.0
-- ComfyUI con Flux models
-
-### Text-to-Speech
-- Google TTS (múltiples voces)
-- Applio (voces IA personalizadas con RVC)
-
-### Transcripción
-- OpenAI Whisper API
-- Whisper local (faster-whisper)
-
----
-
-## 📂 Estructura de Proyectos Generados
-
-Cada proyecto se guarda en `public/outputs/{nombre_proyecto}/`:
-
-```
-nombre_proyecto/
-├── section_1_script.txt      # Guión de sección 1
-├── section_1_audio.mp3       # Audio de sección 1
-├── section_1_audio_applio.mp3 # Audio Applio de sección 1
-├── section_1/
-│   ├── image_1.png           # Imágenes generadas
-│   ├── image_2.png
-│   └── ...
-├── section_2_script.txt
-├── section_2_audio.mp3
-├── section_2/
-│   └── ...
-├── project_config.json       # Configuración del proyecto
-├── video_final.mp4           # Video generado (si existe)
-└── ...
-```
-
----
-
-## 🔄 Flujo de Trabajo Típico
-
-1. **Usuario introduce tema** → Frontend (`script.js`)
-2. **Genera estructura** → `POST /generate` → Gemini API
-3. **Genera imágenes** → `POST /generate-batch-images` → Gemini/ComfyUI
-4. **Genera audio** → `POST /generate-audio` → Google TTS/Applio
-5. **Genera video** → `POST /generate-project-video` → FFmpeg
-6. **Guarda proyecto** → `public/outputs/{proyecto}/`
-
----
-
-## 🐛 Patrones Comunes de Código
-
-### Manejo de API con Fallback
-```javascript
-// En index.js - Sistema de API keys múltiples
-async function getGoogleAI(model, options) {
-  // Intenta APIs gratuitas primero
-  // Si fallan, usa API principal
-  // Maneja rate limits (429)
-}
-```
-
-### Cola de Ejecución Secuencial (Applio)
-```javascript
-// En applio-client.js
-this.queue = Promise.resolve();
-async textToSpeech(text, outputPath, options) {
-  const task = this.queue.then(() => this._executeTextToSpeech(...));
-  this.queue = task.catch(err => console.error(err));
-  return task;
-}
-```
-
-### Generación de Imágenes con Gemini
-```javascript
-// Buscar en index.js: generateImageWithGemini
-// Usa @google/genai para generar imágenes nativas
-```
-
----
-
-## 💡 Tips para Copilot
-
-1. **Para buscar endpoints:** Usa `app.post('/` o `app.get('/` en index.js
-2. **Para funciones de frontend:** Busca en `public/script.js`
-3. **Para clientes externos:** Revisa `applio-client.js`, `comfyui-client.js`
-4. **Para configuración:** Revisa `.env.example` y `package.json`
-5. **Para estilos:** Revisa `styles.json` y `public/styles.css`
-
----
-
-## 🔍 Búsquedas Rápidas
-
-| Qué buscar | Dónde | Patrón |
-|------------|-------|--------|
-| Endpoints API | index.js | `app.post\|app.get\|app.delete` |
-| Funciones async | *.js | `async function` |
-| Generación contenido | index.js | `generateContent\|generateText` |
-| Generación imágenes | index.js | `generateImage\|generateBatchImages` |
-| Generación audio | index.js | `generateAudio\|textToSpeech\|applio` |
-| Manejo errores | index.js | `catch\|try\|error` |
-| Variables env | .env | Todas las configuraciones |
-| Estilos UI | public/styles.css | Clases CSS |
-
----
-
-## ⚠️ Consideraciones Importantes
-
-1. **ES Modules:** El proyecto usa `"type": "module"` - usar `import`/`export`
-2. **Async/Await:** Casi todas las funciones son asíncronas
-3. **Error Handling:** Global handlers en `process.on('unhandledRejection')`
-4. **Rate Limits:** Sistema de fallback para APIs de Google
-5. **Archivos grandes:** `index.js` tiene 18K+ líneas, `script.js` tiene 16K+ líneas
-6. **Dependencias externas:** ComfyUI y Applio son servicios externos
-
----
-
-*Última actualización: Enero 2026*
+*Última actualización: Marzo 2026*

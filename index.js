@@ -16,6 +16,12 @@ import multer from 'multer';
 import axios from 'axios';
 import os from 'os';
 
+const GEMINI_TEXT_MODEL = process.env.GEMINI_TEXT_MODEL || 'gemini-3.1-pro-preview';
+const GEMINI_IMAGE_MODEL = process.env.GEMINI_IMAGE_MODEL || 'gemini-2.5-flash-image';
+const GEMINI_TTS_MODEL_FLASH = process.env.GEMINI_TTS_MODEL_FLASH || 'gemini-2.5-flash-preview-tts';
+const GEMINI_TTS_MODEL_PRO = process.env.GEMINI_TTS_MODEL_PRO || 'gemini-2.5-pro-preview-tts';
+
+
 // Helper para detectar el comando de Python correcto (Python 3.13 preferido sobre 3.14 preview)
 let cachedPythonCommand = null;
 async function detectPythonCommand() {
@@ -69,7 +75,7 @@ process.on('uncaughtException', (error) => {
 });
 
 // Función para obtener una instancia de GoogleGenerativeAI con fallback controlado
-async function getGoogleAI(model = "gemini-3-flash-preview", options = {}) {
+async function getGoogleAI(model = GEMINI_TEXT_MODEL, options = {}) {
   const { context = 'general', forcePrimary = false } = options;
   const usageState = getTrackedUsageState(context);
   const skipFreeApis = forcePrimary || usageState?.preferPrimary;
@@ -404,7 +410,7 @@ function resolveGoogleImageModelId(model) {
 
   switch (normalized) {
     case 'gemini25':
-      return 'gemini-2.5-flash-image';
+      return GEMINI_IMAGE_MODEL;
     case 'imagen40':
       return 'imagen-4.0-generate-preview-06-06';
     case 'gemini2':
@@ -2398,7 +2404,7 @@ function reconstructProjectState(folderName) {
       reconstructedAt: new Date().toISOString(),
       voice: 'shimmer', // Valor por defecto
       imageModel: 'gemini3', // Valor por defecto
-      llmModel: 'gemini-3-flash-preview', // Valor por defecto (Flash más rápido)
+      llmModel: GEMINI_TEXT_MODEL, // Valor por defecto (Flash más rápido)
       scriptStyle: 'professional', // Valor por defecto
       imageCount: 5, // Valor por defecto
       minWords: 800,
@@ -3144,7 +3150,7 @@ async function generateStoryAudio(script, voiceName = DEFAULT_TTS_VOICE, section
         try {
           console.log(`🔊 Generando audio con voz ${candidateVoice} usando ${apiName}...`);
           const response = await client.models.generateContent({
-            model: 'gemini-2.5-flash-preview-tts', // Keep TTS model as is for now unless there is a v3 TTS
+            model: GEMINI_TTS_MODEL_FLASH, // Keep TTS model as is for now unless there is a v3 TTS
             contents: [
               {
                 role: 'user',
@@ -4162,7 +4168,7 @@ Responde SOLO con las ${imageCount} líneas de palabras clave, sin explicaciones
 
     console.log(`🤖 Enviando prompt a LLM para generar keywords...`);
     
-    const response = await generateUniversalContent('gemini-3-flash-preview', prompt);
+    const response = await generateUniversalContent(GEMINI_TEXT_MODEL, prompt);
     const keywordsText = response ? response.trim() : '';
     
     console.log(`📝 Respuesta del LLM:`, keywordsText);
@@ -5629,7 +5635,7 @@ app.post('/generate-batch-automatic', async (req, res) => {
     const wordsMin = minWords || 800;
     const wordsMax = maxWords || 1100;
   const additionalInstructions = promptModifier || '';
-  const selectedLlmModel = llmModel || 'gemini-3-flash-preview';
+  const selectedLlmModel = llmModel || GEMINI_TEXT_MODEL;
     let shouldSkipImages = skipImages === true;
     let shouldUseGoogleImages = googleImages === true;
     let shouldUseLocalAI = localAIImages === true;
@@ -8298,7 +8304,7 @@ ${storyTopicReference ? `• El proyecto trata sobre "${storyTopicReference}". `
       console.log(`   📝 Segmento ${i + 1}: palabras ${startIndex + 1}-${endIndex} (${segmentWords.length} palabras)`);
     }
     
-  const { model } = await getGoogleAI("gemini-3-flash-preview", { context: 'llm' });
+  const { model } = await getGoogleAI(GEMINI_TEXT_MODEL, { context: 'llm' });
 
   const baseInstructions = `
 Basándote en los siguientes segmentos secuenciales del guión/script, genera ${imageCount} prompts MUY DETALLADOS para generar imágenes que representen ESPECÍFICAMENTE cada segmento en orden cronológico.
@@ -8611,7 +8617,7 @@ ${trimmedScript
   : 'SCRIPT EXCERPTS: Not available, rely on topic and summary.'}
 `;
 
-  const { model } = await getGoogleAI('gemini-3-flash-preview', { context: 'llm' });
+  const { model } = await getGoogleAI(GEMINI_TEXT_MODEL, { context: 'llm' });
     const result = await model.generateContent({
       contents: [{ parts: [{ text: contextPrompt }] }],
       generationConfig: {
@@ -8797,7 +8803,7 @@ async function generateProtagonistProfile(scriptContent, imageInstructions = '')
       ? scriptContent.slice(0, PROTAGONIST_SCRIPT_CHARACTER_LIMIT)
       : scriptContent;
 
-  const { model } = await getGoogleAI('gemini-3-flash-preview', { context: 'llm' });
+  const { model } = await getGoogleAI(GEMINI_TEXT_MODEL, { context: 'llm' });
 
     const profilePrompt = `You are designing a visual bible for a story's main protagonist. Analyze the script excerpts provided and infer the most consistent primary character. Return a strict JSON object (no extra text) with the following keys as strings: "name", "gender", "age", "skinTone", "hair", "eyes", "clothing", "personality", "uniqueFeatures", "role", "promptSnippet", "notes".\n- "promptSnippet" must be a 25-45 word English sentence describing how to depict the protagonist consistently in image prompts.\n- Use concise yet vivid language.\n- If information is missing, make creative but coherent choices.\n- Keep all values in English.\n- Consider the user visual style instructions: "${imageInstructions || 'none provided'}".\n\nSCRIPT EXCERPTS (TRIMMED):\n"""${trimmedScript}"""`;
 
@@ -10533,7 +10539,7 @@ app.post('/generate', async (req, res) => {
   const selectedImageModel = normalizeImageModel(imageModel);
   const selectedImageModelLabel = getImageModelLabel(selectedImageModel);
   console.log(`🤖 Modelo de imágenes seleccionado para esta sección: ${selectedImageModelLabel} (${selectedImageModel})`);
-    const selectedLlmModel = llmModel || 'gemini-3-flash-preview';
+    const selectedLlmModel = llmModel || GEMINI_TEXT_MODEL;
     let shouldSkipImages = skipImages === true;
     let shouldUseGoogleImages = googleImages === true;
     let shouldUseLocalAI = localAIImages === true;
@@ -11760,7 +11766,7 @@ app.post('/applio_tts', async (req, res) => {
     
     // Fallback a Gemini TTS
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-pro-preview-tts",
+      model: GEMINI_TTS_MODEL_PRO,
       contents: [{ 
         parts: [{ 
           text: `Narra el siguiente texto de manera natural y clara: ${text}`
@@ -12967,7 +12973,7 @@ async function translateSectionScript(folderName, sectionNum, targetLang, projec
     OUTPUT ONLY THE TRANSLATED TEXT.
   `;
 
-  const { model } = await getGoogleAI("gemini-3-flash-preview", { context: 'llm' });
+  const { model } = await getGoogleAI(GEMINI_TEXT_MODEL, { context: 'llm' });
   const result = await model.generateContent(prompt);
   const translatedText = result.response.text();
 
@@ -13626,7 +13632,7 @@ app.post('/translate-title', async (req, res) => {
       Do not include markdown formatting or explanations.
     `;
 
-    const { model } = await getGoogleAI("gemini-3-flash-preview", { context: 'llm', forcePrimary: true });
+    const { model } = await getGoogleAI(GEMINI_TEXT_MODEL, { context: 'llm', forcePrimary: true });
     const result = await model.generateContent(prompt);
     const responseText = result.response.text().replace(/```json|```/g, '').trim();
     
@@ -13749,7 +13755,7 @@ app.post('/generate-youtube-metadata', async (req, res) => {
           targetLanguage
         });
         
-  const { model: regenerateModel } = await getGoogleAI("gemini-3-flash-preview", { context: 'llm', forcePrimary: true });
+  const { model: regenerateModel } = await getGoogleAI(GEMINI_TEXT_MODEL, { context: 'llm', forcePrimary: true });
         const regenerateResponse = await regenerateModel.generateContent([
           { text: regeneratePrompt }
         ]);
@@ -17262,7 +17268,7 @@ app.post('/generate-youtube-metadata-for-project', async (req, res) => {
 });
 
 // Helper functions for Google TTS in Video Translation
-async function generateSingleGoogleTTS(text, outputPath, lang, selectedVoice = 'Kore', modelName = 'gemini-2.5-flash-preview-tts') {
+async function generateSingleGoogleTTS(text, outputPath, lang, selectedVoice = 'Kore', modelName = GEMINI_TTS_MODEL_FLASH) {
     if (!text || !text.trim()) {
         throw new Error("Text is empty");
     }
@@ -17445,7 +17451,7 @@ async function mergeAudioFiles(files, outputPath) {
     });
 }
 
-async function generateGoogleTTSWithSplitting(text, outputPath, lang, selectedVoice = 'Kore', modelName = 'gemini-2.5-flash-preview-tts', randomVoice = false, disableParagraphSplitting = false, keepTempFiles = false, sectionUniqueId = '') {
+async function generateGoogleTTSWithSplitting(text, outputPath, lang, selectedVoice = 'Kore', modelName = GEMINI_TTS_MODEL_FLASH, randomVoice = false, disableParagraphSplitting = false, keepTempFiles = false, sectionUniqueId = '') {
     // Determine initial chunks based on splitting preference
     let rawParagraphs;
     
@@ -18097,7 +18103,7 @@ if __name__ == "__main__":
                          if (!txt || txt === 'undefined' || !txt.trim()) return false;
                          if (isGoogle) {
                              const isPro = ttsProvider === 'google_pro';
-                             const ttsModelName = isPro ? 'gemini-2.5-pro-preview-tts' : 'gemini-2.5-flash-preview-tts';
+                             const ttsModelName = isPro ? GEMINI_TTS_MODEL_PRO : GEMINI_TTS_MODEL_FLASH;
                              // Usamos disableParagraphSplitting = true para que genere un solo audio por sección (marca)
                              const keepTemp = req.body.keepTempFiles === 'true';
                              // Add a unique ID for this section to prevent temp file collisions
@@ -18194,7 +18200,7 @@ if __name__ == "__main__":
                                     // Determinar si debemos forzar el uso de la key primaria en el último intento
                                     const forcePrimary = (retries === 1); 
                                     
-                                    const { model } = await getGoogleAI("gemini-3-flash-preview", { 
+                                    const { model } = await getGoogleAI(GEMINI_TEXT_MODEL, { 
                                         context: 'llm',
                                         forcePrimary: forcePrimary
                                     });
@@ -18425,7 +18431,7 @@ if __name__ == "__main__":
                 let result;
                 try {
                     // Seleccionar modelo (default a 3.0 si no se especifica)
-                    const selectedModel = req.body.translationModel || "gemini-3-flash-preview";
+                    const selectedModel = req.body.translationModel || GEMINI_TEXT_MODEL;
                     console.log(`🤖 Usando modelo de traducción: ${selectedModel}`);
                     
                     const { model } = await getGoogleAI(selectedModel, { context: 'llm' });
@@ -18438,7 +18444,7 @@ if __name__ == "__main__":
                         console.warn(`⚠️ API gratuita ${isRateLimit ? 'saturada (429)' : 'sobrecargada (503)'} durante traducción. Reintentando con API PRINCIPAL...`);
                         
                         // Forzar uso de API principal con el modelo seleccionado (o fallback a 3.0)
-                        const selectedModel = req.body.translationModel || "gemini-3-flash-preview";
+                        const selectedModel = req.body.translationModel || GEMINI_TEXT_MODEL;
                         
                         try {
                             const { model } = await getGoogleAI(selectedModel, { context: 'llm', forcePrimary: true });
@@ -18447,7 +18453,7 @@ if __name__ == "__main__":
                             const isPrimaryOverloaded = primaryError.message.includes('503') || (primaryError.status === 503) || primaryError.message.includes('overloaded') || primaryError.message.includes('Overloaded');
                             
                             // Si falla la API principal con 503 y estabamos usando flash 3, intentar fallback a 2.5
-                            if (isPrimaryOverloaded && selectedModel === 'gemini-3-flash-preview') {
+                            if (isPrimaryOverloaded && selectedModel === GEMINI_TEXT_MODEL) {
                                 console.warn(`⚠️ Gemini 3 Flash saturado incluso en API PRINCIPAL (503). Intentando fallback a Gemini 2.5 Flash...`);
                                 const { model: fallbackModel } = await getGoogleAI("gemini-2.5-flash", { context: 'llm', forcePrimary: true });
                                 result = await fallbackModel.generateContent(prompt);
@@ -18489,7 +18495,7 @@ if __name__ == "__main__":
 
                 if (ttsProvider === 'google' || ttsProvider === 'google_pro') {
                     const isPro = ttsProvider === 'google_pro';
-                    const ttsModelName = isPro ? 'gemini-2.5-pro-preview-tts' : 'gemini-2.5-flash-preview-tts';
+                    const ttsModelName = isPro ? GEMINI_TTS_MODEL_PRO : GEMINI_TTS_MODEL_FLASH;
                     const randomVoice = req.body.randomVoice === 'true'; // Get flag from request
                     
                     if (!translatedText || translatedText === 'undefined') {
