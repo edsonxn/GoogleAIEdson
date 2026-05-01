@@ -113,3 +113,5 @@ frame_*.png
 # Binarios de FFmpeg
 *.exe
 *.dll
+
+settings.json
