@@ -1,10 +1,133 @@
 document.addEventListener('DOMContentLoaded', () => {
     console.log('Video Translator Loaded');
 
+// --- Persistent State DB System ---
+window.InitTranslatorDB = function() {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open('TranslatorCacheDB', 1);
+        request.onupgradeneeded = (e) => {
+            const db = e.target.result;
+            if (!db.objectStoreNames.contains('files')) {
+                db.createObjectStore('files');
+            }
+        };
+        request.onsuccess = (e) => resolve(e.target.result);
+        request.onerror = (e) => reject(e.target.error);
+    });
+};
+
+window.saveToDB = async function(storeName, key, value) {
+    // 🔴 RESTRICCIÓN: Solo guardaremos textos en cache, evitamos audios/videos pesados.
+    if (key !== 'textMarkersInput') return;
+    
+    try {
+        const db = await window.InitTranslatorDB();
+        const tx = db.transaction(storeName, 'readwrite');
+        tx.objectStore(storeName).put(value, key);
+        return tx.complete;
+    } catch(e) { console.error('DB Save error', e); }
+};
+
+window.getFromDB = async function(storeName, key) {
+    try {
+        const db = await window.InitTranslatorDB();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(storeName, 'readonly');
+            const req = tx.objectStore(storeName).get(key);
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = (e) => reject(e.target.error);
+        });
+    } catch(e) { console.error('DB Get error', e); }
+};
+
+window.saveTimestampsState = function() {
+    const inputs = Array.from(document.querySelectorAll('.promoTimeInput')).map(i => i.value);
+    console.warn('SETTING TIMESTAMPS CACHE: ', JSON.stringify(inputs), new Error().stack); localStorage.setItem('vt_timestamps', JSON.stringify(inputs));
+};
+
+window.loadTimestampsState = function() { console.log('LOADING TIMESTAMPS: ', localStorage.getItem('vt_timestamps')); 
+    try {
+        const inputs = JSON.parse(localStorage.getItem('vt_timestamps') || '[]');
+        if (inputs.length === 0) return;
+        
+        const container = document.getElementById('promoMarkersContainer');
+        container.innerHTML = '';
+        
+        inputs.forEach(timeStr => {
+            const div = document.createElement('div');
+            div.className = 'promo-marker-row';
+            div.style.cssText = 'display: flex; gap: 8px; align-items: center; margin-top: 5px;';
+            div.innerHTML = `
+                 <input type="text" class="promoTimeInput" value="${timeStr}" placeholder="Min:Seg (ej: 01:00)" 
+                        style="background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); color: #fff; padding: 6px 10px; border-radius: 4px; flex: 1; text-align: center;">
+                 <button class="remove-marker-btn" type="button" style="background: rgba(239, 68, 68, 0.2); border: 1px solid rgba(239, 68, 68, 0.3); color: #f87171; border-radius: 4px; padding: 6px 10px; cursor: pointer;">
+                     <i class="fas fa-trash"></i>
+                 </button>
+            `;
+            
+            // Setup events
+            div.querySelector('.promoTimeInput').addEventListener('input', (e) => {
+                let value = e.target.value.replace(/\D/g, '');
+                if (value.length > 4) value = value.slice(0, 4);
+                if (value.length > 2) value = value.slice(0, 2) + ':' + value.slice(2);
+                e.target.value = value;
+                window.saveTimestampsState();
+            });
+            
+            div.querySelector('.remove-marker-btn').onclick = () => { div.remove(); window.saveTimestampsState(); };
+            container.appendChild(div);
+        });
+    } catch(e) { console.error('Error loading timestamps', e); }
+};
+
+window.restoreFilesState = async function() {
+    try {
+        const idsToRestore = ['textMarkersInput']; // 🔴 Solo restauramos TXTs
+
+        for (const inputId of idsToRestore) {
+            const files = await window.getFromDB('files', inputId);
+            if (files && files.length > 0) {
+                const input = document.getElementById(inputId);
+                if (input) {
+                    const dt = new DataTransfer();
+                    for(let i=0; i<files.length; i++) {
+                        dt.items.add(new File([files[i]], files[i].name, {type: files[i].type, lastModified: files[i].lastModified}));
+                    }
+                    input.files = dt.files;
+                    
+                    // Dispatch change to trigger validation UI
+                    if(inputId === 'textMarkersInput' || inputId === 'audioMarkersInput') {
+                         input.dispatchEvent(new Event('change'));
+                    } else {
+                         // Call custom validate handler logic directly for simple dropzones
+                         const dropZoneId = inputId === 'videoUpload' ? 'videoDropZone' : 
+                                            inputId === 'musicUpload' ? 'musicDropZone' : null; // simplified logic below
+                         const displayId = inputId === 'videoUpload' ? 'videoFileName' : 
+                                           inputId === 'musicUpload' ? 'musicFileName' : 
+                                           inputId === 'videoUploadManual' ? 'fileName_manual_video' :
+                                           inputId === 'musicUploadManual' ? 'fileName_manual_music' :
+                                           inputId.startsWith('manual_audio_') ? inputId.replace('manual_audio_', 'fileName_manual_') : null;
+                         if (displayId) {
+                             const display = document.getElementById(displayId);
+                             if (display) display.textContent = files[0].name;
+                         }
+                    }
+                }
+            }
+        }
+    } catch(e) { console.error('Error restoring files', e); }
+};
+
+
+    window.loadTimestampsState();
+    window.restoreFilesState();
+
+
     // Inicializar estado
     window.switchTab('auto');
     window.toggleVoiceSelect();
     loadApplioVoices();
+    loadPreferences();
 
     // Setup Dropzones for Auto Mode
     setupDropZone('videoDropZone', 'videoUpload', 'videoFileName', 'video', () => updateGenerateButton());
@@ -47,6 +170,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 value = value.slice(0, 2) + ':' + value.slice(2);
             }
             e.target.value = value;
+            window.saveTimestampsState(); // 🔴 Siempre guardar al teclear
+            console.log('SAVING TIMESTAMPS: ', localStorage.getItem('vt_timestamps'));
         });
     }
 
@@ -73,8 +198,9 @@ document.addEventListener('DOMContentLoaded', () => {
              // Configurar el nuevo input
              setupPromoInput(div.querySelector('.promoTimeInput'));
              
-             div.querySelector('.remove-marker-btn').onclick = () => div.remove();
+             div.querySelector('.remove-marker-btn').onclick = () => { div.remove(); window.saveTimestampsState(); };
              container.appendChild(div);
+             window.saveTimestampsState();
         });
     }
 
@@ -104,10 +230,102 @@ document.addEventListener('DOMContentLoaded', () => {
              // Configure new input
              setupPromoInput(div.querySelector('.promoTimeInput'));
              
-             div.querySelector('.remove-marker-btn').onclick = () => div.remove();
+             div.querySelector('.remove-marker-btn').onclick = () => { div.remove(); window.saveTimestampsState(); };
              container.appendChild(div);
+             window.saveTimestampsState();
         });
     }
+
+    // Setup Text Markers Drag and Drop
+      const textDropzone = document.getElementById('textMarkersDropzone');
+      const textInput = document.getElementById('textMarkersInput');
+      const browseTextBtn = document.getElementById('browseTextMarkersBtn');
+      const clearTextBtn = document.getElementById('clearTextMarkersBtn');
+
+      if (clearTextBtn) {
+          clearTextBtn.addEventListener('click', async (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              if (confirm('¿Eliminar todos los textos subidos?')) {
+                  if (textInput) textInput.value = '';
+                  const listDiv = document.getElementById('textMarkersContainerList');
+                  if (listDiv) listDiv.innerHTML = '';
+                  window.loadedPromoTexts = undefined;
+                  try {
+                      const db = await window.InitTranslatorDB();
+                      const tx = db.transaction('files', 'readwrite');
+                      tx.objectStore('files').delete('textMarkersInput');
+                      await tx.complete;
+                  } catch (err) { console.error('Error clearing TXTs DB', err); }
+              }
+          });
+      }
+
+      if (textDropzone && textInput && browseTextBtn) {
+          browseTextBtn.addEventListener('click', (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              textInput.click();
+          });
+
+          textDropzone.addEventListener('dragover', (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              textDropzone.style.background = 'rgba(74, 222, 128, 0.15)';
+          });
+
+          textDropzone.addEventListener('dragleave', (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              textDropzone.style.background = 'rgba(74, 222, 128, 0.05)';
+          });
+
+          textDropzone.addEventListener('drop', (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              textDropzone.style.background = 'rgba(74, 222, 128, 0.05)';
+              if (e.dataTransfer.files.length > 0) {
+                  document.getElementById('textMarkersInput').files = e.dataTransfer.files;
+                  window.saveToDB('files', 'textMarkersInput', Array.from(e.dataTransfer.files));
+                  handleTextMarkerFiles(Array.from(e.dataTransfer.files));
+              }
+          });
+
+          textInput.addEventListener('change', (e) => {
+              if (e.target.files.length > 0) {
+                  window.saveToDB('files', 'textMarkersInput', Array.from(e.target.files));
+                  handleTextMarkerFiles(Array.from(e.target.files));
+              }
+          });
+          
+          textDropzone.addEventListener('click', (e) => {
+             if (e.target !== browseTextBtn && e.target !== textInput && e.target !== clearTextBtn && !e.target.closest('#clearTextMarkersBtn')) {
+                 textInput.click();
+             }
+          });
+      }
+
+      function handleTextMarkerFiles(files) {
+          const textFiles = files.filter(f => f.name.match(/\.txt$/i));
+          if (textFiles.length === 0) return;
+          
+          textFiles.sort((a, b) => a.name.localeCompare(b.name, undefined, {numeric: true, sensitivity: 'base'}));
+          
+          Promise.all(textFiles.map(file => {
+              return new Promise((resolve) => {
+                  const reader = new FileReader();
+                  reader.onload = (e) => resolve({ name: file.name, text: e.target.result });
+                  reader.readAsText(file);
+              });
+          })).then(results => {
+              window.loadedPromoTexts = results.map(r => r.text);
+              const listDiv = document.getElementById('textMarkersContainerList');
+              if (listDiv) {
+                  listDiv.innerHTML = '<strong>' + results.length + ' Texto(s) cargado(s):</strong><br>' + 
+                                      results.map(r => '<span style="display:block; margin: 2px 0;"><i class="fas fa-check-circle" style="color:#4ade80;"></i> ' + r.name + '</span>').join('');
+              }
+          });
+      }
 
     // Setup Audio Markers Drag and Drop
     const audioDropzone = document.getElementById('audioMarkersDropzone');
@@ -185,9 +403,10 @@ document.addEventListener('DOMContentLoaded', () => {
             `;
             
             setupPromoInput(div.querySelector('.promoTimeInput'));
-            div.querySelector('.remove-marker-btn').onclick = () => div.remove();
+            div.querySelector('.remove-marker-btn').onclick = () => { div.remove(); window.saveTimestampsState(); };
             container.appendChild(div);
         }
+        window.saveTimestampsState();
 
         alert(`Se han asignado ${audioFiles.length - 1} marcas de tiempo basadas en la duración de los audios.`);
     }
@@ -260,19 +479,37 @@ async function loadApplioVoices() {
 
         select.innerHTML = '';
         
+        let savedVoice = null;
+        try {
+            const prefs = JSON.parse(localStorage.getItem('videoTranslatorPrefs'));
+            if (prefs && prefs.applioVoice) savedVoice = prefs.applioVoice;
+        } catch (e) {}
+
         if (data.voices && data.voices.length > 0) {
+            let foundSaved = false;
+            
             data.voices.forEach(voice => {
                 const option = document.createElement('option');
                 option.value = voice.path || voice;
                 option.textContent = voice.displayName || voice;
-                
-                // Si la voz actual es Remy o rvc_remy, seleccionarla por defecto
-                if (option.textContent.toLowerCase().includes('remy')) {
-                    option.selected = true;
-                }
-                
                 select.appendChild(option);
             });
+
+            // Logic to select saved voice or fallback to Remy
+            if (savedVoice) {
+                const optionToSelect = Array.from(select.options).find(o => o.value === savedVoice);
+                if (optionToSelect) {
+                    optionToSelect.selected = true;
+                    foundSaved = true;
+                }
+            }
+
+            if (!foundSaved) {
+                // Return to default Remy logic
+                const remyOption = Array.from(select.options).find(o => o.textContent.toLowerCase().includes('remy'));
+                if (remyOption) remyOption.selected = true;
+            }
+
         } else {
             select.innerHTML = '<option value="logs\\\\VOCES\\\\RemyOriginal.pth">Remy (Por defecto)</option>';
         }
@@ -310,12 +547,14 @@ function setupDropZone(dropZoneId, inputId, displayId, allowedTypes, onFileSelec
         dropZone.classList.remove('dragover');
         if (e.dataTransfer.files.length) {
             input.files = e.dataTransfer.files;
+            window.saveToDB('files', inputId, Array.from(input.files));
             validateAndHandle(input.files[0]);
         }
     });
 
     input.addEventListener('change', () => {
         if (input.files.length) {
+            window.saveToDB('files', inputId, Array.from(input.files));
             validateAndHandle(input.files[0]);
         }
     });
@@ -348,7 +587,7 @@ function updateGenerateButton() {
     if(btn) btn.disabled = false; 
 }
 
-window.startVideoTranslation = async function(isRetry = false) {
+window.startVideoTranslation = async function(isRetry = false) {      if (!isRetry) savePreferences(); // Save preferences on fresh start
     const isManualMode = document.getElementById('tabContentManual').style.display !== 'none';
     const generateBtn = document.getElementById('generateTranslatedVideoBtn');
     
@@ -453,6 +692,9 @@ window.startVideoTranslation = async function(isRetry = false) {
         const applioVoice = document.getElementById('applioVoiceSelect')?.value || 'logs\\\\VOCES\\\\RemyOriginal.pth';
         formData.append('applioVoice', applioVoice);
 
+        const applioGender = document.querySelector('input[name="applioGender"]:checked')?.value || 'male';
+        formData.append('applioGender', applioGender);
+
         const googleVoice = document.getElementById('googleVoiceSelect')?.value || 'Kore';
         formData.append('googleVoice', googleVoice);
 
@@ -474,7 +716,12 @@ window.startVideoTranslation = async function(isRetry = false) {
             }
         });
 
-        if (promoStartTimes.length > 0) {
+        
+          if (window.loadedPromoTexts && window.loadedPromoTexts.length > 0) {
+              formData.append('promoTexts', JSON.stringify(window.loadedPromoTexts));
+          }
+          
+          if (promoStartTimes.length > 0) {
             formData.append('promoStartTimes', JSON.stringify(promoStartTimes));
         }
 
@@ -543,3 +790,64 @@ window.startVideoTranslation = async function(isRetry = false) {
         if (generateBtn) generateBtn.disabled = false;
     }
 };
+
+
+// --- Preference Management System ---
+function savePreferences() {
+    try {
+        const prefs = {
+            targetLangs: Array.from(document.querySelectorAll('input[name="targetLanguages"]:checked')).map(el => el.value),
+            translationModel: document.querySelector('input[name="translationModel"]:checked')?.value,
+            ttsProvider: document.querySelector('input[name="ttsProvider"]:checked')?.value,
+            applioVoice: document.getElementById('applioVoiceSelect')?.value,
+            applioGender: document.querySelector('input[name="applioGender"]:checked')?.value
+        };
+        localStorage.setItem('videoTranslatorPrefs', JSON.stringify(prefs));
+        console.log('Preferences saved:', prefs);
+    } catch (e) {
+        console.error('Error saving preferences:', e);
+    }
+}
+
+function loadPreferences() {
+    try {
+        const prefs = JSON.parse(localStorage.getItem('videoTranslatorPrefs'));
+        if (!prefs) return;
+
+        // Restore Languages
+        if (prefs.targetLangs && Array.isArray(prefs.targetLangs)) {
+            // Uncheck all first
+            document.querySelectorAll('input[name="targetLanguages"]').forEach(el => el.checked = false);
+            // Check saved ones
+            prefs.targetLangs.forEach(lang => {
+                const el = document.querySelector(`input[name='targetLanguages'][value='${lang}']`);
+                if (el) el.checked = true;
+            });
+        }
+
+        // Restore Translation Model
+        if (prefs.translationModel) {
+            const radio = document.querySelector(`input[name='translationModel'][value='${prefs.translationModel}']`);
+            if (radio) radio.checked = true;
+        }
+
+        // Restore TTS Provider
+        if (prefs.ttsProvider) {
+            const radio = document.querySelector(`input[name='ttsProvider'][value='${prefs.ttsProvider}']`);
+            if (radio) {
+                radio.checked = true;
+                if (window.toggleVoiceSelect) window.toggleVoiceSelect();
+            }
+        }
+
+        if (prefs.applioGender) {
+            const radio = document.querySelector(`input[name='applioGender'][value='${prefs.applioGender}']`);
+            if (radio) radio.checked = true;
+        }
+
+        console.log('Preferences loaded:', prefs);
+    } catch (e) {
+        console.error('Error loading preferences', e);
+    }
+}
+

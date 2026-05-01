@@ -11484,6 +11484,13 @@ function updateProjectButtons(project) {
       console.log('ðŸ“ BotÃ³n de generar prompts mostrado para proyecto cargado');
     }
 
+    // Actualizar visibility del botÃ³n de descargar zip (mostrar siempre que haya proyecto cargado)
+    const downloadZipBtn = document.getElementById('downloadProjectZipBtn');
+    if (downloadZipBtn) {
+      downloadZipBtn.style.display = 'inline-flex';
+      console.log('📦 Botón de descargar proyecto (ZIP) mostrado para proyecto cargado');
+    }
+
     // Actualizar visibility del panel de traducciÃ³n
     const translationPanel = document.getElementById('translationPanel');
     if (translationPanel) {
@@ -13732,6 +13739,11 @@ function showVideoGenerationButton() {
   const simpleVideoBtn = document.getElementById('generateSimpleVideoBtn');
   if (simpleVideoBtn) {
     simpleVideoBtn.style.display = 'inline-flex';
+  }
+
+  const dzBtn = document.getElementById('downloadProjectZipBtn');
+  if (dzBtn) {
+    dzBtn.style.display = 'inline-flex';
   }
 
   const generateImagesControls = document.getElementById('generateMissingImagesControls');
@@ -16440,3 +16452,144 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 });
 
+// ------- SISTEMA DE AJUSTES GLOBALES -------
+document.addEventListener('DOMContentLoaded', () => {
+    const openSettingsBtn = document.getElementById('openSettingsBtn');
+    const settingsModal = document.getElementById('settingsModal');
+    const closeSettingsModal = document.getElementById('closeSettingsModal');
+    const cancelSettingsBtn = document.getElementById('cancelSettingsBtn');
+    const globalOutputDirInput = document.getElementById('globalOutputDirInput');
+
+    if (openSettingsBtn && settingsModal) {
+        openSettingsBtn.addEventListener('click', async () => {
+            settingsModal.style.display = 'block';
+            try {
+                const res = await fetch('/api/settings/output-dir');
+                if (res.ok) {
+                    const data = await res.json();
+                    globalOutputDirInput.value = data.outputsDir || '';
+                }
+            } catch (e) {
+                console.error('Error fetching settings', e);
+            }
+            // Cargar API keys y config del .env
+            try {
+                const envRes = await fetch('/api/settings/env-config');
+                if (envRes.ok) {
+                    const envData = await envRes.json();
+                    const setVal = (id, key) => { const el = document.getElementById(id); if (el) el.value = envData[key] || ''; };
+                    setVal('envGoogleApiKey', 'GOOGLE_API_KEY');
+                    setVal('envGoogleApiKeyGratis', 'GOOGLE_API_KEY_GRATIS');
+                    setVal('envGoogleApiKeyGratis2', 'GOOGLE_API_KEY_GRATIS2');
+                    setVal('envGoogleApiKeyGratis3', 'GOOGLE_API_KEY_GRATIS3');
+                    setVal('envGoogleApiKeyGratis4', 'GOOGLE_API_KEY_GRATIS4');
+                    setVal('envGoogleApiKeyGratis5', 'GOOGLE_API_KEY_GRATIS5');
+                    setVal('envOpenaiApiKey', 'OPENAI_API_KEY');
+                    setVal('envApplioPath', 'APPLIO_PATH');
+                    setVal('envApplioUrl', 'APPLIO_SERVER_URL');
+                }
+            } catch (e) {
+                console.error('Error fetching env config', e);
+            }
+        });
+
+        const closeModal = () => settingsModal.style.display = 'none';
+        if (closeSettingsModal) closeSettingsModal.addEventListener('click', closeModal);
+        if (cancelSettingsBtn) cancelSettingsBtn.addEventListener('click', closeModal);
+    }
+});
+
+async function saveGlobalSettings() {
+    const globalOutputDirInput = document.getElementById('globalOutputDirInput');
+    const settingsModal = document.getElementById('settingsModal');
+    const newDir = globalOutputDirInput.value.trim();
+    
+    if (!newDir) return alert('La ruta de outputs no puede estar vacía');
+    
+    try {
+        // Guardar ruta de outputs
+        const res = await fetch('/api/settings/output-dir', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ outputsDir: newDir })
+        });
+        
+        if (!res.ok) {
+            const err = await res.json();
+            alert('Error al guardar ruta: ' + err.error);
+            return;
+        }
+
+        // Guardar API keys y config del .env
+        const getVal = (id) => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
+        const envConfig = {
+            GOOGLE_API_KEY: getVal('envGoogleApiKey'),
+            GOOGLE_API_KEY_GRATIS: getVal('envGoogleApiKeyGratis'),
+            GOOGLE_API_KEY_GRATIS2: getVal('envGoogleApiKeyGratis2'),
+            GOOGLE_API_KEY_GRATIS3: getVal('envGoogleApiKeyGratis3'),
+            GOOGLE_API_KEY_GRATIS4: getVal('envGoogleApiKeyGratis4'),
+            GOOGLE_API_KEY_GRATIS5: getVal('envGoogleApiKeyGratis5'),
+            OPENAI_API_KEY: getVal('envOpenaiApiKey'),
+            APPLIO_PATH: getVal('envApplioPath'),
+            APPLIO_SERVER_URL: getVal('envApplioUrl'),
+        };
+
+        const envRes = await fetch('/api/settings/env-config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(envConfig)
+        });
+
+        if (envRes.ok) {
+            alert('Ajustes guardados correctamente.');
+            settingsModal.style.display = 'none';
+            if(typeof loadProjectsList === 'function') loadProjectsList();
+        } else {
+            const err = await envRes.json();
+            alert('Error al guardar configuración: ' + err.error);
+        }
+    } catch (e) {
+        console.error('Error saving settings', e);
+        alert('Hubo un error al guardar los ajustes.');
+    }
+}
+// Event listener para el botón de descargar el proyecto en ZIP
+const downloadProjectZipBtn = document.getElementById('downloadProjectZipBtn'); 
+if (downloadProjectZipBtn) {
+  downloadProjectZipBtn.addEventListener('click', async () => {
+    if (!window.currentProject || !window.currentProject.folderName) {
+      showNotification('No hay un proyecto cargado.', 'error');
+      return;
+    }
+
+    const folderName = window.currentProject.folderName;
+    const downloadUrl = `/api/projects/${folderName}/download`;
+    const originalHtml = downloadProjectZipBtn.innerHTML;
+
+    downloadProjectZipBtn.disabled = true;
+    downloadProjectZipBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Preparando ZIP...</span>';
+
+    try {
+      showNotification('Preparando descarga del proyecto en ZIP...', 'info');   
+      // Crear enlace temporal para forzar la descarga
+      const a = document.createElement('a');
+      a.href = downloadUrl;
+      a.download = `${folderName}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+
+      setTimeout(() => {
+        showNotification('Descarga iniciada.', 'success');
+      }, 500);
+    } catch (error) {
+      console.error('Error descargando ZIP:', error);
+      showNotification('Error descargando el proyecto.', 'error');
+    } finally {
+      setTimeout(() => {
+        downloadProjectZipBtn.disabled = false;
+        downloadProjectZipBtn.innerHTML = originalHtml;
+      }, 1500);
+    }
+  });
+}

@@ -6,7 +6,7 @@
   <title>Traductor de Video IA - Studio</title>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=1776983352645">
   <style>
       /* Scoped Styles for Translate Video Page ("tv-" prefix) */
       body {
@@ -369,7 +369,24 @@
           height: 16px;
           margin-right: 10px;
       }
-  </style>
+  
+    /* RESPONSIVE TWEAKS */
+    @media (max-width: 900px) {
+        .tv-layout { grid-template-columns: 1fr !important; overflow: auto !important; }
+        .tv-sidebar { height: auto !important; overflow-y: visible !important; }
+        .tv-workspace-content { overflow-y: visible !important; }
+        .tv-main-container { height: auto !important; overflow: visible !important; }
+        body { overflow: auto !important; height: auto !important; padding: 10px !important; }
+    }
+    @media (max-width: 768px) {
+        div[style*='grid-template-columns: 1fr 1fr'] { grid-template-columns: 1fr !important; gap: 15px !important; display: flex !important; flex-direction: column !important; }
+        div[style*='grid-template-columns: repeat(3, 1fr)'] { grid-template-columns: 1fr !important; display: flex !important; flex-direction: column !important; }
+        .tv-progress-steps { flex-wrap: wrap !important; }
+        .tv-step { min-width: 100px; }
+        .tv-header h1 { font-size: 1.5rem !important; }
+    }
+
+</style>
 </head>
 <body>
 
@@ -405,12 +422,12 @@
                       </div>
                       <div class="tv-options-list">
                            <label class="tv-option-label">
-                              <input type="radio" name="translationModel" value="gemini-3.1-pro-preview" checked>
-                              <span>Gemini 3.1 Pro Preview (Recomendado)</span>
+                              <input type="radio" name="translationModel" value="gemini-3-flash-preview" checked>
+                              <span>Gemini 3 Flash Preview</span>
                           </label>
                           <label class="tv-option-label">
-                              <input type="radio" name="translationModel" value="gemini-3-flash-preview">
-                              <span>Gemini 3 Flash Preview</span>
+                              <input type="radio" name="translationModel" value="gemini-3.1-pro-preview">
+                              <span>Gemini 3.1 Pro Preview (Recomendado)</span>
                           </label>
                           <label class="tv-option-label">
                               <input type="radio" name="translationModel" value="gemini-2.5-flash">
@@ -443,11 +460,26 @@
                       </div>
                   </div>
 
-                  <div id="applioVoiceSelectContainer" class="tv-form-group">
-                      <label style="display: block; margin-bottom: 8px; font-size: 0.9em; color:#94a3b8;">Voz de Applio:</label>
-                      <select id="applioVoiceSelect" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); background: #1e293b; color: white;">
-                          <option value="logs\VOCES\RemyOriginal.pth">Cargando voces...</option>
-                      </select>
+<div id="applioVoiceSelectContainer" style="display: none;">
+                        <div class="tv-form-group" style="margin-bottom: 12px;">
+                            <label style="display: block; margin-bottom: 8px; font-size: 0.9em; color:#94a3b8;">Género Base TTS (Applio):</label>
+                            <div class="tv-options-grid" style="grid-template-columns: 1fr 1fr; gap: 8px;">
+                                <label class="tv-option-label">
+                                    <input type="radio" name="applioGender" value="male" checked>
+                                    <span>🗣️ Hombre</span>
+                                </label>
+                                <label class="tv-option-label">
+                                    <input type="radio" name="applioGender" value="female">
+                                    <span>👩 Mujer</span>
+                                </label>
+                            </div>
+                        </div>
+                        <div class="tv-form-group">
+                            <label style="display: block; margin-bottom: 8px; font-size: 0.9em; color:#94a3b8;">Modelo RVC a Aplicar:</label>
+                            <select id="applioVoiceSelect" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); background: #1e293b; color: white;">
+                                <option value="logs\VOCES\RemyOriginal.pth">Cargando voces...</option>
+                            </select>
+                        </div>
                   </div>
 
                   <div id="googleVoiceSelectContainer" class="tv-form-group" style="display: none;">
@@ -624,7 +656,17 @@
                             </div>
                         </div>
                     </div>
-                </div>
+                      <div style="margin-top: 30px; padding: 25px; border: 2px dashed rgba(74, 222, 128, 0.4); border-radius: 12px; background: rgba(74, 222, 128, 0.05); text-align: center; cursor: pointer; transition: all 0.3s;" id="textMarkersDropzone">
+                          <i class="fas fa-file-alt" style="font-size: 2.5em; color: #4ade80; margin-bottom: 15px;"></i>
+                          <p style="font-size: 1em; color: #cbd5e1; margin: 0 0 8px 0;">Arrastra textos (.txt) por sección aquí (Opcional)</p>
+                          <p style="font-size: 0.85em; color: #94a3b8; margin: 0;">Sustituye la IA de transcripción subiendo los textos manualmente para cada sección. Deben coincidir en cantidad con las marcas o audios.</p>
+                          <input type="file" id="textMarkersInput" multiple accept=".txt" style="display: none;">
+                          <div style="display: flex; justify-content: center; gap: 10px; margin-top: 15px;">
+                              <button id="browseTextMarkersBtn" style="background: rgba(74, 222, 128, 0.2); border: 1px solid rgba(74, 222, 128, 0.4); color: #4ade80; padding: 8px 16px; border-radius: 6px; font-size: 0.9em; cursor: pointer; transition: all 0.2s;">Examinar .txt</button>
+                              <button id="clearTextMarkersBtn" title="Limpiar Textos" style="background: rgba(239, 68, 68, 0.2); border: 1px solid rgba(239, 68, 68, 0.4); color: #f87171; padding: 8px 16px; border-radius: 6px; font-size: 0.9em; cursor: pointer; transition: all 0.2s;"><i class="fas fa-trash"></i> Eliminar Textos</button>
+                          </div>
+                          <div id="textMarkersContainerList" style="margin-top:15px; text-align:left; font-size:0.85em; color:#cbd5e1; display:flex; flex-direction:column; gap:5px;"></div>
+                      </div>                </div>
 
                 <!-- MANUAL TAB -->
                 <div id="tabContentManual" class="tv-tab-content">
@@ -703,6 +745,6 @@
       </div>
   </div>
 
-  <script src="translate-video.js"></script>
+  <script src="translate-video.js?v=48229219437"></script>
 </body>
 </html>

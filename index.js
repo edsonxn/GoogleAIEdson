@@ -1068,7 +1068,7 @@ async function generateMissingScript(topic, sectionNumber, totalSections, chapte
     }
 
     // Usar el cliente de IA con fallback automático
-  const { model } = await getGoogleAI("gemini-2.5-flash", { context: 'llm' });
+  const { model } = await getGoogleAI("gemini-3.1-flash-lite-preview", { context: 'llm' });
     
     console.log('🤖 Enviando prompt al modelo de IA...');
     const result = await model.generateContent({
@@ -1503,6 +1503,144 @@ app.post('/api/custom-styles', async (req, res) => {
   }
 });
 
+
+// --- CONFIGURACIÓN DE DIRECTORIO DE OUTPUTS ---
+let globalOutputDir = process.env.OUTPUTS_DIR || path.join(process.cwd(), 'public', 'outputs');
+const settingsPath = path.join(process.cwd(), 'settings.json');
+
+try {
+  if (fs.existsSync(settingsPath)) {
+    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    if (settings.outputsDir) {
+      globalOutputDir = settings.outputsDir;
+    }
+  }
+} catch (e) {
+  console.error("Error cargando settings.json:", e);
+}
+
+// Endpoint para obtener o guardar la ruta base de proyectos
+app.get('/api/settings/output-dir', (req, res) => {
+  res.json({ outputsDir: globalOutputDir });
+});
+
+app.post('/api/settings/output-dir', (req, res) => {
+  try {
+    const newDir = req.body.outputsDir;
+    if (newDir) {
+      globalOutputDir = newDir;
+      if (!fs.existsSync(globalOutputDir)) {
+        fs.mkdirSync(globalOutputDir, { recursive: true });
+      }
+      fs.writeFileSync(settingsPath, JSON.stringify({ outputsDir: globalOutputDir }, null, 2));
+      console.log('✅ Directorio de outputs actualizado:', globalOutputDir);
+      res.json({ success: true, message: 'Directorio actualizado', outputsDir: globalOutputDir });
+    } else {
+      res.status(400).json({ error: 'Falta outputsDir' });
+    }
+  } catch (err) {
+    console.error('Error guardando directorio:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- ENDPOINTS PARA CONFIGURACIÓN DE API KEYS Y PATHS ---
+const envFilePath = path.join(__dirname, '.env');
+
+// Leer configuración actual del .env
+app.get('/api/settings/env-config', (req, res) => {
+  try {
+    let envVars = {};
+    if (fs.existsSync(envFilePath)) {
+      const content = fs.readFileSync(envFilePath, 'utf8');
+      const lines = content.split('\n');
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) continue;
+        const eqIndex = trimmed.indexOf('=');
+        if (eqIndex === -1) continue;
+        const key = trimmed.substring(0, eqIndex).trim();
+        const value = trimmed.substring(eqIndex + 1).trim();
+        envVars[key] = value;
+      }
+    }
+    // Devolver solo las keys relevantes (sin exponer valores completos por seguridad - solo si existen)
+    res.json({
+      GOOGLE_API_KEY: envVars.GOOGLE_API_KEY || '',
+      GOOGLE_API_KEY_GRATIS: envVars.GOOGLE_API_KEY_GRATIS || '',
+      GOOGLE_API_KEY_GRATIS2: envVars.GOOGLE_API_KEY_GRATIS2 || '',
+      GOOGLE_API_KEY_GRATIS3: envVars.GOOGLE_API_KEY_GRATIS3 || '',
+      GOOGLE_API_KEY_GRATIS4: envVars.GOOGLE_API_KEY_GRATIS4 || '',
+      GOOGLE_API_KEY_GRATIS5: envVars.GOOGLE_API_KEY_GRATIS5 || '',
+      OPENAI_API_KEY: envVars.OPENAI_API_KEY || '',
+      APPLIO_SERVER_URL: envVars.APPLIO_SERVER_URL || 'http://localhost:5004',
+      APPLIO_PATH: envVars.APPLIO_PATH || 'C:\\applio2\\Applio',
+    });
+  } catch (err) {
+    console.error('Error leyendo .env:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Guardar configuración en el .env
+app.post('/api/settings/env-config', (req, res) => {
+  try {
+    const updates = req.body;
+    if (!updates || typeof updates !== 'object') {
+      return res.status(400).json({ error: 'Body inválido' });
+    }
+
+    // Leer .env actual o crear uno vacío
+    let existingLines = [];
+    if (fs.existsSync(envFilePath)) {
+      existingLines = fs.readFileSync(envFilePath, 'utf8').split('\n');
+    }
+
+    // Para cada key que viene del frontend, actualizar o agregar
+    const allowedKeys = [
+      'GOOGLE_API_KEY', 'GOOGLE_API_KEY_GRATIS', 'GOOGLE_API_KEY_GRATIS2',
+      'GOOGLE_API_KEY_GRATIS3', 'GOOGLE_API_KEY_GRATIS4', 'GOOGLE_API_KEY_GRATIS5',
+      'OPENAI_API_KEY', 'APPLIO_SERVER_URL', 'APPLIO_PATH'
+    ];
+
+    for (const key of allowedKeys) {
+      if (!(key in updates)) continue;
+      const newValue = String(updates[key]).trim();
+      let found = false;
+
+      for (let i = 0; i < existingLines.length; i++) {
+        const line = existingLines[i].trim();
+        if (line.startsWith(key + '=') || line.startsWith('#' + key + '=')) {
+          existingLines[i] = newValue ? `${key}=${newValue}` : `# ${key}=`;
+          found = true;
+          break;
+        }
+      }
+
+      if (!found && newValue) {
+        existingLines.push(`${key}=${newValue}`);
+      }
+
+      // Actualizar process.env en caliente
+      if (newValue) {
+        process.env[key] = newValue;
+      } else {
+        delete process.env[key];
+      }
+    }
+
+    fs.writeFileSync(envFilePath, existingLines.join('\n'), 'utf8');
+    console.log('✅ Configuración .env actualizada');
+    res.json({ success: true, message: 'Configuración guardada. Algunas cambios requieren reiniciar el servidor.' });
+  } catch (err) {
+    console.error('Error guardando .env:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+// ----------------------------------------------
+
+
+app.use('/outputs', (req, res, next) => express.static(globalOutputDir)(req, res, next));
 app.use(express.static('public')); // Servir HTML y assets
 
 // Configurar multer para subida de archivos
@@ -1997,7 +2135,7 @@ function saveProjectState(projectData) {
       ? createSafeFolderName(folderName.trim())
       : createSafeFolderName(topic);
     
-    const outputsDir = path.join('./public/outputs');
+    const outputsDir = globalOutputDir;
     const projectDir = path.join(outputsDir, safeFolderName);
     
     // Crear carpetas si no existen
@@ -2055,7 +2193,7 @@ async function generateYouTubeMetadataForProject(projectState) {
     console.log(`🎬 Iniciando generación automática de metadatos para: ${projectState.topic}`);
     
     const safeFolderName = projectState.folderName;
-    const projectDir = path.join('./public/outputs', safeFolderName);
+    const projectDir = path.join(globalOutputDir, safeFolderName);
     const projectStateFile = path.join(projectDir, 'project_state.json');
     
     // Recopilar todos los scripts de las secciones completadas
@@ -2136,7 +2274,7 @@ REGLAS ESTRICTAS:
 `;
 
     // Llamar a la IA para generar metadatos
-  const { model } = await getGoogleAI('gemini-2.5-flash', { context: 'llm' });
+  const { model } = await getGoogleAI('gemini-3.1-flash-lite-preview', { context: 'llm' });
     
     console.log(`🤖 Enviando request a Gemini para generar metadatos...`);
     const result = await model.generateContent([{ text: prompt }]);
@@ -2195,7 +2333,7 @@ function updateCompletedSection(projectData, sectionNumber, sectionData) {
       ? createSafeFolderName(folderName.trim())
       : createSafeFolderName(topic);
     
-    const projectStateFile = path.join('./public/outputs', safeFolderName, 'project_state.json');
+    const projectStateFile = path.join(globalOutputDir, safeFolderName, 'project_state.json');
     
     if (fs.existsSync(projectStateFile)) {
       const projectState = JSON.parse(fs.readFileSync(projectStateFile, 'utf8'));
@@ -2261,7 +2399,7 @@ function reconstructProjectState(folderName) {
   try {
     console.log(`🔧 Reconstruyendo estado del proyecto: ${folderName}`);
     
-    const projectDir = path.join('./public/outputs', folderName);
+    const projectDir = path.join(globalOutputDir, folderName);
     
     if (!fs.existsSync(projectDir)) {
       console.error(`❌ Directorio del proyecto no existe: ${projectDir}`);
@@ -2432,7 +2570,7 @@ function reconstructProjectState(folderName) {
 // Función para analizar archivos de un proyecto (imágenes por sección y total de audios)
 function analyzeProjectFiles(folderName) {
   try {
-    const projectDir = path.join('./public/outputs', folderName);
+    const projectDir = path.join(globalOutputDir, folderName);
     const sections = [];
     let totalAudios = 0;
 
@@ -2528,7 +2666,7 @@ function analyzeProjectFiles(folderName) {
 // Función para obtener lista de proyectos disponibles
 function getAvailableProjects() {
   try {
-    const outputsDir = path.join('./public/outputs');
+    const outputsDir = globalOutputDir;
     
     if (!fs.existsSync(outputsDir)) {
       return [];
@@ -2659,7 +2797,7 @@ function loadProjectState(folderName) {
   try {
     // Convertir el nombre del proyecto a formato seguro (espacios a guiones bajos)
     const safeFolderName = createSafeFolderName(folderName);
-    let projectStateFile = path.join('./public/outputs', safeFolderName, 'project_state.json');
+    let projectStateFile = path.join(globalOutputDir, safeFolderName, 'project_state.json');
     console.log(`🔍 Buscando archivo de estado: ${projectStateFile}`);
     
     // Si no existe con el nombre convertido, probar con el nombre original
@@ -2667,7 +2805,7 @@ function loadProjectState(folderName) {
       console.log(`❌ Archivo no encontrado con nombre convertido "${safeFolderName}"`);
       console.log(`🔍 Intentando con nombre original: "${folderName}"`);
       
-      projectStateFile = path.join('./public/outputs', folderName, 'project_state.json');
+      projectStateFile = path.join(globalOutputDir, folderName, 'project_state.json');
       console.log(`🔍 Buscando archivo de estado: ${projectStateFile}`);
       
       if (!fs.existsSync(projectStateFile)) {
@@ -2789,7 +2927,7 @@ function loadProjectState(folderName) {
     
     // Procesar cada sección para agregar información de archivos
     for (const section of sectionsToProcess) {
-      const sectionDir = path.join('./public/outputs', folderName, `seccion_${section.section}`);
+      const sectionDir = path.join(globalOutputDir, folderName, `seccion_${section.section}`);
       
       // 📝 CARGAR SCRIPT DESDE ARCHIVO
       const scriptFileName = `${folderName}_seccion_${section.section}_guion.txt`;
@@ -2903,8 +3041,8 @@ function loadProjectState(folderName) {
     
     // 🎬 CARGAR METADATOS DE YOUTUBE SI EXISTEN
     // Intentar ambos formatos de nombre de archivo para compatibilidad
-    const metadataFile1 = path.join('./public/outputs', folderName, `${folderName}_metadata_youtube.txt`);
-    const metadataFile2 = path.join('./public/outputs', folderName, `${folderName}_youtube_metadata.txt`);
+    const metadataFile1 = path.join(globalOutputDir, folderName, `${folderName}_metadata_youtube.txt`);
+    const metadataFile2 = path.join(globalOutputDir, folderName, `${folderName}_youtube_metadata.txt`);
     
     let metadataFile = null;
     if (fs.existsSync(metadataFile1)) {
@@ -3024,7 +3162,7 @@ function createProjectStructure(topic, section, customFolderName = null) {
     ? customFolderName.trim()  // Ya viene normalizado, no aplicar createSafeFolderName otra vez
     : createSafeFolderName(topic);
     
-  const outputsDir = path.join('./public/outputs');
+  const outputsDir = globalOutputDir;
   const projectDir = path.join(outputsDir, folderName);
   const sectionDir = path.join(projectDir, `seccion_${section}`);
   
@@ -3592,7 +3730,7 @@ function generateProjectStateFile(projectData, requestData) {
 // Función para obtener prompts anteriores de un proyecto para mantener consistencia
 function getPreviousImagePrompts(projectKey, currentSection) {
   try {
-    const projectStateFile = `./public/outputs/${projectKey}/project_state.json`;
+    const projectStateFile = path.join(globalOutputDir, projectKey, 'project_state.json');
     
     if (!fs.existsSync(projectStateFile)) {
       console.log(`📝 No hay estado previo del proyecto para ${projectKey}`);
@@ -4023,7 +4161,7 @@ function scheduleClipProgressCleanup(sessionId, delay = 15 * 60 * 1000) {
 // Función para guardar el estado progresivo del proyecto
 function saveProgressiveProjectState(projectKey, projectData, completedSections = [], completedAudio = [], completedImages = []) {
   try {
-    const projectStateFile = `./public/outputs/${projectKey}/project_state.json`;
+    const projectStateFile = path.join(globalOutputDir, projectKey, 'project_state.json');
     
     // Cargar estado existente si existe
     let existingState = {};
@@ -4080,7 +4218,7 @@ function getNextPhase(completedSections, completedAudio, completedImages, totalS
 // Función para obtener el progreso actual del proyecto
 function getProjectProgress(projectKey) {
   try {
-    const progressFile = `./public/outputs/${projectKey}/progress.json`;
+    const progressFile = path.join(globalOutputDir, projectKey, 'progress.json');
     if (fs.existsSync(progressFile)) {
       return JSON.parse(fs.readFileSync(progressFile, 'utf8'));
     }
@@ -6165,7 +6303,7 @@ VERIFICACIÓN FINAL: Tu respuesta debe contener exactamente ${numImages - 1} ocu
     // =======================================================================
     try {
         console.log(`📑 Generando archivo de guión combinado...`);
-        const fullScriptPath = path.join(process.cwd(), 'public', 'outputs', projectKey, `${projectKey}_guion_completo.txt`);
+        const fullScriptPath = path.join(globalOutputDir, projectKey, `${projectKey}_guion_completo.txt`);
         
         // Unir todos los guiones limpios separados por saltos de línea dobles
         // Usamos 'script' original pero quitamos markdown básico para que quede lo más limpio posible si se desea, 
@@ -6262,7 +6400,7 @@ app.post('/generate-missing-applio-audios', async (req, res) => {
     
     // Verificar qué audios faltan
     const missingAudioSections = [];
-    const projectDir = path.join('./public/outputs', folderName);
+    const projectDir = path.join(globalOutputDir, folderName);
     
     for (let i = 0; i < projectState.completedSections.length; i++) {
       const section = projectState.completedSections[i];
@@ -6505,7 +6643,7 @@ app.post('/generate-missing-google-audios', async (req, res) => {
       return res.status(404).json({ error: 'Proyecto no encontrado' });
     }
 
-    const projectDir = path.join('./public/outputs', folderName);
+    const projectDir = path.join(globalOutputDir, folderName);
     const missingGoogleSections = [];
 
     for (let i = 0; i < projectState.completedSections.length; i++) {
@@ -6721,7 +6859,7 @@ app.post('/regenerate-applio-audios', async (req, res) => {
       
       try {
         // Obtener el directorio de la sección
-        const projectDir = path.join('./public/outputs', folderName);
+        const projectDir = path.join(globalOutputDir, folderName);
         const sectionDir = path.join(projectDir, `seccion_${section.section}`);
         
         // Crear nombre de archivo único
@@ -6767,7 +6905,7 @@ app.post('/regenerate-applio-audios', async (req, res) => {
             
             // Actualizar el archivo TXT con el nuevo contenido
             try {
-              const projectDir = path.join('./public/outputs', folderName);
+              const projectDir = path.join(globalOutputDir, folderName);
               const sectionDir = path.join(projectDir, `seccion_${section.section}`);
               const scriptFiles = fs.readdirSync(sectionDir).filter(file => 
                 file.endsWith('.txt') && !file.includes('metadata') && !file.includes('keywords')
@@ -6883,7 +7021,7 @@ app.post('/generate-missing-scripts', async (req, res) => {
   const missingSectionScripts = [];
   const scriptResults = [];
   const restoredFromMemory = [];
-    const projectDir = path.join('./public/outputs', folderName);
+    const projectDir = path.join(globalOutputDir, folderName);
     const projectTopic = projectState.topic || folderName;
     const totalSections = projectState.totalSections || projectState.completedSections.length;
     
@@ -7210,7 +7348,7 @@ async function generateMissingImagesForProject(data) {
   
   // Preparar las secciones que necesitan imágenes
   for (let sectionNum = 1; sectionNum <= projectState.totalSections; sectionNum++) {
-    const sectionDir = path.join('./public/outputs', folderName, `seccion_${sectionNum}`);
+    const sectionDir = path.join(globalOutputDir, folderName, `seccion_${sectionNum}`);
     
     if (!fs.existsSync(sectionDir)) {
       console.log(`⚠️ Sección ${sectionNum} no existe, saltando...`);
@@ -7520,7 +7658,7 @@ app.post('/api/generate-missing-images', async (req, res) => {
     
     checkImageGenerationCancellation(sessionId);
 
-    const projectDir = path.join('./public/outputs', folderName);
+    const projectDir = path.join(globalOutputDir, folderName);
     const sectionsNeedingPrompts = [];
     const sectionsNeedingImages = [];
     const promptMetadataBySection = new Map();
@@ -8084,7 +8222,7 @@ app.post('/api/generate-prompts-only', async (req, res) => {
   console.log(`📱 Cantidad de imágenes por sección: ${imageCount}`);
   console.log(`🤖 Modelo de imágenes referencial: ${selectedImageModelLabel} (${selectedImageModel})`);
     
-    const projectDir = path.join('./public/outputs', folderName);
+    const projectDir = path.join(globalOutputDir, folderName);
     const sectionsNeedingPrompts = [];
     
     // Verificar qué secciones necesitan prompts de imágenes
@@ -10047,7 +10185,7 @@ async function generateComfyUIImage(prompt, imageName, outputDir, customConfig =
     
     if (result.success && result.filename) {
       // Mover la imagen generada al directorio de la sección
-      const generatedImagePath = path.join('./public/outputs', result.filename);
+      const generatedImagePath = path.join(globalOutputDir, result.filename);
       const targetImageName = `${imageName}.png`;
       const targetImagePath = path.join(outputDir, targetImageName);
       
@@ -11384,7 +11522,7 @@ Generado automáticamente por el sistema de creación de contenido
             return false;
           }
           
-          const imagePath = path.join('./public', 'outputs', folderStructure.safeTopicName, `seccion_${section}`, img.filename);
+          const imagePath = path.join(globalOutputDir, folderStructure.safeTopicName, `seccion_${section}`, img.filename);
           const exists = fs.existsSync(imagePath);
           if (!exists) {
             console.log(`⚠️ Archivo no encontrado, excluyendo de respuesta: ${img.filename}`);
@@ -13003,7 +13141,7 @@ app.post('/translate-project', async (req, res) => {
   res.setHeader('Connection', 'keep-alive');
 
   try {
-    const projectDir = path.join('./public/outputs', folderName);
+    const projectDir = path.join(globalOutputDir, folderName);
     const langNames = {
       'en': 'English', 'fr': 'French', 'de': 'German', 
       'ko': 'Korean', 'ru': 'Russian', 'pt': 'Portuguese'
@@ -13037,7 +13175,7 @@ app.post('/translate-project-all', async (req, res) => {
   res.setHeader('Connection', 'keep-alive');
 
   try {
-    const projectDir = path.join('./public/outputs', folderName);
+    const projectDir = path.join(globalOutputDir, folderName);
     const languages = ['en', 'fr', 'de', 'ko', 'ru', 'pt', 'zh'];
     
     // Calcular total de tareas válidas (secciones que existen)
@@ -13388,8 +13526,8 @@ async function concatenateTranslatedAudios(projectDir, folderName, totalSections
               .input(outputPath) // Input 0: Voz (WAV)
               .input(musicPath)  // Input 1: Música
               .complexFilter([
-                // Ajustar volumen de la música (ej: 0.2 para que no tape la voz)
-                `[1:a]volume=0.2,aloop=loop=-1:size=2e+09[music]`, 
+                // Ajustar volumen de la música (ej: 0.7 para que no tape la voz)
+                `[1:a]volume=0.7,aloop=loop=-1:size=2e+09[music]`, 
                 // Recortar música a la duración exacta de la voz
                 `[music]atrim=duration=${voiceDuration}[music_trimmed]`,
                 // Mezclar voz y música.
@@ -13425,7 +13563,7 @@ app.post('/generate-translated-audios', async (req, res) => {
   res.setHeader('Connection', 'keep-alive');
 
   try {
-    const projectDir = path.join('./public/outputs', folderName);
+    const projectDir = path.join(globalOutputDir, folderName);
     
     // 1. Generar y medir audio en ESPAÑOL (Referencia de duración) - PRIMER PASO
     console.log('🔗 Procesando audio base (Español)...');
@@ -13673,7 +13811,7 @@ app.post('/generate-youtube-metadata', async (req, res) => {
     if (folderName) {
       try {
         const safeFolderName = createSafeFolderName(folderName.trim());
-        const projectDir = path.join('./public/outputs', safeFolderName);
+        const projectDir = path.join(globalOutputDir, safeFolderName);
         const projectStateFile = path.join(projectDir, 'project_state.json');
         
         if (fs.existsSync(projectStateFile)) {
@@ -13726,7 +13864,7 @@ app.post('/generate-youtube-metadata', async (req, res) => {
       chaptersTimestamps
     });
 
-  const { model } = await getGoogleAI("gemini-2.5-flash", { context: 'llm' });
+  const { model } = await getGoogleAI("gemini-3.1-flash-lite-preview", { context: 'llm' });
     
     const response = await model.generateContent([{ text: prompt }]);
     const responseText = response.response.text();
@@ -13775,7 +13913,7 @@ app.post('/generate-youtube-metadata', async (req, res) => {
             ? createSafeFolderName(folderName.trim())
             : createSafeFolderName(topic);
             
-          const outputsDir = path.join('./public/outputs');
+          const outputsDir = globalOutputDir;
           const projectDir = path.join(outputsDir, safeFolderName);
           
           if (!fs.existsSync(outputsDir)) {
@@ -13828,7 +13966,7 @@ Generado automáticamente por el sistema de creación de contenido
         ? createSafeFolderName(folderName.trim())
         : createSafeFolderName(topic);
         
-      const outputsDir = path.join('./public/outputs');
+      const outputsDir = globalOutputDir;
       const projectDir = path.join(outputsDir, safeFolderName);
       
       // Crear carpetas si no existen
@@ -13921,7 +14059,7 @@ app.get('/api/projects/:folderName', (req, res) => {
 app.get('/api/projects/:folderName/diagnose', (req, res) => {
   try {
     const { folderName } = req.params;
-    const projectDir = path.join('./public/outputs', folderName);
+    const projectDir = path.join(globalOutputDir, folderName);
     const projectStateFile = path.join(projectDir, 'project_state.json');
     
     console.log(`🔍 Diagnosticando proyecto: ${folderName}`);
@@ -14049,7 +14187,7 @@ app.post('/api/projects/:folderName/reconstruct', (req, res) => {
     }
     
     // Guardar el estado reconstruido
-    const projectStateFile = path.join('./public/outputs', folderName, 'project_state.json');
+    const projectStateFile = path.join(globalOutputDir, folderName, 'project_state.json');
     
     // Crear backup del archivo existente si existe
     if (fs.existsSync(projectStateFile)) {
@@ -14088,7 +14226,7 @@ app.post('/api/projects/:folderName/reconstruct', (req, res) => {
 app.get('/api/project-images/:folderName/:sectionNumber', (req, res) => {
   try {
     const { folderName, sectionNumber } = req.params;
-    const projectDir = path.join('./public/outputs', folderName);
+    const projectDir = path.join(globalOutputDir, folderName);
     const sectionDir = path.join(projectDir, `seccion_${sectionNumber}`);
     
     //console.log(`🖼️ Buscando imágenes en: ${sectionDir}`);
@@ -14336,7 +14474,7 @@ app.get('/api/check-section-images', (req, res) => {
       });
     }
 
-    const projectDir = path.join('./public/outputs', folderName);
+    const projectDir = path.join(globalOutputDir, folderName);
     const sectionDir = path.join(projectDir, `seccion_${sectionNumber}`);
 
     console.log(`🔍 Verificando imágenes en: ${sectionDir}`);
@@ -14376,7 +14514,7 @@ app.get('/api/check-section-images', (req, res) => {
 app.delete('/api/projects/:folderName', (req, res) => {
   try {
     const { folderName } = req.params;
-    const projectDir = path.join('./public/outputs', folderName);
+    const projectDir = path.join(globalOutputDir, folderName);
     
     if (fs.existsSync(projectDir)) {
       fs.rmSync(projectDir, { recursive: true, force: true });
@@ -14397,9 +14535,9 @@ app.post('/api/projects/:folderName/duplicate', (req, res) => {
     const { folderName } = req.params;
     const { newName } = req.body;
     
-    const sourceDir = path.join('./public/outputs', folderName);
+    const sourceDir = path.join(globalOutputDir, folderName);
     const newFolderName = createSafeFolderName(newName);
-    const targetDir = path.join('./public/outputs', newFolderName);
+    const targetDir = path.join(globalOutputDir, newFolderName);
     
     if (!fs.existsSync(sourceDir)) {
       return res.status(404).json({ success: false, error: 'Proyecto fuente no encontrado' });
@@ -14449,7 +14587,7 @@ app.post('/api/open-folder', async (req, res) => {
       });
     }
     
-    const folderPath = path.join(process.cwd(), 'public', 'outputs', folderName);
+    const folderPath = path.join(globalOutputDir, folderName);
     
     // Verificar que la carpeta existe
     if (!fs.existsSync(folderPath)) {
@@ -14533,7 +14671,7 @@ app.post('/api/refresh-image', async (req, res) => {
     const normalizedFolderName = createSafeFolderName(actualFolderName);
     console.log(`🔄 Carpeta normalizada: "${folderName}" → "${normalizedFolderName}"`);
     
-    const imagesDir = path.join('./public/outputs', normalizedFolderName, `seccion_${sectionNum}`);
+    const imagesDir = path.join(globalOutputDir, normalizedFolderName, `seccion_${sectionNum}`);
     console.log('📁 Directorio de imágenes:', imagesDir);
     
     if (!fs.existsSync(imagesDir)) {
@@ -14821,7 +14959,7 @@ app.post('/generate-project-video', async (req, res) => {
     
     // Normalizar nombre de la carpeta
     const normalizedFolderName = createSafeFolderName(folderName);
-    const projectPath = path.join(process.cwd(), 'public', 'outputs', normalizedFolderName);
+    const projectPath = path.join(globalOutputDir, normalizedFolderName);
     
     if (!fs.existsSync(projectPath)) {
       return res.status(404).json({ error: 'Proyecto no encontrado' });
@@ -14892,7 +15030,7 @@ app.post('/generate-simple-video', async (req, res) => {
     
     // Normalizar nombre de la carpeta
     const normalizedFolderName = createSafeFolderName(folderName);
-    const projectPath = path.join(process.cwd(), 'public', 'outputs', normalizedFolderName);
+    const projectPath = path.join(globalOutputDir, normalizedFolderName);
     
     if (!fs.existsSync(projectPath)) {
       return res.status(404).json({ error: 'Proyecto no encontrado' });
@@ -14982,14 +15120,14 @@ app.post('/generate-separate-videos', async (req, res) => {
     
     // Intentar primero con el nombre normalizado
     const normalizedFolderName = createSafeFolderName(folderName);
-    let projectPath = path.join(process.cwd(), 'public', 'outputs', normalizedFolderName);
+    let projectPath = path.join(globalOutputDir, normalizedFolderName);
     
     if (!fs.existsSync(projectPath)) {
       console.log(`❌ Proyecto no encontrado con nombre normalizado: ${normalizedFolderName}`);
       console.log(`🔍 Intentando con nombre original: ${folderName}`);
       
       // Intentar con el nombre original
-      projectPath = path.join(process.cwd(), 'public', 'outputs', folderName);
+      projectPath = path.join(globalOutputDir, folderName);
       
       if (!fs.existsSync(projectPath)) {
         console.log(`❌ Proyecto no encontrado: ${folderName}`);
@@ -15030,7 +15168,7 @@ app.post('/generate-separate-videos', async (req, res) => {
     }
     
     // Usar el nombre de carpeta que realmente funcionó
-    const actualFolderName = fs.existsSync(path.join(process.cwd(), 'public', 'outputs', normalizedFolderName)) 
+    const actualFolderName = fs.existsSync(path.join(globalOutputDir, normalizedFolderName)) 
       ? normalizedFolderName 
       : folderName;
 
@@ -15121,11 +15259,11 @@ app.get('/api/section-media-summary/:folderName', async (req, res) => {
     }
 
     const normalizedFolderName = createSafeFolderName(folderName);
-    let projectPath = path.join(process.cwd(), 'public', 'outputs', normalizedFolderName);
+    let projectPath = path.join(globalOutputDir, normalizedFolderName);
     let resolvedFolderName = normalizedFolderName;
 
     if (!fs.existsSync(projectPath)) {
-      projectPath = path.join(process.cwd(), 'public', 'outputs', folderName);
+      projectPath = path.join(globalOutputDir, folderName);
       resolvedFolderName = folderName;
 
       if (!fs.existsSync(projectPath)) {
@@ -17006,7 +17144,7 @@ function getLocalIP() {
 // Función auxiliar para actualizar el audio de una sección en el estado del proyecto
 function updateSectionAudioInState(projectKey, sectionNumber, audioPath) {
   try {
-    const projectStateFile = `./public/outputs/${projectKey}/project_state.json`;
+    const projectStateFile = path.join(globalOutputDir, projectKey, 'project_state.json');
     if (!fs.existsSync(projectStateFile)) return false;
 
     const state = JSON.parse(fs.readFileSync(projectStateFile, 'utf8'));
@@ -17647,7 +17785,7 @@ app.get('/api/check-video-exists', (req, res) => {
         }
         
         const name = path.parse(videoName).name;
-        const outputDir = path.join(process.cwd(), 'public', 'outputs', name);
+        const outputDir = path.join(globalOutputDir, name);
         
         // Verificar existencia del directorio y del video original
         if (fs.existsSync(outputDir)) {
@@ -17686,7 +17824,7 @@ app.post('/api/translate-video', upload.fields([{ name: 'video', maxCount: 1 }, 
         // Check if this is a retry with an existing video
         if (req.body.retryVideoName) {
             videoName = path.parse(req.body.retryVideoName).name;
-            const outputDir = path.join(process.cwd(), 'public', 'outputs', videoName);
+            const outputDir = path.join(globalOutputDir, videoName);
             // Try to find the saved original video
             // We don't know the extension for sure, so we might need to look for it or assume mp4/original name
             // Let's assume we saved it as 'original_video.mp4' or similar. 
@@ -17744,7 +17882,7 @@ app.post('/api/translate-video', upload.fields([{ name: 'video', maxCount: 1 }, 
         }
 
         // Usar carpeta pública para outputs, con el nombre del video
-        const outputDir = path.join(process.cwd(), 'public', 'outputs', videoName);
+        const outputDir = path.join(globalOutputDir, videoName);
         
         // Crear directorio si no existe (recursive: true asegura que cree outputs/ si falta)
         if (!fs.existsSync(outputDir)) {
@@ -17809,9 +17947,81 @@ app.post('/api/translate-video', upload.fields([{ name: 'video', maxCount: 1 }, 
              });
         });
 
-        // 2. Transcribe Audio
+        // 2. Transcribe Audio (CON BYPASS MANUAL)
         let transcriptionResult = null;
-        const transcriptionJsonPath = path.join(outputDir, 'transcription.json');
+        let sectionData = [];
+        let isMultiSection = false;
+        let markers = [];
+        let transcriptionJsonPath = path.join(outputDir, 'transcription.json');
+        let bypassSuccessful = false;
+        let originalText = '';
+        if (req.body.promoTexts && req.body.promoStartTimes) {
+            console.log('? Textos manuales detectados. Omitiendo Whisper...');
+            sendStatus('Textos manuales detectados. Preparando secciones...', 30);
+            try {
+                const manualTexts = JSON.parse(req.body.promoTexts);
+                const times = JSON.parse(req.body.promoStartTimes);
+                let tempMarkers = [];
+                if (Array.isArray(times)) {
+                     times.forEach(t => {
+                         let val = 0;
+                         const valStr = t.toString().trim();
+                         if (valStr.includes(':')) {
+                             const parts = valStr.split(':');
+                             if (parts.length === 2) val = parseInt(parts[0]) * 60 + parseFloat(parts[1]);
+                         } else {
+                             val = parseFloat(valStr);
+                         }
+                         if (!isNaN(val) && val > 0 && val < videoDuration) tempMarkers.push(val);
+                     });
+                }
+                tempMarkers = [...new Set(tempMarkers)].sort((a, b) => a - b);
+                if (manualTexts.length > 0 && manualTexts.length === tempMarkers.length + 1) {
+                    const intervals = [0, ...tempMarkers, videoDuration];
+                    for (let i = 0; i < intervals.length - 1; i++) {
+                        sectionData.push({
+                            index: i,
+                            start: intervals[i],
+                            end: intervals[i+1],
+                            duration: intervals[i+1] - intervals[i],
+                            segments: [], // not used in bypass phase
+                            text: (() => {
+                                let raw = manualTexts[i];
+                                let match = raw.match(/CONTENIDO DEL GUI[^\n]*\n/i);
+                                if (match) {
+                                    let cleanText = raw.substring(match.index + match[0].length).trim();
+                                    let footerMatch = cleanText.match(/={10,}/);
+                                    if (footerMatch) {
+                                        return cleanText.substring(0, footerMatch.index).trim();
+                                    }
+                                    return cleanText;
+                                }
+                                return raw.trim();
+                            })()
+                        });
+                    }
+                    isMultiSection = true;
+                    bypassSuccessful = true;
+                    originalText = sectionData.map(s => s.text).join('\n\n');
+                    transcriptionResult = { transcript: originalText, segments: [] };
+                    markers = tempMarkers; // Set global markers
+                    console.log('?? Secciones creadas desde textos manuales ('+sectionData.length+').');
+                    sendStatus('Transcripci�n manual completada. Traduciendo...', 50);
+                    try {
+                      fs.writeFileSync(transcriptionJsonPath, JSON.stringify(transcriptionResult, null, 2));
+                    } catch(jsonErr) {}
+                } else {
+                    console.warn('?? Fallo en pareo: ' + manualTexts.length + ' textos vs ' + tempMarkers.length + ' cortes. Volviendo a Whisper...');
+                }
+            } catch(e) {
+                console.error('Error al parear textos manuales:', e);
+            }
+        }
+        if (!bypassSuccessful) {
+        // --- WHISPER ORIGINAL --- 
+// (Whisper Fallback)
+        /* let transcriptionResult = null; */
+        /* const transcriptionJsonPath ... */
 
         if (fs.existsSync(transcriptionJsonPath)) {
             console.log('✅ Transcripción ya existe, cargando...');
@@ -17917,15 +18127,15 @@ if __name__ == "__main__":
             fs.writeFileSync(transcriptionJsonPath, JSON.stringify(transcriptionResult, null, 2));
         }
 
-        const originalText = transcriptionResult.transcript;
+        originalText = transcriptionResult.transcript;
         if (!originalText) {
             throw new Error('La transcripción del audio falló o devolvió texto vacío.');
         }
 
         // --- MULTI-SECTION SYNC LOGIC ---
-        let sectionData = []; // Array objects: { text: "...", duration: 123, index: 0, segments: [] }
-        let isMultiSection = false;
-        let markers = [];
+        /* let sectionData = []; */ // Array objects: { text: "...", duration: 123, index: 0, segments: [] }
+        /* let isMultiSection = false; */
+        /* let markers = []; */
 
         // Parse markers
         if (req.body.promoStartTimes) {
@@ -18033,6 +18243,8 @@ if __name__ == "__main__":
 
         sendStatus('Transcripción completada. Traduciendo...', 50);
 
+        } // FIN DEL BYPASS MANUAL
+
         // 3. Translate and Generate Audio
         let languages = ['es', 'en', 'fr', 'de', 'pt', 'it', 'ru', 'zh', 'ko', 'ja']; 
 
@@ -18110,8 +18322,24 @@ if __name__ == "__main__":
                              const sectionUniqueId = `sec${sectionIndex}`;
                              await generateGoogleTTSWithSplitting(txt, outPath, lang, googleVoice, ttsModelName, req.body.randomVoice === 'true', true, keepTemp, sectionUniqueId);
                              return true;
+                         } else {
+                             // Applio en Modo Múltiples Secciones
+                             let isConnected = false;
+                             try { isConnected = await applioClient.checkConnection(); } catch(e) {}
+                             if (!isConnected) {
+                                 console.log("⚠️ Applio no está conectado, intentando iniciar...");
+                                 try { await startApplio(); await new Promise(r => setTimeout(r, 5000)); } catch(e) {}
+                             }
+                             const ttsModel = voiceMap[lang] || 'en-US-ChristopherNeural';
+                             const userApplioVoice = req.body.applioVoice || 'RemyOriginal.pth';
+                             await applioClient.textToSpeech(txt, outPath, {
+                                 model: ttsModel,
+                                 voicePath: userApplioVoice,
+                                 speed: 0,
+                                 pitch:0
+                             });
+                             return true;
                          }
-                         return false;
                 };
 
                 // Helper para Ajustar Velocidad
@@ -18277,53 +18505,21 @@ if __name__ == "__main__":
                             
                             // Ajustar Duración
                             let targetDuration = sec.duration;
-                            
-                            // Aplicar silencio al final de la ÚLTIMA sección si no es short
-                            if (i === sectionData.length - 1) {
-                                const isShortVideo = req.body.isShortVideo === 'true';
-                                // Si NO es short, restamos 20s para que el TTS vaya más rápido (dure menos),
-                                // dejando espacio de silencio al final.
-                                if (!isShortVideo) targetDuration = Math.max(1, targetDuration - 20);
+
+                            const isShortVid = req.body.isShortVideo === 'true';
+                            const silencePad = isShortVid ? 0 : 20;
+
+                            // Corrección: Si distribuimos el silencio en TODAS las secciones, los cortes 
+                            // que el usuario marcó manualmente se van recorriendo hacia atrás (desincronizando).
+                            // Por lo tanto, SI hay silencio, y estamos en el modo de tiempos explícitos,
+                            // o en general para mantener la sincronía, debemos descontar los 20s 
+                            // ÚNICAMENTE de la ÚLTIMA sección (o si no cabe, ajustarla a un mínimo).
+                            if (silencePad > 0 && i === sectionData.length - 1) {
+                                targetDuration = Math.max(1, targetDuration - silencePad);
                             }
-                            
+
                             if (hasAudio && fs.existsSync(secAudioPath)) {
                                  await adjustSpeed(secAudioPath, secAudioAdjPath, targetDuration);
-                                 
-                                 // Si es la última y no es short, agregar padding de silencio REAL al archivo final
-                                 if (i === sectionData.length - 1) {
-                                     const isShortVideo = req.body.isShortVideo === 'true';
-                                     // NO agregar padding adicional si es Short
-                                     if (!isShortVideo) {
-                                         const paddedPath = secAudioAdjPath.replace('.wav', '_padded.wav');
-                                         await new Promise((resolve, reject) => {
-                                             console.log('🔇 Agregando 20 segundos de silencio al final del audio...');
-                                             // Opción alternativa: generar silencio primero y luego concatenar
-                                             const silencePath = secAudioAdjPath.replace('.wav', '_silence.wav');
-                                             
-                                             // 1. Generar silencio de 20s
-                                             const p1 = spawn('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'anullsrc=r=24000:cl=mono', '-t', '20', silencePath]);
-                                             p1.on('close', (c1) => {
-                                                 if(c1!==0) { reject(new Error('Silence gen failed')); return; }
-                                                 
-                                                 // 2. Concatenar audio + silencio
-                                                 const p2 = spawn('ffmpeg', ['-y', '-i', secAudioAdjPath, '-i', silencePath, '-filter_complex', '[0:a][1:a]concat=n=2:v=0:a=1', paddedPath]);
-                                                 p2.on('close', (c2) => {
-                                                     try { fs.unlinkSync(silencePath); } catch(e){}
-                                                     if (c2 === 0) {
-                                                         if (fs.existsSync(paddedPath)) {
-                                                             try { fs.unlinkSync(secAudioAdjPath); } catch(e){}
-                                                             fs.renameSync(paddedPath, secAudioAdjPath);
-                                                         }
-                                                         resolve();
-                                                     } else {
-                                                         reject(new Error('Padding concat failed'));
-                                                     }
-                                                 });
-                                             });
-                                         });
-                                     }
-                                 }
-                                 
                                  processedAudioPaths[i] = secAudioAdjPath;
                             } else {
                                  // Generar silencio
@@ -18360,13 +18556,37 @@ if __name__ == "__main__":
                     // inputs: sectionAudioPaths
                     const inputs = sectionAudioPaths.flatMap(p => ['-i', p]);
                     const filter = sectionAudioPaths.map((_, i) => `[${i}:a]`).join('') + `concat=n=${sectionAudioPaths.length}:v=0:a=1[out]`;
-                    
-                    await new Promise((resolve, reject) => {
-                         const args = ['-y', ...inputs, '-filter_complex', filter, '-map', '[out]', audioOutputPath];
-                         const p = spawn('ffmpeg', args);
-                         p.on('close', c=>c===0?resolve():reject(new Error('Concat failed')));
-                    });
-                    
+                      await new Promise((resolve, reject) => {
+                           const args = ['-y', ...inputs, '-filter_complex', filter, '-map', '[out]', audioOutputPath];
+                           const p = spawn('ffmpeg', args);
+                           p.on('close', c=>c===0?resolve():reject(new Error('Concat failed')));
+                      });
+
+                      const isShortVideo = req.body.isShortVideo === 'true';
+                      if (!isShortVideo) {
+                           const tempOutputPath = audioOutputPath.replace('.wav', '_temp.wav');
+                           await new Promise((resolve, reject) => {
+                               console.log(`🔇 Agregando 20 segundos de silencio al final del audio concatenado (${lang})...`);
+                               const silencePath = path.join(outputDir, `silence_${lang}.wav`);
+                               const p1 = spawn('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'anullsrc=r=24000:cl=mono', '-t', '20', silencePath]);
+                               p1.on('close', (c1) => {
+                                   if(c1!==0) { reject(new Error('Silence gen failed')); return; }
+                                   const p2 = spawn('ffmpeg', ['-y', '-i', audioOutputPath, '-i', silencePath, '-filter_complex', '[0:a][1:a]concat=n=2:v=0:a=1', tempOutputPath]);
+                                   p2.on('close', (c2) => {
+                                       try { fs.unlinkSync(silencePath); } catch(e){}
+                                       if (c2 === 0 && fs.existsSync(tempOutputPath)) {
+                                           try { fs.unlinkSync(audioOutputPath); } catch(e){}
+                                           fs.renameSync(tempOutputPath, audioOutputPath);
+                                           resolve();
+                                       } else {
+                                           reject(new Error('Final padding concat failed'));
+                                       }
+                                   });
+                               });
+                           });
+                      }
+
+
                     console.log(`✅ Audio multi-sección generado para ${lang}: ${audioOutputPath}`);
                     audioAlreadyGenerated = true; // Flag to skip legacy generation
                     
@@ -18455,7 +18675,7 @@ if __name__ == "__main__":
                             // Si falla la API principal con 503 y estabamos usando flash 3, intentar fallback a 2.5
                             if (isPrimaryOverloaded && selectedModel === GEMINI_TEXT_MODEL) {
                                 console.warn(`⚠️ Gemini 3 Flash saturado incluso en API PRINCIPAL (503). Intentando fallback a Gemini 2.5 Flash...`);
-                                const { model: fallbackModel } = await getGoogleAI("gemini-2.5-flash", { context: 'llm', forcePrimary: true });
+                                const { model: fallbackModel } = await getGoogleAI("gemini-3.1-flash-lite-preview", { context: 'llm', forcePrimary: true });
                                 result = await fallbackModel.generateContent(prompt);
                             } else {
                                 throw primaryError;
@@ -18545,8 +18765,11 @@ if __name__ == "__main__":
                         throw new Error(`Error en la traducción a ${langNames[lang]}: Texto vacío o inválido.`);
                     }
 
+                    const userApplioVoice = req.body.applioVoice || 'RemyOriginal.pth';
+
                     await applioClient.textToSpeech(translatedText, audioOutputPath, {
                         model: ttsModel,
+                        voicePath: userApplioVoice,
                         speed: 0,
                         pitch: 0
                     });
@@ -18596,12 +18819,12 @@ if __name__ == "__main__":
                 let ffmpegArgs = [];
                 
                 if (musicFile) {
-                    if (isMultiSection || audioAlreadyGenerated) {
+                                        if (isMultiSection || audioAlreadyGenerated) {
                         ffmpegArgs = [
                             '-y',
                             '-i', audioOutputPath,
                             '-stream_loop', '-1', '-i', musicFile.path,
-                            '-filter_complex', `[0:a]aresample=48000,apad,atrim=0:${videoDuration}[speech];[1:a]aresample=48000,volume=0.2[bgm];[speech][bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,volume=2[out]`,
+                            '-filter_complex', `[0:a]aresample=48000[speech];[1:a]aresample=48000,volume=0.7[bgm];[speech][bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,volume=2[out]`,
                             '-map', '[out]',
                             '-acodec', 'pcm_s16le',
                             finalAudioPath
@@ -18611,7 +18834,7 @@ if __name__ == "__main__":
                             '-y',
                             '-i', audioOutputPath,
                             '-stream_loop', '-1', '-i', musicFile.path,
-                            '-filter_complex', `[0:a]aresample=48000${filterString}[speech];[1:a]aresample=48000,volume=0.2[bgm];[speech][bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,volume=2[out]`,
+                            '-filter_complex', `[0:a]aresample=48000${filterString}[speech];[1:a]aresample=48000,volume=0.7[bgm];[speech][bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,volume=2[out]`,
                             '-map', '[out]',
                             '-acodec', 'pcm_s16le',
                             finalAudioPath
@@ -18697,7 +18920,7 @@ app.post('/api/manual-translate-video', upload.fields(manualUploadFields), async
         const musicFile = req.files['music'] ? req.files['music'][0] : null;
 
         // Directorio de salida
-        const outputDir = path.join(process.cwd(), 'public', 'outputs', videoName);
+        const outputDir = path.join(globalOutputDir, videoName);
         if (!fs.existsSync(outputDir)) {
             fs.mkdirSync(outputDir, { recursive: true });
         }
@@ -18789,8 +19012,8 @@ app.post('/api/manual-translate-video', upload.fields(manualUploadFields), async
                         '-y',
                             '-i', audioOutputPath,
                             '-stream_loop', '-1', '-i', musicFile.path,
-                            // Fix: Set bgm volume to 20%, force 48kHz, disable amix normalization, compensate volume
-                            '-filter_complex', `[0:a]aresample=48000${filterString}[speech];[1:a]aresample=48000,volume=0.2[bgm];[speech][bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,volume=2[out]`,
+                            // Fix: Set bgm volume to 70%, force 48kHz, disable amix normalization, compensate volume
+                            '-filter_complex', `[0:a]aresample=48000${filterString}[speech];[1:a]aresample=48000,volume=0.7[bgm];[speech][bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,volume=2[out]`,
                             '-map', '[out]',
                              '-acodec', 'pcm_s16le',
                             finalOutputPath

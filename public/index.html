@@ -144,12 +144,13 @@
           <span>Comentarios del Live</span>
         </button>
       </div>
-      
-      <div class="sidebar-section">
-        <div class="sidebar-info">
-          <p><i class="fas fa-info-circle"></i> Estilos disponibles:</p>
-          <ul>
-            <li>Profesional</li>
+
+        <div class="sidebar-section">
+          <button id="openSettingsBtn" class="sidebar-btn manage-btn" onclick="document.getElementById('settingsModal').style.display='flex'">
+            <i class="fas fa-cog"></i>
+            <span>Ajustes Generales</span>
+          </button>
+        </div>
             <li>Comedia</li>
             <li>Personalizados</li>
           </ul>
@@ -582,8 +583,8 @@
               <i class="fas fa-brain"></i> Modelo LLM:
             </label>
             <select id="llmModelSelect" class="field-select">
-              <option value="gemini-3.1-pro-preview" selected>Gemini 3.1 Pro Preview</option>
-              <option value="gemini-3-flash-preview">Gemini 3 Flash Preview</option>
+              <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview</option>
+              <option value="gemini-3-flash-preview" selected>Gemini 3 Flash Preview</option>
               <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
               <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
               <option value="gpt-5">GPT-5</option>
@@ -891,6 +892,11 @@
         <button id="generateYouTubeMetadataBtn" class="generate-youtube-metadata-btn" style="display: none;">
           <i class="fas fa-youtube"></i>
           <span>Generar Metadatos</span>
+        </button>
+
+        <button id="downloadProjectZipBtn" class="download-project-zip-btn" style="display: none;">
+          <i class="fas fa-file-archive"></i>
+          <span>Descargar Proyecto (ZIP)</span>
         </button>
 
         <!-- Panel de Traducción -->
@@ -1308,8 +1314,89 @@
     </div>
   </div>
 
-  <!-- MODALES PARA SISTEMA DE PROYECTOS -->
-  
+  <!-- Modal para Ajustes Generales -->
+  <div id="settingsModal" class="style-modal" style="display: none;">
+    <div class="style-modal-content" style="max-width: 650px; max-height: 85vh; overflow-y: auto;">
+      <div class="style-modal-header">
+        <h3><i class="fas fa-cogs"></i> Ajustes Generales</h3>
+        <button id="closeSettingsModal" class="close-modal-btn" onclick="document.getElementById('settingsModal').style.display='none'">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <div class="style-modal-body">
+        <!-- Ruta de Outputs -->
+        <div class="form-group">
+          <label for="globalOutputDirInput"><i class="fas fa-folder"></i> Ruta de Proyectos (Outputs):</label>
+          <input type="text" id="globalOutputDirInput" placeholder="Ej: C:\Mis Proyectos" style="width: 100%; padding: 10px; border-radius: 4px; border: 1px solid #4a5568; background: #2d3748; color: white;">
+          <small style="color: #a0aec0; margin-top: 5px; display: block;">Carpeta donde se guardan los proyectos generados.</small>
+        </div>
+
+        <hr style="border-color: #4a5568; margin: 20px 0;">
+
+        <!-- API Keys de Google -->
+        <h4 style="color: #63b3ed; margin-bottom: 12px;"><i class="fas fa-key"></i> API Keys de Google</h4>
+        <div class="form-group" style="margin-bottom: 10px;">
+          <label for="envGoogleApiKey">API Key Principal:</label>
+          <input type="text" id="envGoogleApiKey" placeholder="AIzaSy..." style="width: 100%; padding: 8px; border-radius: 4px; border: 1px solid #4a5568; background: #2d3748; color: white; font-family: monospace; font-size: 12px;">
+        </div>
+        <div class="form-group" style="margin-bottom: 10px;">
+          <label for="envGoogleApiKeyGratis">API Key Gratis 1:</label>
+          <input type="text" id="envGoogleApiKeyGratis" placeholder="AIzaSy... (opcional)" style="width: 100%; padding: 8px; border-radius: 4px; border: 1px solid #4a5568; background: #2d3748; color: white; font-family: monospace; font-size: 12px;">
+        </div>
+        <div class="form-group" style="margin-bottom: 10px;">
+          <label for="envGoogleApiKeyGratis2">API Key Gratis 2:</label>
+          <input type="text" id="envGoogleApiKeyGratis2" placeholder="AIzaSy... (opcional)" style="width: 100%; padding: 8px; border-radius: 4px; border: 1px solid #4a5568; background: #2d3748; color: white; font-family: monospace; font-size: 12px;">
+        </div>
+        <div class="form-group" style="margin-bottom: 10px;">
+          <label for="envGoogleApiKeyGratis3">API Key Gratis 3:</label>
+          <input type="text" id="envGoogleApiKeyGratis3" placeholder="AIzaSy... (opcional)" style="width: 100%; padding: 8px; border-radius: 4px; border: 1px solid #4a5568; background: #2d3748; color: white; font-family: monospace; font-size: 12px;">
+        </div>
+        <div class="form-group" style="margin-bottom: 10px;">
+          <label for="envGoogleApiKeyGratis4">API Key Gratis 4:</label>
+          <input type="text" id="envGoogleApiKeyGratis4" placeholder="AIzaSy... (opcional)" style="width: 100%; padding: 8px; border-radius: 4px; border: 1px solid #4a5568; background: #2d3748; color: white; font-family: monospace; font-size: 12px;">
+        </div>
+        <div class="form-group" style="margin-bottom: 10px;">
+          <label for="envGoogleApiKeyGratis5">API Key Gratis 5:</label>
+          <input type="text" id="envGoogleApiKeyGratis5" placeholder="AIzaSy... (opcional)" style="width: 100%; padding: 8px; border-radius: 4px; border: 1px solid #4a5568; background: #2d3748; color: white; font-family: monospace; font-size: 12px;">
+        </div>
+
+        <hr style="border-color: #4a5568; margin: 20px 0;">
+
+        <!-- OpenAI -->
+        <h4 style="color: #48bb78; margin-bottom: 12px;"><i class="fas fa-robot"></i> OpenAI (opcional)</h4>
+        <div class="form-group" style="margin-bottom: 10px;">
+          <label for="envOpenaiApiKey">OpenAI API Key:</label>
+          <input type="text" id="envOpenaiApiKey" placeholder="sk-... (opcional)" style="width: 100%; padding: 8px; border-radius: 4px; border: 1px solid #4a5568; background: #2d3748; color: white; font-family: monospace; font-size: 12px;">
+        </div>
+
+        <hr style="border-color: #4a5568; margin: 20px 0;">
+
+        <!-- Applio -->
+        <h4 style="color: #ed8936; margin-bottom: 12px;"><i class="fas fa-microphone"></i> Applio (TTS con voces IA)</h4>
+        <div class="form-group" style="margin-bottom: 10px;">
+          <label for="envApplioPath">Ruta de Applio:</label>
+          <input type="text" id="envApplioPath" placeholder="C:\applio2\Applio" style="width: 100%; padding: 8px; border-radius: 4px; border: 1px solid #4a5568; background: #2d3748; color: white;">
+          <small style="color: #a0aec0; margin-top: 4px; display: block;">Carpeta donde está instalado Applio en tu PC.</small>
+        </div>
+        <div class="form-group" style="margin-bottom: 10px;">
+          <label for="envApplioUrl">URL del servidor Applio:</label>
+          <input type="text" id="envApplioUrl" placeholder="http://localhost:5004" style="width: 100%; padding: 8px; border-radius: 4px; border: 1px solid #4a5568; background: #2d3748; color: white;">
+          <small style="color: #a0aec0; margin-top: 4px; display: block;">Puerto donde corre Applio (default: http://localhost:5004).</small>
+        </div>
+
+        <small style="color: #fc8181; display: block; margin-top: 15px;"><i class="fas fa-exclamation-triangle"></i> Algunos cambios de API keys requieren reiniciar el servidor para tomar efecto.</small>
+      </div>
+      <div class="style-modal-footer">
+        <button id="cancelSettingsBtn" class="cancel-btn" onclick="document.getElementById('settingsModal').style.display='none'">
+          <i class="fas fa-times"></i> Cancelar
+        </button>
+        <button id="saveSettingsBtn" class="save-btn" onclick="saveGlobalSettings()">
+          <i class="fas fa-save"></i> Guardar Ajustes
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- Modal para cargar proyecto -->
   <div id="loadProjectModal" class="modal">
     <div class="modal-content">

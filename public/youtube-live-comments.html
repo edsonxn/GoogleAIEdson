@@ -355,7 +355,18 @@
                 font-size: 1rem;
             }
         }
-    </style>
+    
+    /* RESPONSIVE TWEAKS */
+    @media (max-width: 900px) {
+        .dashboard-grid { grid-template-columns: 1fr !important; }
+        .dashboard-grid.two-cols { grid-template-columns: 1fr !important; }
+        body { padding: 10px !important; }
+        header { flex-direction: column; text-align: center; gap: 10px; }
+        .connection-panel { flex-direction: column; }
+        .connection-panel input, .connection-panel button { width: 100%; margin-bottom: 5px; }
+    }
+
+</style>
 </head>
 <body>
     <div class="ytlc-container">
