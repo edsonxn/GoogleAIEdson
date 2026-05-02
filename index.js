@@ -1573,7 +1573,7 @@ app.get('/api/settings/env-config', (req, res) => {
       GOOGLE_API_KEY_GRATIS4: envVars.GOOGLE_API_KEY_GRATIS4 || '',
       GOOGLE_API_KEY_GRATIS5: envVars.GOOGLE_API_KEY_GRATIS5 || '',
       OPENAI_API_KEY: envVars.OPENAI_API_KEY || '',
-      APPLIO_SERVER_URL: envVars.APPLIO_SERVER_URL || 'http://localhost:5004',
+      APPLIO_SERVER_URL: envVars.APPLIO_SERVER_URL || 'http://localhost:6969',
       APPLIO_PATH: envVars.APPLIO_PATH || 'C:\\applio2\\Applio',
     });
   } catch (err) {
@@ -11878,7 +11878,7 @@ app.post('/applio_tts', async (req, res) => {
     console.log(`🎵 Intentando TTS para texto: ${text.substring(0, 100)}...`);
     
     // Intentar primero con servidor Applio externo si está disponible
-    const APPLIO_URL = process.env.APPLIO_SERVER_URL || "http://localhost:5004";
+    const APPLIO_URL = process.env.APPLIO_SERVER_URL || "http://localhost:6969";
     
     try {
       console.log(`🔗 Intentando conexión con servidor Applio en ${APPLIO_URL}...`);
