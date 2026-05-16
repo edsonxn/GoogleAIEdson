@@ -726,6 +726,90 @@
 
 
         </div>
+
+        <!-- Columna 4: Video Final -->
+        <div class="config-column">
+          <h3 class="column-title"><i class="fas fa-clapperboard"></i> Video Final</h3>
+
+          <div class="field-group">
+            <label for="videoMaxImagesPerSection" class="field-label">
+              <i class="fas fa-images"></i> Máx imágenes/sección
+            </label>
+            <input type="number" id="videoMaxImagesPerSection" class="field-input" value="0" min="0" max="5">
+          </div>
+
+          <div class="field-group">
+            <label for="videoImageDuration" class="field-label">
+              <i class="fas fa-hourglass-half"></i> Duración imagen (s)
+            </label>
+            <input type="number" id="videoImageDuration" class="field-input" value="5" min="2" max="10">
+          </div>
+
+          <div class="field-group">
+            <label for="videoMinClipDuration" class="field-label">
+              <i class="fas fa-backward"></i> Duración mín clip (s)
+            </label>
+            <input type="number" id="videoMinClipDuration" class="field-input" value="4" min="2" max="10">
+          </div>
+
+          <div class="field-group">
+            <label for="videoMaxClipDuration" class="field-label">
+              <i class="fas fa-forward"></i> Duración máx clip (s)
+            </label>
+            <input type="number" id="videoMaxClipDuration" class="field-input" value="10" min="5" max="30">
+          </div>
+
+          <div class="field-group">
+            <label for="videoMinResolution" class="field-label">
+              <i class="fas fa-filter"></i> Resolución mínima B-Roll
+            </label>
+            <select id="videoMinResolution" class="field-select">
+              <option value="0">Sin filtro</option>
+              <option value="480">480p</option>
+              <option value="720" selected>720p</option>
+              <option value="1080">1080p</option>
+            </select>
+          </div>
+
+          <div class="field-group">
+            <label for="videoOutputResolution" class="field-label">
+              <i class="fas fa-tv"></i> Resolución salida
+            </label>
+            <select id="videoOutputResolution" class="field-select">
+              <option value="1280:720">720p</option>
+              <option value="1920:1080" selected>1080p</option>
+              <option value="2560:1440">1440p</option>
+            </select>
+          </div>
+
+          <div class="field-group">
+            <label for="videoCRF" class="field-label">
+              <i class="fas fa-sliders-h"></i> Calidad (CRF)
+            </label>
+            <input type="number" id="videoCRF" class="field-input" value="23" min="18" max="28">
+          </div>
+
+          <div class="field-group">
+            <label for="videoPreset" class="field-label">
+              <i class="fas fa-tachometer-alt"></i> Velocidad encode
+            </label>
+            <select id="videoPreset" class="field-select">
+              <option value="ultrafast">Ultrafast (solo preview)</option>
+              <option value="fast">Fast (balanceado)</option>
+              <option value="medium">Medium (buena calidad)</option>
+              <option value="slow" selected>Slow (mejor calidad)</option>
+              <option value="slower">Slower (máxima calidad)</option>
+            </select>
+          </div>
+
+          <div class="field-group" style="margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.1);">
+            <label class="field-label" style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+              <input type="checkbox" id="autoGenerateBrollVideo" style="width: 18px; height: 18px; accent-color: #06b6d4;">
+              <i class="fas fa-magic"></i> Generar automático
+            </label>
+            <span style="font-size: 0.7rem; color: #94a3b8; margin-top: 4px; display: block;">Genera el video cuando termine la descarga de B-Roll</span>
+          </div>
+        </div>
       </div>
 
       <!-- Campos de personalización ocultos (usados internamente por el JS) -->
@@ -859,6 +943,22 @@
           <i class="fas fa-film"></i>
           <span>Descargar Contenido (B-Roll)</span>
         </button>
+
+        <button id="generateBrollVideoBtn" class="download-project-zip-btn" style="display: none; background: linear-gradient(135deg, #0891b2, #06b6d4);">
+          <i class="fas fa-clapperboard"></i>
+          <span>Generar Video con B-Roll</span>
+        </button>
+
+        <div id="brollVideoProgressContainer" style="display: none; margin-top: 10px; padding: 12px; background: rgba(0,0,0,0.3); border-radius: 8px; border: 1px solid #4a5568;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <span id="brollVideoProgressLabel" style="color: #e2e8f0; font-size: 0.85rem;">Generando video...</span>
+            <span id="brollVideoProgressPercent" style="color: #06b6d4; font-weight: bold;">0%</span>
+          </div>
+          <div style="width: 100%; height: 8px; background: #1e293b; border-radius: 4px; overflow: hidden;">
+            <div id="brollVideoProgressBar" style="width: 0%; height: 100%; background: linear-gradient(90deg, #0891b2, #06b6d4); transition: width 0.3s ease;"></div>
+          </div>
+          <div id="brollVideoProgressInfo" style="color: #94a3b8; font-size: 0.8rem; margin-top: 6px;"></div>
+        </div>
 
         <!-- Panel de B-Roll -->
         <details id="brollPanel" class="video-generation-collapsible" style="margin-top: 20px; background: rgba(0,0,0,0.2); border-radius: 8px; border: 1px solid #4a5568; display: none;">
@@ -1475,7 +1575,7 @@
     </div>
   </div>
 
-  <script src="script.js?v=20251012_4"></script>
+  <script src="script.js?v=20260516"></script>
   
   <!-- Script inline para forzar eventos de proyectos -->
   <script>

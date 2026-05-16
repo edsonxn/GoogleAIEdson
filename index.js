@@ -5068,7 +5068,7 @@ function normalizeMultiProjectEntries(projects = []) {
 
     let uniqueFolderName = safeFolderName;
     let suffix = 2;
-    while (seenFolders.has(uniqueFolderName)) {
+    while (seenFolders.has(uniqueFolderName) || fs.existsSync(path.join(globalOutputDir, uniqueFolderName))) {
       uniqueFolderName = `${safeFolderName}_${suffix}`;
       suffix += 1;
     }
@@ -15250,6 +15250,610 @@ app.get('/clip-progress/:sessionId', (req, res) => {
   }
 });
 
+// ========== Generar Video con B-Roll ==========
+const brollVideoProgress = new Map();
+
+app.post('/api/generate-broll-video', async (req, res) => {
+  try {
+    const { folderName, videoConfig = {} } = req.body;
+    if (!folderName) {
+      return res.status(400).json({ error: 'Nombre de carpeta requerido' });
+    }
+
+    // Parsear configuración con defaults
+    const config = {
+      maxImagesPerSection: Math.max(0, Math.min(5, isNaN(parseInt(videoConfig.maxImagesPerSection)) ? 1 : parseInt(videoConfig.maxImagesPerSection))),
+      imageDuration: Math.max(2, Math.min(10, parseInt(videoConfig.imageDuration) || 5)),
+      minClipDuration: Math.max(2, Math.min(10, parseInt(videoConfig.minClipDuration) || 4)),
+      maxClipDuration: Math.max(5, Math.min(30, parseInt(videoConfig.maxClipDuration) || 10)),
+      minResolution: Math.max(0, parseInt(videoConfig.minResolution) || 0),
+      resolution: videoConfig.resolution || '1920:1080',
+      crf: Math.max(18, Math.min(28, parseInt(videoConfig.crf) || 23)),
+      preset: ['ultrafast', 'fast', 'medium'].includes(videoConfig.preset) ? videoConfig.preset : 'fast'
+    };
+
+    const normalizedFolderName = createSafeFolderName(folderName);
+    let projectPath = path.join(globalOutputDir, normalizedFolderName);
+    if (!fs.existsSync(projectPath)) {
+      projectPath = path.join(globalOutputDir, folderName);
+      if (!fs.existsSync(projectPath)) {
+        return res.status(404).json({ error: 'Proyecto no encontrado' });
+      }
+    }
+
+    // Verificar que existe B-Roll: en seccion_N/broll/ (nuevo) o en project/broll/ (legacy)
+    const legacyBroll = path.join(projectPath, 'broll');
+    const items = fs.readdirSync(projectPath);
+    const hasSectionBroll = items.some(item => {
+      if (!item.startsWith('seccion_')) return false;
+      const brollInSection = path.join(projectPath, item, 'broll');
+      return fs.existsSync(brollInSection);
+    });
+    const hasLegacyBroll = fs.existsSync(legacyBroll) && fs.readdirSync(legacyBroll).some(f => {
+      try { return fs.statSync(path.join(legacyBroll, f)).isDirectory(); } catch { return false; }
+    });
+
+    if (!hasSectionBroll && !hasLegacyBroll) {
+      return res.status(400).json({ error: 'No se ha descargado B-Roll para este proyecto. Primero descarga el contenido B-Roll.' });
+    }
+
+    const sessionId = `broll-video-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    brollVideoProgress.set(sessionId, {
+      status: 'processing',
+      percent: 0,
+      message: 'Iniciando generación de video con B-Roll...',
+      detail: '',
+      error: null,
+      outputFile: null
+    });
+
+    res.json({ success: true, sessionId });
+
+    // Procesar en background
+    generarVideoConBroll(projectPath, folderName, sessionId, config).catch(err => {
+      console.error('❌ Error generando video con B-Roll:', err);
+      const prog = brollVideoProgress.get(sessionId);
+      if (prog) {
+        prog.status = 'error';
+        prog.error = err.message;
+        prog.message = 'Error: ' + err.message;
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error en endpoint generate-broll-video:', error);
+    res.status(500).json({ error: 'Error interno: ' + error.message });
+  }
+});
+
+app.get('/api/broll-video-progress/:sessionId', (req, res) => {
+  const { sessionId } = req.params;
+  const progress = brollVideoProgress.get(sessionId);
+  if (!progress) {
+    return res.json({ success: false, error: 'Sesión no encontrada' });
+  }
+  res.json({ success: true, progress });
+});
+
+async function generarVideoConBroll(projectPath, projectName, sessionId, config = {}) {
+  const tempDir = path.join(process.cwd(), 'temp', `broll_video_${Date.now()}`);
+  if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+
+  // Defaults
+  const cfg = {
+    maxImagesPerSection: config.maxImagesPerSection ?? 1,
+    imageDuration: config.imageDuration ?? 5,
+    minClipDuration: config.minClipDuration ?? 4,
+    maxClipDuration: config.maxClipDuration ?? 10,
+    resolution: config.resolution || '1920:1080',
+    crf: config.crf ?? 23,
+    preset: config.preset || 'fast'
+  };
+
+  const [resW, resH] = cfg.resolution.split(':').map(Number);
+  console.log(`🎬 Config video: ${resW}x${resH}, CRF ${cfg.crf}, preset ${cfg.preset}, clips ${cfg.minClipDuration}-${cfg.maxClipDuration}s, max imgs/sec ${cfg.maxImagesPerSection}`);
+
+  const updateProgress = (percent, message, detail = '') => {
+    const prog = brollVideoProgress.get(sessionId);
+    if (prog) {
+      prog.percent = percent;
+      prog.message = message;
+      prog.detail = detail;
+    }
+  };
+
+  try {
+    // Paso 1: Buscar secciones con audio (no requiere imágenes)
+    updateProgress(2, 'Analizando secciones del proyecto...');
+    const seccionesConAudio = [];
+    const items = fs.readdirSync(projectPath);
+    const audioExts = ['.mp3', '.wav', '.m4a', '.aac', '.ogg'];
+
+    for (const item of items) {
+      const itemPath = path.join(projectPath, item);
+      if (!fs.statSync(itemPath).isDirectory() || !item.startsWith('seccion_')) continue;
+      
+      const secNum = parseInt(item.replace('seccion_', ''));
+      if (isNaN(secNum)) continue;
+
+      const files = fs.readdirSync(itemPath);
+      const audios = files
+        .filter(f => audioExts.includes(path.extname(f).toLowerCase()))
+        .map(f => ({ path: path.join(itemPath, f), name: f }));
+
+      if (audios.length > 0) {
+        const imageExts = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp'];
+        const imagenes = files
+          .filter(f => imageExts.includes(path.extname(f).toLowerCase()))
+          .map(f => ({ path: path.join(itemPath, f), name: f }));
+
+        seccionesConAudio.push({
+          numero: secNum,
+          nombre: `Sección ${secNum}`,
+          audios,
+          imagenes,
+          path: itemPath
+        });
+      }
+    }
+    seccionesConAudio.sort((a, b) => a.numero - b.numero);
+
+    if (seccionesConAudio.length === 0) {
+      throw new Error('No se encontraron audios TTS en las secciones. Genera los audios primero.');
+    }
+
+    console.log(`🎬 B-Roll Video: ${seccionesConAudio.length} secciones con audio encontradas`);
+
+    // Paso 2: Buscar B-Roll dentro de cada seccion_N/broll/ (nuevo sistema)
+    // También soportar el formato legacy project/broll/01 - name/
+    updateProgress(5, 'Mapeando B-Roll a secciones...');
+    
+    const legacyBrollDir = path.join(projectPath, 'broll');
+    const legacyBrollMap = {};
+    if (fs.existsSync(legacyBrollDir)) {
+      const brollFolders = fs.readdirSync(legacyBrollDir).filter(f => {
+        try { return fs.statSync(path.join(legacyBrollDir, f)).isDirectory(); } catch { return false; }
+      });
+      for (const folder of brollFolders) {
+        const num = parseInt(folder.split(' - ')[0]);
+        if (!isNaN(num)) {
+          legacyBrollMap[num] = path.join(legacyBrollDir, folder);
+        }
+      }
+    }
+
+    console.log(`🎬 B-Roll Video: ${seccionesConAudio.length} secciones con audio, ${Object.keys(legacyBrollMap).length} carpetas B-Roll legacy`);
+
+    const sectionVideos = [];
+    const totalSections = seccionesConAudio.length;
+
+    // Paso 3: Procesar cada sección
+    for (let i = 0; i < seccionesConAudio.length; i++) {
+      const seccion = seccionesConAudio[i];
+      const secNum = seccion.numero;
+      const progressBase = 10 + (i / totalSections) * 75;
+
+      updateProgress(Math.round(progressBase), `Procesando sección ${secNum}/${totalSections}...`, `Sección: ${seccion.nombre}`);
+
+      // Obtener duración del audio de la sección
+      const audioPath = seccion.audios[0].path;
+      const audioDuration = await getAudioDuration(audioPath);
+      
+      if (audioDuration <= 0) {
+        console.log(`⚠️ Audio de sección ${secNum} tiene duración 0, saltando...`);
+        continue;
+      }
+
+      // Buscar B-Roll: primero en seccion_N/broll/ (nuevo), luego en project/broll/XX - name/ (legacy)
+      const newBrollPath = path.join(projectPath, `seccion_${secNum}`, 'broll');
+      const legacyBrollPath = legacyBrollMap[secNum];
+      const brollPath = fs.existsSync(newBrollPath) ? newBrollPath : (legacyBrollPath && fs.existsSync(legacyBrollPath) ? legacyBrollPath : null);
+
+      let videoFiles = [];
+      let imageFiles = [];
+
+      if (brollPath) {
+        const brollFiles = fs.readdirSync(brollPath);
+        const videoExts = ['.mp4', '.webm', '.mkv', '.avi', '.mov'];
+        const imageExts = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp'];
+        
+        videoFiles = brollFiles
+          .filter(f => videoExts.includes(path.extname(f).toLowerCase()))
+          .map(f => path.join(brollPath, f));
+        imageFiles = brollFiles
+          .filter(f => imageExts.includes(path.extname(f).toLowerCase()))
+          .map(f => path.join(brollPath, f));
+
+        // Filtrar videos por resolución mínima
+        if (cfg.minResolution && cfg.minResolution > 0 && videoFiles.length > 0) {
+          const filteredVideos = [];
+          for (const vf of videoFiles) {
+            try {
+              const probeRes = await new Promise((resolve, reject) => {
+                const proc = spawn('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=height', '-of', 'csv=p=0', vf]);
+                let out = '';
+                proc.stdout.on('data', d => out += d.toString());
+                proc.stderr.on('data', () => {});
+                proc.on('close', code => code === 0 ? resolve(parseInt(out.trim()) || 0) : resolve(0));
+                proc.on('error', () => resolve(0));
+              });
+              if (probeRes >= cfg.minResolution) {
+                filteredVideos.push(vf);
+              } else {
+                console.log(`🚫 Descartado (${probeRes}p < ${cfg.minResolution}p): ${path.basename(vf)}`);
+              }
+            } catch (e) {
+              filteredVideos.push(vf); // En caso de error, incluir para no perder material
+            }
+          }
+          videoFiles = filteredVideos;
+        }
+      }
+
+      // Si maxImages es 0, no mezclar imágenes con los videos de B-Roll
+      if (cfg.maxImagesPerSection === 0 && videoFiles.length > 0) {
+        imageFiles = [];
+      }
+
+      // Fallback: si no hay videos de B-Roll, SIEMPRE usar imágenes de la sección
+      // (evitar desfase audio/video por secciones saltadas)
+      if (videoFiles.length === 0 && imageFiles.length === 0) {
+        console.log(`⚠️ Sin B-Roll videos para sección ${secNum}, usando imágenes de la sección como fallback`);
+        imageFiles = (seccion.imagenes || []).map(img => img.path).filter(p => fs.existsSync(p));
+      }
+
+      if (videoFiles.length === 0 && imageFiles.length === 0) {
+        console.log(`⚠️ Sección ${secNum} no tiene material visual, saltando...`);
+        continue;
+      }
+
+      // Generar secuencia aleatoria de clips
+      const secuencia = await generarSecuenciaAleatoriaBroll(videoFiles, imageFiles, audioDuration, cfg);
+
+      // Crear clips individuales
+      const clipPaths = [];
+      for (let j = 0; j < secuencia.length; j++) {
+        const clip = secuencia[j];
+        const clipPath = path.join(tempDir, `sec${secNum}_clip${j}.mp4`);
+        
+        updateProgress(
+          Math.round(progressBase + (j / secuencia.length) * (75 / totalSections)),
+          `Sección ${secNum}: clip ${j + 1}/${secuencia.length}`,
+          clip.type === 'video' ? `Video: ${path.basename(clip.path)}` : `Imagen: ${path.basename(clip.path)}`
+        );
+
+        if (clip.type === 'video') {
+          await crearClipDesdeVideo(clip.path, clip.cutFrom, clip.duration, clipPath, cfg);
+        } else {
+          await crearClipDesdeImagen(clip.path, clip.duration, clipPath, cfg);
+        }
+
+        if (fs.existsSync(clipPath)) {
+          clipPaths.push(clipPath);
+        }
+      }
+
+      if (clipPaths.length === 0) {
+        console.log(`⚠️ No se generaron clips para sección ${secNum}`);
+        continue;
+      }
+
+      // Concatenar clips de esta sección
+      const sectionVideoPath = path.join(tempDir, `seccion_${secNum}_visual.mp4`);
+      await concatenarClipsBroll(clipPaths, sectionVideoPath);
+
+      if (fs.existsSync(sectionVideoPath)) {
+        sectionVideos.push({
+          numero: secNum,
+          videoPath: sectionVideoPath,
+          audioPath: audioPath
+        });
+      }
+    }
+
+    if (sectionVideos.length === 0) {
+      throw new Error('No se pudo generar ningún video de sección');
+    }
+
+    // Paso 4: Concatenar todos los visuales
+    updateProgress(87, 'Uniendo secciones de video...');
+    const visualMasterPath = path.join(tempDir, 'visual_master.mp4');
+    await concatenarClipsBroll(sectionVideos.map(s => s.videoPath), visualMasterPath);
+
+    // Paso 5: Concatenar todos los audios TTS
+    updateProgress(90, 'Uniendo audios TTS...');
+    const audioMasterPath = path.join(tempDir, 'audio_master.wav');
+    await concatenarAudiosBroll(sectionVideos.map(s => s.audioPath), audioMasterPath);
+
+    // Paso 6: Merge final video + audio
+    updateProgress(94, 'Generando video final...');
+    // Nombre incremental para no sobreescribir videos anteriores
+    let outputFileName = `${projectName}_broll_video.mp4`;
+    let finalOutputPath = path.join(projectPath, outputFileName);
+    let videoIndex = 1;
+    while (fs.existsSync(finalOutputPath)) {
+      videoIndex++;
+      outputFileName = `${projectName}_broll_video_${videoIndex}.mp4`;
+      finalOutputPath = path.join(projectPath, outputFileName);
+    }
+    await mergeVideoAudioBroll(visualMasterPath, audioMasterPath, finalOutputPath);
+
+    // Paso 7: Limpieza
+    updateProgress(98, 'Limpiando archivos temporales...');
+    try {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    } catch (e) {
+      console.log('⚠️ No se pudo limpiar temp dir:', e.message);
+    }
+
+    // Finalizar
+    const prog = brollVideoProgress.get(sessionId);
+    if (prog) {
+      prog.status = 'completed';
+      prog.percent = 100;
+      prog.message = '✅ Video generado exitosamente';
+      prog.outputFile = outputFileName;
+      prog.detail = `${sectionVideos.length} secciones procesadas`;
+    }
+
+    console.log(`✅ Video con B-Roll generado: ${finalOutputPath}`);
+
+    // Limpiar progreso después de 5 minutos
+    setTimeout(() => brollVideoProgress.delete(sessionId), 300000);
+
+  } catch (error) {
+    // Limpiar temp dir en caso de error
+    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch (e) {}
+    
+    const prog = brollVideoProgress.get(sessionId);
+    if (prog) {
+      prog.status = 'error';
+      prog.error = error.message;
+      prog.message = 'Error: ' + error.message;
+    }
+    throw error;
+  }
+}
+
+async function generarSecuenciaAleatoriaBroll(videoFiles, imageFiles, duracionObjetivo, cfg = {}) {
+  const secuencia = [];
+  let tiempoAcumulado = 0;
+  let imagenesUsadas = 0;
+  const maxImages = cfg.maxImagesPerSection ?? 1;
+  const imgDuration = cfg.imageDuration ?? 5;
+  const minClip = cfg.minClipDuration ?? 4;
+  const maxClip = cfg.maxClipDuration ?? 10;
+  // Si no hay videos, las imágenes son el único material → sin límite
+  const soloImagenes = videoFiles.length === 0 && imageFiles.length > 0;
+
+  while (tiempoAcumulado < duracionObjetivo) {
+    const tiempoRestante = duracionObjetivo - tiempoAcumulado;
+    if (tiempoRestante < 1) break;
+
+    // Decidir si video o imagen (~80% videos, ~20% fotos, respetando maxImages)
+    const puedeUsarImagen = imageFiles.length > 0 && (soloImagenes || imagenesUsadas < maxImages);
+    const usarVideo = videoFiles.length > 0 && (!puedeUsarImagen || Math.random() < 0.8);
+
+    if (usarVideo && videoFiles.length > 0) {
+      const videoPath = videoFiles[Math.floor(Math.random() * videoFiles.length)];
+      let videoDuration;
+      try {
+        videoDuration = await getAudioDuration(videoPath); // ffprobe works for video too
+      } catch (e) {
+        videoDuration = 10;
+      }
+
+      if (videoDuration <= 0) videoDuration = 10;
+
+      // Duración del clip: entre minClip y maxClip segundos
+      let clipDuration = minClip + Math.random() * (maxClip - minClip);
+      clipDuration = Math.min(clipDuration, tiempoRestante, videoDuration);
+
+      // Punto de corte aleatorio (evitar primeros y últimos 20s para saltar intros/outros)
+      const skipMargin = 20;
+      let cutFrom = 0;
+      if (videoDuration > clipDuration) {
+        const safeStart = Math.min(skipMargin, videoDuration * 0.3);
+        const safeEnd = Math.max(videoDuration - skipMargin, videoDuration * 0.7);
+        const usableRange = safeEnd - clipDuration - safeStart;
+        if (usableRange > 0) {
+          cutFrom = safeStart + Math.random() * usableRange;
+        } else {
+          // Video muy corto, usar rango completo
+          cutFrom = Math.random() * (videoDuration - clipDuration);
+        }
+      }
+
+      secuencia.push({
+        type: 'video',
+        path: videoPath,
+        cutFrom: cutFrom,
+        duration: clipDuration
+      });
+      tiempoAcumulado += clipDuration;
+
+    } else if (puedeUsarImagen) {
+      // Imagen: imgDuration segundos (o lo que quede)
+      const imagePath = imageFiles[Math.floor(Math.random() * imageFiles.length)];
+      const clipDuration = Math.min(imgDuration, tiempoRestante);
+
+      secuencia.push({
+        type: 'image',
+        path: imagePath,
+        duration: clipDuration
+      });
+      tiempoAcumulado += clipDuration;
+      imagenesUsadas++;
+    } else {
+      // Fallback: usar video aunque no haya (no debería llegar aquí)
+      break;
+    }
+  }
+
+  return secuencia;
+}
+
+function crearClipDesdeVideo(videoPath, cutFrom, duration, outputPath, cfg = {}) {
+  const [w, h] = (cfg.resolution || '1920:1080').split(':');
+  const crf = String(cfg.crf || 23);
+  const preset = cfg.preset || 'fast';
+
+  return new Promise((resolve, reject) => {
+    const args = [
+      '-y',
+      '-ss', String(cutFrom),
+      '-t', String(duration),
+      '-i', videoPath,
+      '-vf', `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:black`,
+      '-c:v', 'libx264',
+      '-preset', preset,
+      '-crf', crf,
+      '-r', '30',
+      '-pix_fmt', 'yuv420p',
+      '-an',
+      outputPath
+    ];
+
+    const proc = spawn('ffmpeg', args);
+    let stderr = '';
+    proc.stderr.on('data', d => stderr += d.toString());
+    proc.on('close', code => {
+      if (code === 0) resolve();
+      else {
+        console.error(`⚠️ ffmpeg clip video falló (code ${code}): ${stderr.slice(-200)}`);
+        resolve(); // No rechazar, simplemente skip
+      }
+    });
+    proc.on('error', err => {
+      console.error('⚠️ ffmpeg spawn error:', err.message);
+      resolve();
+    });
+  });
+}
+
+function crearClipDesdeImagen(imagePath, duration, outputPath, cfg = {}) {
+  const [w, h] = (cfg.resolution || '1920:1080').split(':');
+  const crf = String(cfg.crf || 23);
+  const preset = cfg.preset || 'fast';
+
+  return new Promise((resolve, reject) => {
+    const args = [
+      '-y',
+      '-loop', '1',
+      '-i', imagePath,
+      '-t', String(duration),
+      '-vf', `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:black`,
+      '-c:v', 'libx264',
+      '-preset', preset,
+      '-crf', crf,
+      '-r', '30',
+      '-pix_fmt', 'yuv420p',
+      '-an',
+      outputPath
+    ];
+
+    const proc = spawn('ffmpeg', args);
+    let stderr = '';
+    proc.stderr.on('data', d => stderr += d.toString());
+    proc.on('close', code => {
+      if (code === 0) resolve();
+      else {
+        console.error(`⚠️ ffmpeg clip imagen falló (code ${code}): ${stderr.slice(-200)}`);
+        resolve();
+      }
+    });
+    proc.on('error', err => {
+      console.error('⚠️ ffmpeg spawn error:', err.message);
+      resolve();
+    });
+  });
+}
+
+function concatenarClipsBroll(clipPaths, outputPath) {
+  return new Promise((resolve, reject) => {
+    const listFile = path.join(path.dirname(outputPath), `concat_${Date.now()}_${Math.random().toString(36).slice(2,6)}.txt`);
+    const listContent = clipPaths.map(p => `file '${p.replace(/\\/g, '/')}'`).join('\n');
+    fs.writeFileSync(listFile, listContent);
+
+    const args = [
+      '-y',
+      '-f', 'concat',
+      '-safe', '0',
+      '-i', listFile,
+      '-c:v', 'libx264',
+      '-preset', 'fast',
+      '-crf', '23',
+      '-r', '30',
+      '-pix_fmt', 'yuv420p',
+      '-an',
+      outputPath
+    ];
+
+    const proc = spawn('ffmpeg', args);
+    let stderr = '';
+    proc.stderr.on('data', d => stderr += d.toString());
+    proc.on('close', code => {
+      try { fs.unlinkSync(listFile); } catch (e) {}
+      if (code === 0) resolve();
+      else reject(new Error(`Concat falló (code ${code}): ${stderr.slice(-300)}`));
+    });
+    proc.on('error', err => reject(err));
+  });
+}
+
+function concatenarAudiosBroll(audioPaths, outputPath) {
+  return new Promise((resolve, reject) => {
+    const listFile = path.join(path.dirname(outputPath), `concat_audio_${Date.now()}.txt`);
+    const listContent = audioPaths.map(p => `file '${p.replace(/\\/g, '/')}'`).join('\n');
+    fs.writeFileSync(listFile, listContent);
+
+    const args = [
+      '-y',
+      '-f', 'concat',
+      '-safe', '0',
+      '-i', listFile,
+      '-c:a', 'pcm_s16le',
+      '-ar', '44100',
+      '-ac', '2',
+      outputPath
+    ];
+
+    const proc = spawn('ffmpeg', args);
+    let stderr = '';
+    proc.stderr.on('data', d => stderr += d.toString());
+    proc.on('close', code => {
+      try { fs.unlinkSync(listFile); } catch (e) {}
+      if (code === 0) resolve();
+      else reject(new Error(`Concat audio falló (code ${code}): ${stderr.slice(-300)}`));
+    });
+    proc.on('error', err => reject(err));
+  });
+}
+
+function mergeVideoAudioBroll(videoPath, audioPath, outputPath) {
+  return new Promise((resolve, reject) => {
+    const args = [
+      '-y',
+      '-i', videoPath,
+      '-i', audioPath,
+      '-c:v', 'copy',
+      '-c:a', 'aac',
+      '-b:a', '192k',
+      '-shortest',
+      outputPath
+    ];
+
+    const proc = spawn('ffmpeg', args);
+    let stderr = '';
+    proc.stderr.on('data', d => stderr += d.toString());
+    proc.on('close', code => {
+      if (code === 0) resolve();
+      else reject(new Error(`Merge video+audio falló (code ${code}): ${stderr.slice(-300)}`));
+    });
+    proc.on('error', err => reject(err));
+  });
+}
+
 app.get('/api/section-media-summary/:folderName', async (req, res) => {
   try {
     const { folderName } = req.params;
@@ -17243,37 +17847,85 @@ ${topic.slice(0, 500)}`;
       name = topic.slice(0, 40).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, '_').slice(0, 30);
     }
 
-    console.log(`📁 Nombre de carpeta generado: "${name}" (tema: "${topic.slice(0, 50)}...")`);
-    res.json({ name });
+    // Verificar que no exista ya una carpeta con ese nombre
+    let finalName = name;
+    let suffix = 2;
+    while (fs.existsSync(path.join(globalOutputDir, finalName))) {
+      finalName = `${name}_${suffix}`;
+      suffix++;
+    }
+
+    console.log(`📁 Nombre de carpeta generado: "${finalName}" (tema: "${topic.slice(0, 50)}...")`);
+    res.json({ name: finalName });
   } catch (err) {
     // Fallback: sanitizar el topic directamente
-    const fallback = topic.slice(0, 40).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, '_').slice(0, 30);
-    console.log(`📁 Fallback nombre de carpeta: "${fallback}"`);
-    res.json({ name: fallback || 'proyecto_nuevo' });
+    let fallback = topic.slice(0, 40).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, '_').slice(0, 30);
+    // Verificar que no exista
+    let finalFallback = fallback || 'proyecto_nuevo';
+    let suffix = 2;
+    while (fs.existsSync(path.join(globalOutputDir, finalFallback))) {
+      finalFallback = `${fallback || 'proyecto_nuevo'}_${suffix}`;
+      suffix++;
+    }
+    console.log(`📁 Fallback nombre de carpeta: "${finalFallback}"`);
+    res.json({ name: finalFallback });
   }
 });
 
 // Analizar el guion del proyecto y extraer términos de búsqueda
 app.post('/api/broll/analyze', async (req, res) => {
-  const { folderName, topic, numSections } = req.body;
+  const { folderName } = req.body;
   if (!folderName) return res.status(400).json({ error: 'folderName es requerido' });
-  if (!topic || !topic.trim()) return res.status(400).json({ error: 'El tema es requerido para analizar B-Roll.' });
 
   try {
-    const scriptText = topic.trim();
+    // Buscar la carpeta del proyecto
+    const normalizedFolderName = createSafeFolderName(folderName);
+    let projectPath = path.join(globalOutputDir, normalizedFolderName);
+    if (!fs.existsSync(projectPath)) {
+      projectPath = path.join(globalOutputDir, folderName);
+      if (!fs.existsSync(projectPath)) {
+        return res.status(404).json({ error: 'Proyecto no encontrado' });
+      }
+    }
+
+    // Leer guiones de cada sección
+    const items = fs.readdirSync(projectPath);
+    const sectionScripts = [];
+
+    for (const item of items) {
+      const itemPath = path.join(projectPath, item);
+      if (!fs.statSync(itemPath).isDirectory() || !item.startsWith('seccion_')) continue;
+      const secNum = parseInt(item.replace('seccion_', ''));
+      if (isNaN(secNum)) continue;
+
+      const files = fs.readdirSync(itemPath);
+      const guionFile = files.find(f => f.endsWith('_guion.txt'));
+      if (!guionFile) continue;
+
+      const guionText = fs.readFileSync(path.join(itemPath, guionFile), 'utf-8').trim();
+      if (guionText.length > 0) {
+        sectionScripts.push({ numero: secNum, text: guionText });
+      }
+    }
+
+    sectionScripts.sort((a, b) => a.numero - b.numero);
+
+    if (sectionScripts.length === 0) {
+      return res.status(400).json({ error: 'No se encontraron guiones en las secciones. Genera los guiones primero.' });
+    }
 
     const { model: aiModel } = await getGoogleAI('gemini-3-flash-preview', { context: 'broll', forcePrimary: true });
 
-    const sectionCount = numSections || 8;
-    const prompt = `Eres un asistente experto en buscar videos en YouTube para producción de video (B-roll).
-Tu tarea es dividir el guion en EXACTAMENTE ${sectionCount} secciones y extraer términos de búsqueda ÓPTIMOS para YouTube por cada sección.
+    // Generar términos para cada sección basados en su guion individual
+    const terms = [];
+    for (const sec of sectionScripts) {
+      const prompt = `Eres un asistente experto en buscar videos en YouTube para producción de video (B-roll).
+Tu tarea es extraer términos de búsqueda ÓPTIMOS para YouTube basados en el siguiente guion de UNA sección de video.
 
 REGLAS CRÍTICAS:
 - Devuelve SOLO un JSON válido, sin markdown ni explicaciones.
-- El formato es: [{"section": "nombre corto de la sección", "terms": ["término 1", "término 2", "término 3"]}]
-- DEBES generar EXACTAMENTE ${sectionCount} objetos en el array (uno por sección del video).
-- Divide el contenido del guion equitativamente entre las ${sectionCount} secciones.
-- Genera 2-3 términos por sección.
+- El formato es: {"section": "nombre corto descriptivo", "terms": ["término 1", "término 2", "término 3"]}
+- Genera 2-4 términos de búsqueda.
 - Los términos deben ser CORTOS y DIRECTOS (3-5 palabras máximo).
 - SIEMPRE usa el nombre propio/oficial del elemento (juego, película, personaje, item, etc.) en su idioma ORIGINAL (generalmente inglés).
 - Para videojuegos: usa "nombre del item/personaje + nombre del juego" (ej: "ivory raptor wow classic", "nether drake tbc mount").
@@ -17282,16 +17934,23 @@ REGLAS CRÍTICAS:
 - Cada término debe ser algo que un usuario escribiría directamente en la barra de búsqueda de YouTube para encontrar ESE contenido específico.
 - Prioriza términos que muestren gameplay, showcase, obtención o preview del elemento.
 
-TEXTO A ANALIZAR (dividir en ${sectionCount} secciones):
-${scriptText.slice(0, 8000)}`;
+GUION DE LA SECCIÓN ${sec.numero}:
+${sec.text.slice(0, 3000)}`;
 
-    const result = await aiModel.generateContent(prompt);
-    const response = result.response.text();
+      try {
+        const result = await aiModel.generateContent(prompt);
+        const response = result.response.text();
+        const jsonMatch = response.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          terms.push({ ...parsed, sectionNumber: sec.numero });
+        }
+      } catch (err) {
+        console.error(`⚠️ Error analizando sección ${sec.numero}:`, err.message);
+        terms.push({ section: `Sección ${sec.numero}`, terms: [], sectionNumber: sec.numero });
+      }
+    }
 
-    const jsonMatch = response.match(/\[[\s\S]*\]/);
-    if (!jsonMatch) return res.status(500).json({ error: 'No se pudo parsear la respuesta de la IA' });
-
-    const terms = JSON.parse(jsonMatch[0]);
     res.json({ terms });
   } catch (err) {
     console.error('❌ Error B-Roll analyze:', err.message);
@@ -17313,19 +17972,39 @@ app.post('/api/broll/search', async (req, res) => {
     const seenUrls = new Set();
 
     for (const group of terms) {
-      const sectionResults = { section: group.section, videos: [], imageTerms: [] };
+      const sectionResults = { section: group.section, sectionNumber: group.sectionNumber, videos: [], imageTerms: [] };
 
+      // Buscar videos para todos los términos de esta sección
+      const allCandidates = [];
       for (const term of group.terms) {
         try {
           if (maxResults > 0) {
-            const validated = await brollSearchAndValidate(term, group.section, maxResults, maxDuration, excludeShorts, seenUrls, spawn);
-            sectionResults.videos.push({ term, results: validated });
+            const found = await brollSearchAndValidate(term, group.section, maxResults, maxDuration, excludeShorts, seenUrls, spawn);
+            sectionResults.videos.push({ term, results: found });
+            allCandidates.push(...found);
           }
           if (maxImages > 0) {
             sectionResults.imageTerms.push(term);
           }
         } catch (err) {
           sectionResults.videos.push({ term, error: err.message });
+        }
+      }
+
+      // Una sola validación LLM por sección completa
+      if (allCandidates.length > 0) {
+        try {
+          const validIndices = await brollValidateRelevance(allCandidates, group.terms.join(', '), group.section);
+          const validUrls = new Set(validIndices.map(i => allCandidates[i]?.url).filter(Boolean));
+          
+          // Filtrar resultados no relevantes de cada grupo de términos
+          for (const videoGroup of sectionResults.videos) {
+            if (videoGroup.results) {
+              videoGroup.results = videoGroup.results.filter(v => validUrls.has(v.url));
+            }
+          }
+        } catch (err) {
+          console.log('[B-Roll] Validación LLM falló, aceptando todos:', err.message);
         }
       }
 
@@ -17339,7 +18018,7 @@ app.post('/api/broll/search', async (req, res) => {
   }
 });
 
-// Descargar B-Roll al proyecto
+// Descargar B-Roll al proyecto (dentro de cada seccion_N/broll/)
 app.post('/api/broll/download', async (req, res) => {
   const { sections, folderName, maxImages = 0, resolution = '720' } = req.body;
 
@@ -17348,9 +18027,14 @@ app.post('/api/broll/download', async (req, res) => {
   }
   if (!folderName) return res.status(400).json({ error: 'folderName es requerido' });
 
-  const projectDir = path.join(globalOutputDir, folderName);
-  const brollDir = path.join(projectDir, 'broll');
-  if (!fs.existsSync(brollDir)) fs.mkdirSync(brollDir, { recursive: true });
+  const normalizedFolderName = createSafeFolderName(folderName);
+  let projectDir = path.join(globalOutputDir, normalizedFolderName);
+  if (!fs.existsSync(projectDir)) {
+    projectDir = path.join(globalOutputDir, folderName);
+    if (!fs.existsSync(projectDir)) {
+      return res.status(404).json({ error: 'Proyecto no encontrado' });
+    }
+  }
 
   const jobId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
@@ -17359,9 +18043,9 @@ app.post('/api/broll/download', async (req, res) => {
 
   for (let i = 0; i < sections.length; i++) {
     const sec = sections[i];
-    const num = String(i + 1).padStart(2, '0');
-    const safeName = (sec.section || 'general').replace(/[<>:"/\\|?*]/g, '-').replace(/[^\x20-\x7E]/g, '').trim().slice(0, 60) || 'general';
-    const sectionDir = path.join(brollDir, `${num} - ${safeName}`);
+    // Usar sectionNumber si viene del nuevo sistema, si no usar el índice
+    const secNum = sec.sectionNumber || (i + 1);
+    const sectionDir = path.join(projectDir, `seccion_${secNum}`, 'broll');
     if (!fs.existsSync(sectionDir)) fs.mkdirSync(sectionDir, { recursive: true });
 
     const validUrls = (sec.urls || []).filter(u => /^https:\/\/(www\.)?youtube\.com\/watch\?v=/.test(u));
@@ -17386,12 +18070,12 @@ app.post('/api/broll/download', async (req, res) => {
     return res.status(400).json({ error: 'No hay contenido para descargar' });
   }
 
-  brollDownloadProgress.set(jobId, { videos, imageTasks, done: false, folder: brollDir });
+  brollDownloadProgress.set(jobId, { videos, imageTasks, done: false, folder: projectDir });
 
   // Iniciar descargas en background
   brollDownloadAll(jobId, resolution);
 
-  res.json({ jobId, totalVideos: videos.length, totalImageTasks: imageTasks.length, folder: brollDir });
+  res.json({ jobId, totalVideos: videos.length, totalImageTasks: imageTasks.length, folder: projectDir });
 });
 
 app.get('/api/broll/download/status/:jobId', (req, res) => {
@@ -17561,38 +18245,28 @@ function brollDownloadImages(task, spawn) {
   });
 }
 
-// Búsqueda YouTube con validación LLM
+// Búsqueda YouTube con validación LLM (1 sola validación por sección)
 async function brollSearchAndValidate(term, sectionName, maxResults, maxDuration, excludeShorts, seenUrls, spawn) {
-  const MAX_ATTEMPTS = 3;
+  const fetchCount = (maxResults + 2) * 3;
+
+  const videos = await brollYtSearch(term, fetchCount, spawn);
+
+  const candidates = videos.filter(v => {
+    if (seenUrls.has(v.url)) return false;
+    if (excludeShorts && v.durationSec <= 60) return false;
+    return v.durationSec <= maxDuration * 60;
+  });
+
+  if (candidates.length === 0) return [];
+
+  // Retornar candidatos sin validar LLM aquí (se valida después por sección completa)
   const approved = [];
-  let searchOffset = 0;
-
-  for (let attempt = 0; attempt < MAX_ATTEMPTS && approved.length < maxResults; attempt++) {
-    const needed = maxResults - approved.length;
-    const fetchCount = (needed + 2) * 3;
-
-    const videos = await brollYtSearch(term, fetchCount, spawn);
-    searchOffset += fetchCount;
-
-    const candidates = videos.filter(v => {
-      if (seenUrls.has(v.url)) return false;
-      if (excludeShorts && v.durationSec <= 60) return false;
-      return v.durationSec <= maxDuration * 60;
-    });
-
-    if (candidates.length === 0) break;
-
-    // Validar relevancia con LLM
-    const validIndices = await brollValidateRelevance(candidates, term, sectionName);
-
-    for (const idx of validIndices) {
-      if (approved.length >= maxResults) break;
-      const v = candidates[idx];
-      if (!seenUrls.has(v.url)) {
-        seenUrls.add(v.url);
-        const { durationSec, ...rest } = v;
-        approved.push(rest);
-      }
+  for (const v of candidates) {
+    if (approved.length >= maxResults) break;
+    if (!seenUrls.has(v.url)) {
+      seenUrls.add(v.url);
+      const { durationSec, ...rest } = v;
+      approved.push(rest);
     }
   }
 
