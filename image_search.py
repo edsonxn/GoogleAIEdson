@@ -26,7 +26,7 @@ def main():
         results = DDGS().images(
             query,
             region="us-en",
-            safesearch="moderate",
+            safesearch="on",
             max_results=max_num * 3,  # fetch extra in case some fail to download
         )
     except Exception as e:

@@ -2722,6 +2722,42 @@ async function runAutoGeneration() {
       }, index * 1000); // 1 segundo de delay por proyecto
     });
     
+    // Lanzar B-Roll en paralelo (fire-and-forget, no bloqueamos la generación)
+    const _brollMaxVids = parseInt(document.getElementById('brollMaxVideos')?.value) || 0;
+    const _brollMaxImgs = parseInt(document.getElementById('brollMaxImages')?.value) || 0;
+    if (_brollMaxVids > 0 || _brollMaxImgs > 0) {
+      console.log('🎬 Lanzando B-Roll en paralelo con la generación...');
+      const _brollTopic = document.getElementById('prompt')?.value?.trim();
+      const _brollNumSections = parseInt(document.getElementById('sectionsNumber')?.value) || 8;
+      const _brollFolder = folderName;
+      // Fire and forget - no await
+      fetch('/api/broll/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folderName: _brollFolder, topic: _brollTopic, numSections: _brollNumSections })
+      }).then(r => r.json()).then(analyzeData => {
+        if (analyzeData.terms) {
+          console.log('🎬 B-Roll: ' + analyzeData.terms.length + ' secciones analizadas, buscando videos...');
+          return fetch('/api/broll/search', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ terms: analyzeData.terms, maxResults: _brollMaxVids, maxDuration: parseInt(document.getElementById('brollMaxDuration')?.value) || 20, excludeShorts: document.getElementById('brollExcludeShorts')?.checked ?? true, maxImages: _brollMaxImgs })
+          });
+        }
+      }).then(r => r?.json()).then(searchData => {
+        if (searchData?.results) {
+          console.log('🎬 B-Roll: Búsqueda completa, iniciando descarga...');
+          fetch('/api/broll/download', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sections: searchData.results, folderName: _brollFolder, resolution: document.getElementById('brollResolution')?.value || '720p' })
+          }).then(r => r.json()).then(dlData => {
+            if (dlData.jobId) console.log('🎬 B-Roll: Descarga iniciada (job: ' + dlData.jobId + ')');
+          }).catch(e => console.warn('⚠️ B-Roll download error:', e.message));
+        }
+      }).catch(e => console.warn('⚠️ B-Roll error:', e.message));
+    }
+
     const phase1Response = await fetch("/generate-batch-automatic", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -2882,17 +2918,6 @@ async function runAutoGeneration() {
     updateSectionImageButtons(window.currentProject);
     startSectionImageProgressPolling(window.currentProject);
     updateYouTubeMetadataButtonState();
-
-    // Lanzar B-Roll en paralelo (no esperamos, corre mientras se genera el guion)
-    const brollMaxVideos = parseInt(document.getElementById('brollMaxVideos')?.value) || 0;
-    const brollMaxImages = parseInt(document.getElementById('brollMaxImages')?.value) || 0;
-    if (brollMaxVideos > 0 || brollMaxImages > 0) {
-      console.log('🎬 Lanzando B-Roll en paralelo con la generación...');
-      setTimeout(() => {
-        const brollBtn = document.getElementById('brollAnalyzeBtn');
-        if (brollBtn) brollBtn.click();
-      }, 500);
-    }
 
     // =============================================================== 
     // VERIFICACIÃƒâ€œN DE GUIONES ANTES DE GENERAR AUDIOS
@@ -3466,8 +3491,9 @@ function restoreGenerateButton() {
     <span>Generar SecciÃƒÂ³n 1</span>
   `;
   
-  // Asegurar que estÃƒÂ© habilitado
+  // Asegurar que estÃƒÂ© habilitado y visible
   generateBtn.disabled = false;
+  generateBtn.style.display = 'inline-flex';
   
   // Limpiar cualquier etapa de loading residual
   const loadingStages = output.querySelector('.loading-stages');
@@ -5151,6 +5177,7 @@ generateBtn.addEventListener("click", async () => {
 
   // Deshabilitar botÃƒÂ³n y mostrar estado de carga
   generateBtn.disabled = true;
+  generateBtn.style.display = 'none';
   generateBtn.innerHTML = `
     <i class="fas fa-spinner loading"></i>
     <span>Generando SecciÃƒÂ³n 1...</span>
@@ -5357,6 +5384,7 @@ generateBtn.addEventListener("click", async () => {
   } finally {
     // Restaurar botÃƒÂ³n
     generateBtn.disabled = false;
+    generateBtn.style.display = 'inline-flex';
     generateBtn.innerHTML = `
       <i class="fas fa-video"></i>
       <span>Generar SecciÃƒÂ³n 1</span>
