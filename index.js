@@ -17197,7 +17197,7 @@ function updateSectionAudioInState(projectKey, sectionNumber, audioPath) {
 // B-ROLL MODULE: Buscar y descargar videos/imágenes de apoyo para el proyecto
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const YT_DLP_PATH = 'C:\\Users\\jaire\\AppData\\Local\\Microsoft\\WinGet\\Links\\yt-dlp.exe';
+const YT_DLP_PATH = process.env.YT_DLP_PATH || 'yt-dlp';
 const brollDownloadProgress = new Map();
 
 // Generar nombre de carpeta con LLM basado en el tema
