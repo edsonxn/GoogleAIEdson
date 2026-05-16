@@ -33,73 +33,153 @@ class ApplioClient {
     async discoverFnIndex() {
         /**
          * Descubre automáticamente el fn_index correcto para TTS+RVC
-         * Consultando la configuración de Gradio en Applio
-         * Soporta múltiples versiones de Applio (fn_index puede ser 94, 101, etc.)
+         * Estrategia:
+         * 1. Consultar /config de Gradio y analizar dependencias
+         * 2. Si falla, probar fn_indexes conocidos con un test real
          */
+        
+        // Paso 1: Intentar descubrimiento por análisis de config
         try {
             console.log('🔍 Auto-detectando fn_index para TTS+RVC...');
             const response = await axios.get(`${this.applioUrl}/config`, { timeout: 5000 });
             const config = response.data;
             
-            if (!config.dependencies || config.dependencies.length === 0) {
-                console.warn('⚠️ No se encontraron dependencias en config. Intentando con fn_index: 94...');
-                return 94; // Fallback principal
-            }
-
-            // Buscar la función que tenga los parámetros de TTS+RVC
-            // Criterios: ~25 inputs, input text, f0_method, voice model path
-            let candidates = [];
-            
-            for (let i = 0; i < config.dependencies.length; i++) {
-                const dep = config.dependencies[i];
+            if (config.dependencies && config.dependencies.length > 0) {
+                let candidates = [];
                 
-                // Contar inputs
-                if (!dep.inputs || !Array.isArray(dep.inputs)) continue;
-                const inputCount = dep.inputs.length;
-                
-                // Obtener labels de los inputs
-                let inputLabels = dep.inputs.map(inputIdx => {
-                    const component = config.components[inputIdx];
-                    return (component?.label || `input_${inputIdx}`).toLowerCase();
-                });
+                for (let i = 0; i < config.dependencies.length; i++) {
+                    const dep = config.dependencies[i];
+                    
+                    if (!dep.inputs || !Array.isArray(dep.inputs)) continue;
+                    const inputCount = dep.inputs.length;
+                    
+                    // Obtener labels/props de los componentes referenciados
+                    let inputLabels = [];
+                    for (const inputRef of dep.inputs) {
+                        // inputRef puede ser un índice numérico o un objeto
+                        const idx = typeof inputRef === 'number' ? inputRef : inputRef?.id;
+                        if (idx !== undefined && config.components) {
+                            // components puede ser un array o un objeto con ids como keys
+                            const comp = Array.isArray(config.components) 
+                                ? config.components[idx] 
+                                : config.components[String(idx)];
+                            const label = (comp?.props?.label || comp?.label || '').toLowerCase();
+                            inputLabels.push(label);
+                        }
+                    }
 
-                // Criterios para identificar TTS+RVC
-                const hasTextInput = inputLabels.some(l => l.includes('text') || l.includes('input'));
-                const hasF0Method = inputLabels.some(l => l.includes('f0'));
-                const hasVoicePath = inputLabels.some(l => 
-                    l.includes('voice') || l.includes('model') || l.includes('path') || l.includes('pth')
-                );
-                const hasTTSModel = inputLabels.some(l => l.includes('tts'));
-                const isRightSize = inputCount >= 20 && inputCount <= 30; // TTS+RVC típicamente tiene 25 inputs
+                    // Criterios para identificar TTS+RVC
+                    const hasTextInput = inputLabels.some(l => l.includes('text') || l.includes('input'));
+                    const hasF0Method = inputLabels.some(l => l.includes('f0') || l.includes('pitch'));
+                    const hasVoicePath = inputLabels.some(l => 
+                        l.includes('voice') || l.includes('model') || l.includes('path') || l.includes('pth')
+                    );
+                    const hasTTSModel = inputLabels.some(l => l.includes('tts'));
+                    const isRightSize = inputCount >= 20 && inputCount <= 30;
 
-                const score = (hasTextInput ? 3 : 0) + 
-                             (hasF0Method ? 3 : 0) + 
-                             (hasVoicePath ? 3 : 0) + 
-                             (hasTTSModel ? 2 : 0) +
-                             (isRightSize ? 2 : 0);
+                    const score = (hasTextInput ? 3 : 0) + 
+                                 (hasF0Method ? 3 : 0) + 
+                                 (hasVoicePath ? 3 : 0) + 
+                                 (hasTTSModel ? 2 : 0) +
+                                 (isRightSize ? 2 : 0);
 
-                if (score >= 8) {
-                    candidates.push({ index: i, score, inputCount });
-                    console.log(`  📊 Candidato encontrado en fn_index ${i}: score=${score}, inputs=${inputCount}`);
+                    if (score >= 8) {
+                        candidates.push({ index: i, score, inputCount });
+                        console.log(`  📊 Candidato encontrado en fn_index ${i}: score=${score}, inputs=${inputCount}`);
+                    }
+                }
+
+                if (candidates.length > 0) {
+                    candidates.sort((a, b) => b.score - a.score);
+                    const best = candidates[0];
+                    console.log(`✅ fn_index detectado por config: ${best.index} (score: ${best.score})`);
+                    return best.index;
                 }
             }
-
-            if (candidates.length > 0) {
-                // Ordenar por score descendente y usar el mejor
-                candidates.sort((a, b) => b.score - a.score);
-                const best = candidates[0];
-                console.log(`✅ fn_index seleccionado: ${best.index} (score: ${best.score})`);
-                return best.index;
-            }
-
-            console.warn('⚠️ No se encontró función TTS+RVC de forma confiable. Intentando con fn_index: 94...');
-            return 94;
-
+            
+            console.warn('⚠️ Análisis de config no encontró candidatos claros');
         } catch (error) {
-            console.warn(`⚠️ Error auto-detectando fn_index: ${error.message}`);
-            console.warn('   Usando fallback: 94');
-            return 94;
+            console.warn(`⚠️ Error leyendo /config: ${error.message}`);
         }
+
+        // Paso 2: Probar fn_indexes conocidos con un test real
+        console.log('🧪 Probando fn_indexes conocidos con audio de prueba...');
+        const knownIndexes = [94, 102, 101, 95, 96, 103, 104, 100];
+        
+        for (const testIndex of knownIndexes) {
+            try {
+                const works = await this._testFnIndex(testIndex);
+                if (works) {
+                    console.log(`✅ fn_index ${testIndex} FUNCIONA - usando este`);
+                    return testIndex;
+                }
+            } catch (e) {
+                // Silenciar, seguir probando
+            }
+        }
+
+        // Paso 3: Fallback último recurso
+        console.warn('⚠️ Ningún fn_index respondió en prueba. Usando 94 como último recurso.');
+        return 94;
+    }
+
+    async _testFnIndex(fnIndex) {
+        /**
+         * Prueba un fn_index enviando "test" y esperando hasta 45s a que aparezca un archivo
+         */
+        const beforeTimestamp = await this._getFileTimestamp();
+        
+        const testPayload = {
+            data: [
+                true, "", "test", "fr-FR-RemyMultilingualNeural", 0, 0, 0.75, 1, 0.5, "rmvpe",
+                this.outputPaths[1], this.outputPaths[0],
+                "logs\\VOCES\\RemyOriginal.pth", "", false, false, 1, false, 155, false, 0.5, "WAV", "contentvec", null, 0
+            ],
+            event_data: null,
+            fn_index: fnIndex,
+            session_hash: this._generateSessionHash(),
+            trigger_id: Math.floor(Math.random() * 1000)
+        };
+
+        // Intentar enviar a los endpoints conocidos
+        const endpointPaths = ['/queue/join', '/gradio_api/queue/join', '/api/queue/join'];
+        let sent = false;
+
+        for (const ep of endpointPaths) {
+            try {
+                await axios.post(`${this.applioUrl}${ep}`, testPayload, {
+                    headers: { 'Content-Type': 'application/json' },
+                    timeout: 10000
+                });
+                sent = true;
+                console.log(`  🧪 fn_index ${fnIndex} enviado via ${ep}, esperando archivo...`);
+                break;
+            } catch (epErr) {
+                if (epErr.response && epErr.response.status === 404) continue;
+                // Otro error (conexión, etc) - asumir que endpoint no sirve
+                continue;
+            }
+        }
+
+        if (!sent) return false;
+
+        // Esperar hasta 45 segundos por un archivo nuevo
+        const maxWait = 45000;
+        const startTime = Date.now();
+        
+        while (Date.now() - startTime < maxWait) {
+            await new Promise(r => setTimeout(r, 2000));
+            const current = await this._getFileTimestamp();
+            if (current.mtime > beforeTimestamp.mtime) {
+                // Verificar que tenga contenido real (>1KB)
+                if (fs.existsSync(current.path) && fs.statSync(current.path).size > 1000) {
+                    return true;
+                }
+            }
+        }
+
+        console.log(`  ❌ fn_index ${fnIndex} no generó archivo en 45s`);
+        return false;
     }
 
     async ensureFnIndex() {
@@ -236,10 +316,38 @@ class ApplioClient {
 
             console.log(`📡 Enviando a Applio (fn_index: ${fnIndex})...`);
             
-            const response = await axios.post(`${this.applioUrl}/gradio_api/queue/join`, joinPayload, {
-                headers: { 'Content-Type': 'application/json' },
-                timeout: 1200000 // 20 minutos
-            });
+            // Intentar múltiples rutas de API de Gradio (varía según versión)
+            const endpointPaths = [
+                '/queue/join',
+                '/gradio_api/queue/join',
+                '/api/queue/join'
+            ];
+            
+            let response = null;
+            let lastErr = null;
+            
+            for (const ep of endpointPaths) {
+                try {
+                    response = await axios.post(`${this.applioUrl}${ep}`, joinPayload, {
+                        headers: { 'Content-Type': 'application/json' },
+                        timeout: 1200000 // 20 minutos
+                    });
+                    console.log(`✅ Endpoint exitoso: ${ep}`);
+                    break;
+                } catch (epErr) {
+                    lastErr = epErr;
+                    if (epErr.response && epErr.response.status === 404) {
+                        console.log(`   ❌ ${ep} no existe, probando siguiente...`);
+                        continue;
+                    }
+                    // Si no es 404, es otro error (timeout, conexión) - no seguir probando
+                    throw epErr;
+                }
+            }
+            
+            if (!response) {
+                throw lastErr || new Error('No se pudo conectar a ningún endpoint de Gradio');
+            }
 
             console.log('✅ Solicitud enviada');
             console.log(`📋 Event ID: ${response.data.event_id}`);

@@ -457,7 +457,7 @@
           <div class="project-list-header">
             <div class="project-list-title">
               <i class="fas fa-folder-tree"></i>
-              <span>Carpetas y temas</span>
+              <span>Temas</span>
             </div>
             <div class="project-header-actions">
               <button id="addProjectEntryBtn" type="button" class="project-add-btn">
@@ -468,13 +468,7 @@
           </div>
 
           <div class="project-entry primary-project" data-project-index="0">
-            <div class="field-group">
-              <label for="folderName" class="field-label">
-                <i class="fas fa-folder"></i>
-                Carpeta:
-              </label>
-              <input type="text" id="folderName" class="field-input project-folder-input" placeholder="Ej: lore_de_los_kokiri" data-project-role="folder" />
-            </div>
+            <input type="hidden" id="folderName" class="field-input project-folder-input" value="" data-project-role="folder" />
 
             <div class="field-group topic-group">
               <label for="prompt" class="field-label">
@@ -531,50 +525,6 @@
             <select id="styleSelect" class="field-select">
               <option value="professional" selected>Profesional</option>
               <option value="comedy">Cómico</option>
-            </select>
-          </div>
-
-          <div class="field-group">
-            <label for="imagesSelect" class="field-label">
-              <i class="fas fa-images"></i> Imágenes:
-            </label>
-            <select id="imagesSelect" class="field-select">
-              <option value="1">1 Imagen</option>
-              <option value="2">2 Imágenes</option>
-              <option value="3">3 Imágenes</option>
-              <option value="4">4 Imágenes</option>
-              <option value="5">5 Imágenes</option>
-              <option value="8">8 Imágenes</option>
-              <option value="10"selected>10 Imágenes</option>
-              <option value="15">15 Imágenes</option>
-              <option value="20">20 Imágenes</option>
-              <option value="25">25 Imágenes</option>
-              <option value="30">30 Imágenes</option>
-              <option value="35">35 Imágenes</option>
-              <option value="40">40 Imágenes</option>
-              <option value="45">45 Imágenes</option>
-              <option value="50">50 Imágenes</option>
-            </select>
-          </div>
-
-          <div class="field-group">
-            <label for="aspectRatioSelect" class="field-label">
-              <i class="fas fa-expand-arrows-alt"></i> Formato de Imagen:
-            </label>
-            <select id="aspectRatioSelect" class="field-select">
-              <option value="16:9" selected>16:9 (Horizontal/Paisaje)</option>
-              <option value="9:16">9:16 (Vertical/Retrato)</option>
-              <option value="1:1">1:1 (Cuadrado)</option>
-            </select>
-          </div>
-
-          <div class="field-group">
-            <label for="imageModelSelect" class="field-label">
-              <i class="fas fa-robot"></i> Modelo de Imagen:
-            </label>
-            <select id="imageModelSelect" class="field-select">
-              <option value="gemini2" selected>Gemini 2.0 Flash</option>
-              <option value="gemini25">Gemini 2.5 Flash (Nuevo)</option>
             </select>
           </div>
 
@@ -674,15 +624,6 @@
             </label>
           </div>
 
-          <div class="checkbox-group">
-            <label class="checkbox-label">
-              <input type="checkbox" id="includeTranslations" class="checkbox-input">
-              <span class="checkbox-custom"></span>
-              <i class="fas fa-language"></i>
-              Incluir Traducciones
-            </label>
-          </div>
-
           <!-- Dropdown de voces de Applio (inicialmente oculto) -->
           <div class="field-group" id="applioVoiceGroup" style="display: none; margin-top: 10px; margin-left: 20px;">
             <label for="applioVoiceSelect" class="field-label">
@@ -734,76 +675,91 @@
               </div>
             </div>
           </div>
-
-          <div class="checkbox-group">
-            <label class="checkbox-label">
-              <input type="checkbox" id="googleImages" class="checkbox-input">
-              <span class="checkbox-custom"></span>
-              <i class="fab fa-google"></i>
-              Imágenes de Google
-            </label>
-          </div>
-
-          <div class="checkbox-group">
-            <label class="checkbox-label">
-              <input type="checkbox" id="localAIImages" class="checkbox-input">
-              <span class="checkbox-custom"></span>
-              <i class="fas fa-brain"></i>
-              Generar imágenes con IA
-            </label>
-          </div>
-
-
-
-          <div class="checkbox-group">
-            <label class="checkbox-label">
-              <input type="checkbox" id="generateVideo" class="checkbox-input">
-              <span class="checkbox-custom"></span>
-              <i class="fas fa-video"></i>
-              Generar Video
-            </label>
-          </div>
         </div>
 
-        <!-- Columna 3: Instrucciones adicionales -->
+        <!-- Columna 3: B-Roll -->
         <div class="config-column">
-          <h3 class="column-title"><i class="fas fa-paint-brush"></i> Personalización</h3>
-          
+          <h3 class="column-title"><i class="fas fa-film"></i> B-Roll</h3>
+
           <div class="field-group">
-            <label for="promptModifier" class="field-label">
-              <i class="fas fa-magic"></i> Instrucciones para Imágenes:
+            <label for="brollMaxDuration" class="field-label">
+              <i class="fas fa-clock"></i> Duración máx (min)
             </label>
-            <textarea id="promptModifier" class="field-textarea" rows="4" placeholder="Personaliza el estilo visual de las imágenes generadas...">Low poly style, Dark, Oscuro</textarea>
+            <input type="number" id="brollMaxDuration" class="field-input" value="5" min="1" max="120">
           </div>
 
           <div class="field-group">
-            <label for="thumbnailStyleSelect" class="field-label">
-              <i class="fas fa-image"></i> Estilo de Miniatura:
+            <label for="brollMaxVideos" class="field-label">
+              <i class="fas fa-video"></i> Videos por término
             </label>
-            <select id="thumbnailStyleSelect" class="field-select">
-              <option value="default" selected>Amarillo y Blanco (Predeterminado)</option>
-              <option value="gaming_red">Rojo Gaming</option>
-              <option value="neon_blue">Azul Neón</option>
-              <option value="retro_purple">Púrpura Retro</option>
+            <input type="number" id="brollMaxVideos" class="field-input" value="1" min="0" max="10">
+          </div>
+
+          <div class="field-group">
+            <label for="brollMaxImages" class="field-label">
+              <i class="fas fa-image"></i> Imágenes por término
+            </label>
+            <input type="number" id="brollMaxImages" class="field-input" value="5" min="0" max="20">
+          </div>
+
+          <div class="field-group">
+            <label for="brollResolution" class="field-label">
+              <i class="fas fa-expand"></i> Resolución
+            </label>
+            <select id="brollResolution" class="field-select">
+              <option value="480">480p</option>
+              <option value="720" selected>720p</option>
+              <option value="1080">1080p</option>
+              <option value="1440">1440p</option>
+              <option value="2160">4K</option>
             </select>
           </div>
 
-          <div class="info-box">
-            <i class="fas fa-info-circle"></i>
-            <div class="info-text">
-              <p><strong>Profesional:</strong> Tono educativo y serio</p>
-              <p><strong>Cómico:</strong> Humor negro y sarcasmo</p>
-              <p><strong>Gen. Automática:</strong> Genera todas las secciones</p>
-            </div>
+          <div class="checkbox-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="brollExcludeShorts" class="checkbox-input" checked>
+              <span class="checkbox-custom"></span>
+              <i class="fas fa-ban"></i>
+              Excluir Shorts
+            </label>
           </div>
+
+
         </div>
+      </div>
+
+      <!-- Campos de personalización ocultos (usados internamente por el JS) -->
+      <div style="display: none;">
+        <textarea id="promptModifier">Low poly style, Dark, Oscuro</textarea>
+        <select id="thumbnailStyleSelect">
+          <option value="default" selected>Amarillo y Blanco (Predeterminado)</option>
+          <option value="gaming_red">Rojo Gaming</option>
+          <option value="neon_blue">Azul Neón</option>
+          <option value="retro_purple">Púrpura Retro</option>
+        </select>
+        <select id="imagesSelect">
+          <option value="10" selected>10 Imágenes</option>
+        </select>
+        <select id="aspectRatioSelect">
+          <option value="16:9" selected>16:9 (Horizontal/Paisaje)</option>
+          <option value="9:16">9:16 (Vertical/Retrato)</option>
+          <option value="1:1">1:1 (Cuadrado)</option>
+        </select>
+        <select id="imageModelSelect">
+          <option value="gemini2" selected>Gemini 2.0 Flash</option>
+          <option value="gemini25">Gemini 2.5 Flash (Nuevo)</option>
+        </select>
+        <input type="checkbox" id="includeTranslations" class="checkbox-input">
+        <input type="checkbox" id="googleImages" class="checkbox-input">
+        <input type="checkbox" id="localAIImages" class="checkbox-input">
+        <input type="checkbox" id="generateVideo" class="checkbox-input">
       </div>
 
       <!-- Botones de acción -->
       <div class="action-buttons">
         <button id="generateBtn" class="btn btn-primary">
-          <i class="fas fa-video"></i>
-          <span>Generar Sección 1</span>
+          <i class="fas fa-play"></i>
+          <span>Generar</span>
         </button>
 
         <button id="generateAudioBtn" class="btn btn-audio" style="display: none;">
@@ -899,17 +855,58 @@
           <span>Descargar Proyecto (ZIP)</span>
         </button>
 
-        <!-- Panel de Traducción -->
-        <div id="translationPanel" class="translation-panel" style="display: none;">
-          <div class="panel-header">
-            <div class="panel-title">
-              <i class="fas fa-language"></i>
-              <span>Localización y Doblaje</span>
+        <button id="brollQuickBtn" class="download-project-zip-btn" style="display: none; background: linear-gradient(135deg, #6366f1, #8b5cf6);">
+          <i class="fas fa-film"></i>
+          <span>Descargar Contenido (B-Roll)</span>
+        </button>
+
+        <!-- Panel de B-Roll -->
+        <details id="brollPanel" class="video-generation-collapsible" style="margin-top: 20px; background: rgba(0,0,0,0.2); border-radius: 8px; border: 1px solid #4a5568; display: none;">
+          <summary style="padding: 15px; cursor: pointer; font-weight: bold; color: #e2e8f0; list-style: none; display: flex; justify-content: space-between; align-items: center;">
+            <span><i class="fas fa-film"></i> B-Roll (Videos e Imágenes de Apoyo)</span>
+            <i class="fas fa-chevron-down"></i>
+          </summary>
+          <div style="padding: 15px; border-top: 1px solid #4a5568;">
+            <p style="color: #a0aec0; font-size: 0.85rem; margin-bottom: 15px;">
+              Busca y descarga videos e imágenes de apoyo basados en tu guion. Se guardarán dentro de la carpeta del proyecto.
+            </p>
+
+            <!-- Botones de acción -->
+            <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+              <button id="brollAnalyzeBtn" class="action-btn primary-action" style="flex: 1; justify-content: center; padding: 12px;">
+                <i class="fas fa-search"></i>
+                <span>Analizar y Buscar B-Roll</span>
+              </button>
+              <button id="brollDownloadBtn" class="action-btn secondary-action" style="flex: 1; justify-content: center; padding: 12px; display: none;">
+                <i class="fas fa-download"></i>
+                <span>Descargar Todo</span>
+              </button>
             </div>
-            <span class="panel-badge">Multi-idioma</span>
+
+            <!-- Status -->
+            <div id="brollStatus" class="broll-status" style="display: none;"></div>
+
+            <!-- Resultados -->
+            <div id="brollResults" class="broll-results"></div>
+
+            <!-- Progreso de descargas -->
+            <div id="brollDownloadProgress" class="broll-download-progress" style="display: none;">
+              <div class="broll-progress-header">
+                <i class="fas fa-download"></i>
+                <span>Progreso de Descargas</span>
+              </div>
+              <div id="brollDownloadList" class="broll-download-list"></div>
+            </div>
           </div>
-          
-          <div class="panel-content">
+        </details>
+
+        <!-- Panel de Traducción -->
+        <details id="translationPanel" class="video-generation-collapsible" style="margin-top: 20px; background: rgba(0,0,0,0.2); border-radius: 8px; border: 1px solid #4a5568;">
+          <summary style="padding: 15px; cursor: pointer; font-weight: bold; color: #e2e8f0; list-style: none; display: flex; justify-content: space-between; align-items: center;">
+            <span><i class="fas fa-language"></i> Localización y Doblaje</span>
+            <span class="panel-badge" style="font-size: 0.75rem; padding: 2px 8px; border-radius: 4px; background: rgba(0,200,200,0.15); color: #00d4d4;">Multi-idioma</span>
+          </summary>
+          <div style="padding: 15px; border-top: 1px solid #4a5568;">
             <p class="panel-description">
               Traduce guiones y genera doblajes sincronizados automáticamente.
             </p>
@@ -979,7 +976,7 @@
               </div>
             </div>
           </div>
-        </div>
+        </details>
         
         <button id="regenerateMissingScriptsBtn" class="regenerate-scripts-btn" style="display: none;">
           <i class="fas fa-file-alt"></i>
@@ -1206,9 +1203,9 @@
           <div id="extractDropzoneText" class="dropzone-text">
             <i class="fas fa-cloud-upload-alt"></i>
             <p>Arrastra tu archivo MP4/MP3 aquí o haz click para seleccionar</p>
-            <small>Formatos soportados: MP4, MP3, WAV, M4A</small>
+            <small>Formatos soportados: MP4, MP3, WAV, M4A, OGG</small>
           </div>
-          <input type="file" id="extractFileInput" accept=".mp4,.mp3,.wav,.m4a" style="display: none;">
+          <input type="file" id="extractFileInput" accept=".mp4,.mp3,.wav,.m4a,.ogg" style="display: none;">
         </div>
         
         <div id="extractFileName" class="file-name" style="display: none;"></div>

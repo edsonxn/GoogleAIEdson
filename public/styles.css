@@ -10853,7 +10853,8 @@ body.prompts-panel-active .container {
          a l i g n - i t e m s :   f l e x - s t a r t ; 
      } 
  } 
-  
+ 
+ 
  
  @ m e d i a   ( m a x - w i d t h :   7 6 8 p x )   { 
      . a c t i o n s   { 
@@ -10896,7 +10897,8 @@ body.prompts-panel-active .container {
          m i n - h e i g h t :   4 0 p x   ! i m p o r t a n t ; 
      } 
  } 
-  
+ 
+ 
  
  @ m e d i a   ( m a x - w i d t h :   7 6 8 p x )   { 
      . p r o j e c t - e n t r y - l i s t , 
@@ -10909,7 +10911,8 @@ body.prompts-panel-active .container {
          g a p :   1 5 p x   ! i m p o r t a n t ; 
      } 
  } 
-  
+ 
+ 
  
 /* MOBILE RESPONSIVE TWEAKS */
 @media (max-width: 768px) {
@@ -10939,4 +10942,247 @@ body.prompts-panel-active .container {
   textarea, input, select { max-width: 100% !important; width: 100% !important; box-sizing: border-box !important; }
   button { white-space: normal !important; min-height: 44px !important; }
   .project-header-row { flex-direction: column; gap: 10px; align-items: flex-start; }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   B-ROLL PANEL STYLES
+   ═══════════════════════════════════════════════════════════════ */
+
+.broll-config-grid {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+  padding: 12px;
+  border: 1px solid var(--color-border-soft);
+}
+
+.broll-config-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+
+.broll-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 120px;
+}
+
+.broll-field label {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.broll-field input,
+.broll-field select {
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-900);
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.broll-field input:focus,
+.broll-field select:focus {
+  border-color: var(--color-accent-1);
+}
+
+.broll-status {
+  margin-top: 12px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 0.82rem;
+  background: var(--color-surface-800);
+  border: 1px solid var(--color-border-soft);
+  color: var(--color-accent-2);
+}
+
+.broll-status.error {
+  border-color: #ef4444;
+  color: #fca5a5;
+}
+
+.broll-results {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.broll-section-card {
+  background: var(--color-surface-800);
+  border: 1px solid var(--color-border-soft);
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.broll-section-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--color-accent-2);
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--color-border-soft);
+}
+
+.broll-term-group {
+  margin-bottom: 6px;
+}
+
+.broll-term-label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+  font-style: italic;
+}
+
+.broll-video-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  margin: 3px 0;
+  background: var(--color-bg-900);
+  border-radius: 6px;
+  border: 1px solid var(--color-border-soft);
+}
+
+.broll-video-item a {
+  color: #818cf8;
+  text-decoration: none;
+  font-size: 0.8rem;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.broll-video-item a:hover {
+  color: var(--color-accent-2);
+  text-decoration: underline;
+}
+
+.broll-video-duration {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.broll-video-channel {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.broll-image-info {
+  margin-top: 6px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: rgba(34, 197, 94, 0.1);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+  color: #86efac;
+  font-size: 0.75rem;
+}
+
+.broll-download-progress {
+  margin-top: 12px;
+  background: var(--color-surface-800);
+  border: 1px solid var(--color-border-soft);
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.broll-progress-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 10px;
+}
+
+.broll-download-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.broll-dl-item {
+  background: var(--color-bg-900);
+  border: 1px solid var(--color-border-soft);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+
+.broll-dl-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.broll-dl-title {
+  font-size: 0.78rem;
+  color: var(--text-primary);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-right: 8px;
+}
+
+.broll-dl-bar-container {
+  width: 100%;
+  height: 4px;
+  background: var(--color-surface-700);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.broll-dl-bar-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: 2px;
+  transition: width 0.3s ease;
+  background: linear-gradient(90deg, #10b981, #34d399);
+}
+
+.broll-dl-meta {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+  font-size: 0.68rem;
+  color: var(--text-muted);
+}
+
+.broll-dl-percent {
+  color: #10b981;
+  font-weight: 600;
+}
+
+.broll-dl-item.pending .broll-dl-title { color: var(--text-muted); }
+.broll-dl-item.downloading .broll-dl-bar-fill { background: linear-gradient(90deg, #10b981, #34d399); }
+.broll-dl-item.merging .broll-dl-bar-fill { background: linear-gradient(90deg, #6366f1, #a78bfa); }
+.broll-dl-item.merging .broll-dl-percent { color: #a78bfa; }
+.broll-dl-item.done .broll-dl-bar-fill { background: #10b981; width: 100% !important; }
+.broll-dl-item.done .broll-dl-title { color: #34d399; }
+.broll-dl-item.done .broll-dl-percent { color: #34d399; }
+.broll-dl-item.error .broll-dl-bar-fill { background: #ef4444; width: 100% !important; }
+.broll-dl-item.error .broll-dl-title { color: #fca5a5; }
+.broll-dl-item.error .broll-dl-percent { color: #ef4444; }
+
+@media (max-width: 768px) {
+  .broll-config-row { flex-direction: column; }
+  .broll-field { min-width: 100%; }
 }

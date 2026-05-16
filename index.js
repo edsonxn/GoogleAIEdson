@@ -17193,6 +17193,485 @@ function updateSectionAudioInState(projectKey, sectionNumber, audioPath) {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// B-ROLL MODULE: Buscar y descargar videos/imágenes de apoyo para el proyecto
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const YT_DLP_PATH = 'C:\\Users\\jaire\\AppData\\Local\\Microsoft\\WinGet\\Links\\yt-dlp.exe';
+const brollDownloadProgress = new Map();
+
+// Generar nombre de carpeta con LLM basado en el tema
+app.post('/api/generate-folder-name', async (req, res) => {
+  const { topic } = req.body;
+  if (!topic || typeof topic !== 'string') {
+    return res.status(400).json({ error: 'topic es requerido' });
+  }
+
+  try {
+    const { model: aiModel } = await getGoogleAI('gemini-3-flash-preview', { context: 'folder-name', forcePrimary: true });
+
+    const prompt = `Tu tarea es inventar un TÍTULO CORTO y CREATIVO para un proyecto de video basado en el tema descrito abajo.
+
+REGLAS ESTRICTAS:
+- Exactamente 2 a 4 palabras
+- Debe ser un título descriptivo y creativo que resuma el TEMA CENTRAL (NO copies las primeras palabras del texto)
+- Escríbelo en snake_case (palabras separadas por guión bajo)
+- Solo usa letras minúsculas del alfabeto inglés (a-z), números y guiones bajos
+- Convierte acentos a su versión sin acento (á→a, é→e, í→i, ó→o, ú→u, ñ→n)
+- NO incluyas comillas, explicaciones ni nada más, SOLO el nombre
+
+EJEMPLOS:
+- Tema sobre juegos tristes de PS1 → "juegos_oscuros_ps1"
+- Tema sobre la historia de Link en Zelda → "lore_link_zelda"
+- Tema sobre monturas eliminadas de WoW → "monturas_perdidas_wow"
+- Tema sobre secretos de Dark Souls → "secretos_dark_souls"
+
+TEMA:
+${topic.slice(0, 500)}`;
+
+    const result = await aiModel.generateContent(prompt);
+    let name = result.response.text().trim()
+      .toLowerCase()
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // quitar acentos
+      .replace(/[^a-z0-9_\s]/g, '')
+      .replace(/\s+/g, '_')
+      .replace(/_+/g, '_') // evitar doble guión bajo
+      .replace(/^_|_$/g, '') // quitar guiones al inicio/final
+      .slice(0, 50);
+
+    if (!name || name.length < 3) {
+      name = topic.slice(0, 40).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, '_').slice(0, 30);
+    }
+
+    console.log(`📁 Nombre de carpeta generado: "${name}" (tema: "${topic.slice(0, 50)}...")`);
+    res.json({ name });
+  } catch (err) {
+    // Fallback: sanitizar el topic directamente
+    const fallback = topic.slice(0, 40).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, '_').slice(0, 30);
+    console.log(`📁 Fallback nombre de carpeta: "${fallback}"`);
+    res.json({ name: fallback || 'proyecto_nuevo' });
+  }
+});
+
+// Analizar el guion del proyecto y extraer términos de búsqueda
+app.post('/api/broll/analyze', async (req, res) => {
+  const { folderName, topic, numSections } = req.body;
+  if (!folderName) return res.status(400).json({ error: 'folderName es requerido' });
+  if (!topic || !topic.trim()) return res.status(400).json({ error: 'El tema es requerido para analizar B-Roll.' });
+
+  try {
+    const scriptText = topic.trim();
+
+    const { model: aiModel } = await getGoogleAI('gemini-3-flash-preview', { context: 'broll', forcePrimary: true });
+
+    const sectionCount = numSections || 8;
+    const prompt = `Eres un asistente experto en buscar videos en YouTube para producción de video (B-roll).
+Tu tarea es dividir el guion en EXACTAMENTE ${sectionCount} secciones y extraer términos de búsqueda ÓPTIMOS para YouTube por cada sección.
+
+REGLAS CRÍTICAS:
+- Devuelve SOLO un JSON válido, sin markdown ni explicaciones.
+- El formato es: [{"section": "nombre corto de la sección", "terms": ["término 1", "término 2", "término 3"]}]
+- DEBES generar EXACTAMENTE ${sectionCount} objetos en el array (uno por sección del video).
+- Divide el contenido del guion equitativamente entre las ${sectionCount} secciones.
+- Genera 2-3 términos por sección.
+- Los términos deben ser CORTOS y DIRECTOS (3-5 palabras máximo).
+- SIEMPRE usa el nombre propio/oficial del elemento (juego, película, personaje, item, etc.) en su idioma ORIGINAL (generalmente inglés).
+- Para videojuegos: usa "nombre del item/personaje + nombre del juego" (ej: "ivory raptor wow classic", "nether drake tbc mount").
+- NO uses frases descriptivas largas ni traducciones al español de nombres propios.
+- NO pongas términos genéricos que den resultados irrelevantes.
+- Cada término debe ser algo que un usuario escribiría directamente en la barra de búsqueda de YouTube para encontrar ESE contenido específico.
+- Prioriza términos que muestren gameplay, showcase, obtención o preview del elemento.
+
+TEXTO A ANALIZAR (dividir en ${sectionCount} secciones):
+${scriptText.slice(0, 8000)}`;
+
+    const result = await aiModel.generateContent(prompt);
+    const response = result.response.text();
+
+    const jsonMatch = response.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) return res.status(500).json({ error: 'No se pudo parsear la respuesta de la IA' });
+
+    const terms = JSON.parse(jsonMatch[0]);
+    res.json({ terms });
+  } catch (err) {
+    console.error('❌ Error B-Roll analyze:', err.message);
+    res.status(500).json({ error: `Error al analizar: ${err.message}` });
+  }
+});
+
+// Buscar videos en YouTube con yt-dlp
+app.post('/api/broll/search', async (req, res) => {
+  const { terms, maxResults = 3, maxDuration = 20, excludeShorts = true, maxImages = 0 } = req.body;
+
+  if (!terms || !Array.isArray(terms)) {
+    return res.status(400).json({ error: 'terms es requerido (array)' });
+  }
+
+  try {
+    const { spawn } = await import('child_process');
+    const results = [];
+    const seenUrls = new Set();
+
+    for (const group of terms) {
+      const sectionResults = { section: group.section, videos: [], imageTerms: [] };
+
+      for (const term of group.terms) {
+        try {
+          if (maxResults > 0) {
+            const validated = await brollSearchAndValidate(term, group.section, maxResults, maxDuration, excludeShorts, seenUrls, spawn);
+            sectionResults.videos.push({ term, results: validated });
+          }
+          if (maxImages > 0) {
+            sectionResults.imageTerms.push(term);
+          }
+        } catch (err) {
+          sectionResults.videos.push({ term, error: err.message });
+        }
+      }
+
+      results.push(sectionResults);
+    }
+
+    res.json({ results, maxImages });
+  } catch (err) {
+    console.error('❌ Error B-Roll search:', err.message);
+    res.status(500).json({ error: `Error en búsqueda: ${err.message}` });
+  }
+});
+
+// Descargar B-Roll al proyecto
+app.post('/api/broll/download', async (req, res) => {
+  const { sections, folderName, maxImages = 0, resolution = '720' } = req.body;
+
+  if (!sections || !Array.isArray(sections) || sections.length === 0) {
+    return res.status(400).json({ error: 'sections es requerido' });
+  }
+  if (!folderName) return res.status(400).json({ error: 'folderName es requerido' });
+
+  const projectDir = path.join(globalOutputDir, folderName);
+  const brollDir = path.join(projectDir, 'broll');
+  if (!fs.existsSync(brollDir)) fs.mkdirSync(brollDir, { recursive: true });
+
+  const jobId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+
+  const videos = [];
+  const imageTasks = [];
+
+  for (let i = 0; i < sections.length; i++) {
+    const sec = sections[i];
+    const num = String(i + 1).padStart(2, '0');
+    const safeName = (sec.section || 'general').replace(/[<>:"/\\|?*]/g, '-').replace(/[^\x20-\x7E]/g, '').trim().slice(0, 60) || 'general';
+    const sectionDir = path.join(brollDir, `${num} - ${safeName}`);
+    if (!fs.existsSync(sectionDir)) fs.mkdirSync(sectionDir, { recursive: true });
+
+    const validUrls = (sec.urls || []).filter(u => /^https:\/\/(www\.)?youtube\.com\/watch\?v=/.test(u));
+    for (const url of validUrls) {
+      videos.push({
+        url, outputDir: sectionDir, section: sec.section,
+        title: '', status: 'pending', percent: 0, speed: '', size: '', error: ''
+      });
+    }
+
+    if (maxImages > 0 && sec.imageTerms && sec.imageTerms.length > 0) {
+      for (const term of sec.imageTerms) {
+        imageTasks.push({
+          term, maxImages, outputDir: sectionDir, section: sec.section,
+          status: 'pending', downloaded: 0, error: ''
+        });
+      }
+    }
+  }
+
+  if (videos.length === 0 && imageTasks.length === 0) {
+    return res.status(400).json({ error: 'No hay contenido para descargar' });
+  }
+
+  brollDownloadProgress.set(jobId, { videos, imageTasks, done: false, folder: brollDir });
+
+  // Iniciar descargas en background
+  brollDownloadAll(jobId, resolution);
+
+  res.json({ jobId, totalVideos: videos.length, totalImageTasks: imageTasks.length, folder: brollDir });
+});
+
+app.get('/api/broll/download/status/:jobId', (req, res) => {
+  const progress = brollDownloadProgress.get(req.params.jobId);
+  if (!progress) return res.status(404).json({ error: 'Job no encontrado' });
+  res.json(progress);
+});
+
+// ─── Helpers B-Roll ───
+async function brollDownloadAll(jobId, resolution) {
+  const job = brollDownloadProgress.get(jobId);
+  await Promise.all([
+    brollDownloadAllVideos(job, resolution),
+    brollDownloadAllImages(job)
+  ]);
+  job.done = true;
+  // Limpiar después de 5 minutos
+  setTimeout(() => brollDownloadProgress.delete(jobId), 5 * 60 * 1000);
+}
+
+async function brollDownloadAllVideos(job, resolution) {
+  if (job.videos.length === 0) return;
+  const { spawn } = await import('child_process');
+  const concurrency = 3;
+  let index = 0;
+
+  async function next() {
+    const i = index++;
+    if (i >= job.videos.length) return;
+    try {
+      await brollDownloadSingle(job.videos[i], resolution, spawn);
+    } catch (err) {
+      job.videos[i].status = 'error';
+      job.videos[i].error = err.message;
+    }
+    await next();
+  }
+
+  const workers = [];
+  for (let w = 0; w < Math.min(concurrency, job.videos.length); w++) workers.push(next());
+  await Promise.all(workers);
+}
+
+async function brollDownloadAllImages(job) {
+  if (!job.imageTasks || job.imageTasks.length === 0) return;
+  const { spawn } = await import('child_process');
+  const concurrency = 2;
+  let index = 0;
+
+  async function next() {
+    const i = index++;
+    if (i >= job.imageTasks.length) return;
+    try {
+      await brollDownloadImages(job.imageTasks[i], spawn);
+    } catch (err) {
+      job.imageTasks[i].status = 'error';
+      job.imageTasks[i].error = err.message;
+    }
+    await next();
+  }
+
+  const workers = [];
+  for (let w = 0; w < Math.min(concurrency, job.imageTasks.length); w++) workers.push(next());
+  await Promise.all(workers);
+}
+
+function brollDownloadSingle(videoState, resolution, spawn) {
+  return new Promise((resolve, reject) => {
+    videoState.status = 'downloading';
+
+    const proc = spawn(YT_DLP_PATH, [
+      '-f', `bestvideo[height<=${resolution}]+bestaudio/best[height<=${resolution}]`,
+      '--merge-output-format', 'mp4',
+      '-o', path.join(videoState.outputDir, '%(title)s.%(ext)s'),
+      '--no-playlist',
+      '--newline',
+      videoState.url
+    ]);
+
+    let stderr = '';
+
+    proc.stdout.on('data', (data) => {
+      const lines = data.toString().split('\n');
+      for (const line of lines) {
+        const destMatch = line.match(/\[download\] Destination: (.+)/);
+        if (destMatch && !videoState.title) {
+          videoState.title = path.basename(destMatch[1]).replace(/\.\w+$/, '');
+        }
+        const alreadyMatch = line.match(/\[download\] (.+) has already been downloaded/);
+        if (alreadyMatch && !videoState.title) {
+          videoState.title = path.basename(alreadyMatch[1]).replace(/\.\w+$/, '');
+        }
+        const progressMatch = line.match(/\[download\]\s+([\d.]+)%\s+of\s+~?([\d.]+\w+)\s+at\s+([\d.]+\w+\/s)\s+ETA\s+(\S+)/);
+        if (progressMatch) {
+          videoState.percent = parseFloat(progressMatch[1]);
+          videoState.size = progressMatch[2];
+          videoState.speed = progressMatch[3];
+        }
+        const progressMatch2 = line.match(/\[download\]\s+([\d.]+)%\s+of\s+~?([\d.]+\w+)/);
+        if (progressMatch2 && !progressMatch) {
+          videoState.percent = parseFloat(progressMatch2[1]);
+          videoState.size = progressMatch2[2];
+        }
+        if (line.includes('[Merger]') || line.includes('[ExtractAudio]')) {
+          videoState.status = 'merging';
+          videoState.percent = 100;
+        }
+      }
+    });
+
+    proc.stderr.on('data', (d) => { stderr += d.toString(); });
+
+    proc.on('close', (code) => {
+      if (code === 0) {
+        videoState.status = 'done';
+        videoState.percent = 100;
+        videoState.speed = '';
+        resolve();
+      } else {
+        reject(new Error(stderr.slice(-200) || `yt-dlp exit code ${code}`));
+      }
+    });
+    proc.on('error', (err) => reject(err));
+  });
+}
+
+function brollDownloadImages(task, spawn) {
+  return new Promise(async (resolve, reject) => {
+    task.status = 'downloading';
+
+    const { cmd, args } = await detectPythonCommand();
+    const proc = spawn(cmd, [...args, path.join(process.cwd(), 'image_search.py')]);
+
+    const input = JSON.stringify({
+      query: task.term,
+      max_num: task.maxImages,
+      output_dir: task.outputDir
+    });
+    console.log(`[B-Roll IMG] Buscando: "${task.term}" → ${task.outputDir}`);
+    proc.stdin.write(input);
+    proc.stdin.end();
+
+    let stdout = '';
+    let stderr = '';
+
+    proc.stdout.on('data', (d) => { stdout += d.toString(); });
+    proc.stderr.on('data', (d) => { stderr += d.toString(); });
+
+    proc.on('close', (code) => {
+      if (code === 0) {
+        try {
+          const result = JSON.parse(stdout.trim().split('\n').pop());
+          task.downloaded = result.downloaded || 0;
+          console.log(`[B-Roll IMG] ✓ "${task.term}" → ${task.downloaded} imágenes`);
+        } catch (e) {
+          console.log(`[B-Roll IMG] Parse error: ${stdout.slice(-100)}`);
+        }
+        task.status = 'done';
+        resolve();
+      } else {
+        console.log(`[B-Roll IMG] ✗ "${task.term}" stderr: ${stderr.slice(-200)}`);
+        reject(new Error(stderr.slice(-200) || `python exit ${code}`));
+      }
+    });
+
+    proc.on('error', (err) => reject(err));
+  });
+}
+
+// Búsqueda YouTube con validación LLM
+async function brollSearchAndValidate(term, sectionName, maxResults, maxDuration, excludeShorts, seenUrls, spawn) {
+  const MAX_ATTEMPTS = 3;
+  const approved = [];
+  let searchOffset = 0;
+
+  for (let attempt = 0; attempt < MAX_ATTEMPTS && approved.length < maxResults; attempt++) {
+    const needed = maxResults - approved.length;
+    const fetchCount = (needed + 2) * 3;
+
+    const videos = await brollYtSearch(term, fetchCount, spawn);
+    searchOffset += fetchCount;
+
+    const candidates = videos.filter(v => {
+      if (seenUrls.has(v.url)) return false;
+      if (excludeShorts && v.durationSec <= 60) return false;
+      return v.durationSec <= maxDuration * 60;
+    });
+
+    if (candidates.length === 0) break;
+
+    // Validar relevancia con LLM
+    const validIndices = await brollValidateRelevance(candidates, term, sectionName);
+
+    for (const idx of validIndices) {
+      if (approved.length >= maxResults) break;
+      const v = candidates[idx];
+      if (!seenUrls.has(v.url)) {
+        seenUrls.add(v.url);
+        const { durationSec, ...rest } = v;
+        approved.push(rest);
+      }
+    }
+  }
+
+  return approved;
+}
+
+function brollYtSearch(query, maxResults, spawn) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(YT_DLP_PATH, [
+      `ytsearch${maxResults}:${query}`,
+      '--flat-playlist',
+      '--print', '%(id)s\t%(title)s\t%(channel)s\t%(duration)s',
+      '--no-warnings'
+    ]);
+
+    let stdout = '';
+    let stderr = '';
+
+    proc.stdout.on('data', (d) => { stdout += d.toString(); });
+    proc.stderr.on('data', (d) => { stderr += d.toString(); });
+
+    proc.on('close', (code) => {
+      if (code !== 0) return reject(new Error(stderr.slice(-200) || `yt-dlp exit ${code}`));
+
+      const videos = stdout.trim().split('\n')
+        .filter(line => line.includes('\t'))
+        .map(line => {
+          const [id, title, channel, dur] = line.split('\t');
+          const duration = parseInt(dur) || 0;
+          const h = Math.floor(duration / 3600);
+          const m = Math.floor((duration % 3600) / 60);
+          const s = duration % 60;
+          const formatted = h > 0
+            ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+            : `${m}:${String(s).padStart(2, '0')}`;
+          return {
+            title: title || 'Sin título',
+            url: `https://www.youtube.com/watch?v=${id}`,
+            channel: channel || '',
+            duration: formatted,
+            durationSec: duration
+          };
+        })
+        .filter(v => v.durationSec > 0);
+
+      resolve(videos);
+    });
+
+    proc.on('error', (err) => reject(err));
+  });
+}
+
+async function brollValidateRelevance(videos, searchTerm, sectionName) {
+  try {
+    const { model: aiModel } = await getGoogleAI('gemini-3-flash-preview', { context: 'broll-validate', forcePrimary: true });
+
+    const titles = videos.map((v, i) => `${i}. "${v.title}" (${v.channel})`).join('\n');
+
+    const prompt = `Eres un filtro de relevancia para videos de B-roll.
+Dado el término de búsqueda "${searchTerm}" para la sección "${sectionName}", evalúa si cada video es RELEVANTE como material visual de apoyo.
+
+VIDEOS:
+${titles}
+
+Devuelve SOLO un array JSON con los ÍNDICES de los videos que SÍ son relevantes. Ejemplo: [0, 2, 4]
+Si todos son relevantes: [${videos.map((_, i) => i).join(', ')}]
+No incluyas explicaciones, solo el array.`;
+
+    const result = await aiModel.generateContent(prompt);
+    const response = result.response.text();
+    const match = response.match(/\[[\d,\s]*\]/);
+    if (match) return JSON.parse(match[0]);
+    return videos.map((_, i) => i);
+  } catch (err) {
+    console.log('[B-Roll] LLM validation failed, accepting all:', err.message);
+    return videos.map((_, i) => i);
+  }
+}
+
 app.listen(PORT, '0.0.0.0', async () => {
   const localIP = getLocalIP();
   console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`);
