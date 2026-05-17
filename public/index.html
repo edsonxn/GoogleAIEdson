@@ -960,6 +960,51 @@
           <div id="brollVideoProgressInfo" style="color: #94a3b8; font-size: 0.8rem; margin-top: 6px;"></div>
         </div>
 
+        <!-- Timeline Preview B-Roll (inline box) -->
+        <div id="brollTimelinePanel" class="tl-panel" style="display: none;">
+          <div class="tl-topbar">
+            <div class="tl-topbar-left">
+              <button onclick="closeBrollTimeline()" class="tl-back-btn" title="Cerrar"><i class="fas fa-times"></i></button>
+              <h3><i class="fas fa-film"></i> Preview Timeline</h3>
+              <div class="tl-stats-inline">
+                <span><i class="fas fa-layer-group"></i> <span id="tlTotalSections">0</span> secs</span>
+                <span><i class="fas fa-cut"></i> <span id="tlTotalClips">0</span> clips</span>
+                <span><i class="fas fa-clock"></i> <span id="tlTotalDuration">0:00</span></span>
+              </div>
+            </div>
+            <div class="tl-topbar-right">
+              <button id="tlRegenerateAllBtn" onclick="regenerateAllBrollClips()" class="tl-btn tl-btn-outline">
+                <i class="fas fa-sync-alt"></i> Regenerar Todo
+              </button>
+              <button id="tlConfirmRenderBtn" onclick="confirmBrollRender()" class="tl-btn tl-btn-primary">
+                <i class="fas fa-check-circle"></i> Renderizar Video
+              </button>
+            </div>
+          </div>
+          <div class="tl-player-area">
+            <div class="tl-player-info">
+              <div id="tlPreviewTitle" class="tl-player-title">Selecciona un clip</div>
+              <div id="tlPreviewMeta" class="tl-player-meta"></div>
+            </div>
+            <div class="tl-player-video-wrap">
+              <video id="tlPreviewVideo" class="tl-vid-active" controls muted></video>
+              <video id="tlPreviewVideoNext" class="tl-vid-standby" muted preload="auto"></video>
+              <img id="tlPreviewImage" style="display: none;">
+              <div id="tlPreviewPlaceholder" class="tl-player-placeholder">
+                <i class="fas fa-hand-pointer"></i>
+                <span>Haz click en un clip para previsualizarlo</span>
+              </div>
+              <div id="tlPreviewLoading" class="tl-player-loading">
+                <i class="fas fa-spinner fa-spin"></i>
+              </div>
+            </div>
+            <audio id="tlPreviewAudio" preload="none"></audio>
+          </div>
+          <div class="tl-timeline-area">
+            <div id="brollTimelineContainer" class="tl-flat-timeline"></div>
+          </div>
+        </div>
+
         <!-- Panel de B-Roll -->
         <details id="brollPanel" class="video-generation-collapsible" style="margin-top: 20px; background: rgba(0,0,0,0.2); border-radius: 8px; border: 1px solid #4a5568; display: none;">
           <summary style="padding: 15px; cursor: pointer; font-weight: bold; color: #e2e8f0; list-style: none; display: flex; justify-content: space-between; align-items: center;">
@@ -1410,6 +1455,8 @@
       </div>
     </div>
   </div>
+
+
 
   <!-- Modal para Ajustes Generales -->
   <div id="settingsModal" class="style-modal" style="display: none;">

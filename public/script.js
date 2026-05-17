@@ -17013,19 +17013,23 @@ if (downloadProjectZipBtn) {
 
   btn.addEventListener('click', async () => {
     if (isGeneratingVideo) {
-      showNotification('⚠️ Ya hay una generación de video en curso. Espera a que finalice.', 'info');
+      showNotification('Ya hay una generacion de video en curso. Espera a que finalice.', 'info');
       return;
     }
 
     const folderName = window.currentProject?.folderName;
     if (!folderName) {
-      showNotification('❌ No hay proyecto cargado.', 'error');
+      showNotification('No hay proyecto cargado.', 'error');
       return;
     }
 
-    isGeneratingVideo = true;
-    btn.disabled = true;
-    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Generando Video...</span>';
+    // Si auto-generate está activo, renderizar directo sin preview
+    const autoGen = document.getElementById('autoGenerateBrollVideo');
+    if (autoGen && autoGen.checked) {
+      // Direct render (old flow)
+      isGeneratingVideo = true;
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Generando Video...</span>';
 
     const progressContainer = document.getElementById('brollVideoProgressContainer');
     const progressBar = document.getElementById('brollVideoProgressBar');
@@ -17103,11 +17107,519 @@ if (downloadProjectZipBtn) {
 
     } catch (error) {
       if (pollInterval) clearInterval(pollInterval);
-      showNotification(`❌ Error: ${error.message}`, 'error');
+      showNotification(`Error: ${error.message}`, 'error');
       btn.disabled = false;
       btn.innerHTML = '<i class="fas fa-clapperboard"></i><span>Generar Video con B-Roll</span>';
       isGeneratingVideo = false;
       if (progressContainer) progressContainer.style.display = 'none';
     }
+    } else {
+      // Manual mode: show preview timeline
+      generateBrollPreview();
+    }
   });
 })();
+
+// ========== B-Roll Timeline Preview ==========
+let _brollPreviewId = null;
+let _brollPreviewSections = null;
+let _brollPreviewFolderName = null;
+let _brollFlatClips = []; // Flattened list: { sectionIndex, clipIndex, secNum, clip, audioOffset }
+let _brollCurrentFlatIdx = -1;
+let _brollImageTimer = null;
+let _brollIsAutoAdvancing = false; // true when advancing within same section (don't touch audio)
+
+function getVideoConfig() {
+  return {
+    maxImagesPerSection: parseInt(document.getElementById('videoMaxImagesPerSection')?.value) || 0,
+    imageDuration: parseInt(document.getElementById('videoImageDuration')?.value) || 5,
+    minClipDuration: parseInt(document.getElementById('videoMinClipDuration')?.value) || 4,
+    maxClipDuration: parseInt(document.getElementById('videoMaxClipDuration')?.value) || 10,
+    minResolution: parseInt(document.getElementById('videoMinResolution')?.value) || 0,
+    resolution: document.getElementById('videoOutputResolution')?.value || '1920:1080',
+    crf: parseInt(document.getElementById('videoCRF')?.value) || 23,
+    preset: document.getElementById('videoPreset')?.value || 'slow'
+  };
+}
+
+function formatSeconds(s) {
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  return `${m}:${String(sec).padStart(2, '0')}`;
+}
+
+// Build flat clip list with audio offsets
+function buildFlatClipList(sections) {
+  const flat = [];
+  for (let si = 0; si < sections.length; si++) {
+    const sec = sections[si];
+    let offset = 0;
+    for (let ci = 0; ci < sec.clips.length; ci++) {
+      flat.push({
+        sectionIndex: si,
+        clipIndex: ci,
+        secNum: sec.secNum,
+        clip: sec.clips[ci],
+        audioOffset: offset
+      });
+      offset += sec.clips[ci].duration;
+    }
+  }
+  return flat;
+}
+
+async function generateBrollPreview() {
+  const folderName = window.currentProject?.folderName;
+  if (!folderName) { showNotification('No hay proyecto cargado.', 'error'); return; }
+
+  const btn = document.getElementById('generateBrollVideoBtn');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Generando preview...</span>'; }
+
+  try {
+    const response = await fetch('/api/generate-broll-preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folderName, videoConfig: getVideoConfig() })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Error generando preview');
+
+    _brollPreviewId = data.previewId;
+    _brollPreviewSections = data.sections;
+    _brollPreviewFolderName = folderName;
+    _brollFlatClips = buildFlatClipList(data.sections);
+
+    renderBrollTimeline();
+    showBrollTimelinePanel();
+
+  } catch (error) {
+    showNotification(`Error: ${error.message}`, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-clapperboard"></i><span>Generar Video con B-Roll</span>'; }
+  }
+}
+
+function showBrollTimelinePanel() {
+  const panel = document.getElementById('brollTimelinePanel');
+  if (panel) {
+    panel.style.display = 'flex';
+    panel.classList.add('active');
+    setTimeout(() => panel.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
+  }
+}
+
+function closeBrollTimeline() {
+  stopBrollAudio();
+  const vids = document.querySelectorAll('.tl-player-video-wrap video');
+  vids.forEach(v => { v.pause(); v.removeAttribute('src'); v.dataset.preloadUrl = ''; });
+  const panel = document.getElementById('brollTimelinePanel');
+  if (panel) { panel.style.display = 'none'; panel.classList.remove('active'); }
+  _brollCurrentFlatIdx = -1;
+}
+
+function stopBrollAudio() {
+  const audio = document.getElementById('tlPreviewAudio');
+  if (audio) { audio.pause(); audio.currentTime = 0; }
+  if (_brollImageTimer) { clearTimeout(_brollImageTimer); _brollImageTimer = null; }
+}
+
+function renderBrollTimeline() {
+  const container = document.getElementById('brollTimelineContainer');
+  if (!container || !_brollPreviewSections) return;
+
+  let totalClips = 0, totalDuration = 0;
+  _brollPreviewSections.forEach(s => { totalClips += s.clips.length; totalDuration += s.audioDuration; });
+
+  const tlSections = document.getElementById('tlTotalSections');
+  const tlClips = document.getElementById('tlTotalClips');
+  const tlDuration = document.getElementById('tlTotalDuration');
+  if (tlSections) tlSections.textContent = _brollPreviewSections.length;
+  if (tlClips) tlClips.textContent = totalClips;
+  if (tlDuration) tlDuration.textContent = formatSeconds(totalDuration);
+
+  // Render flat timeline with section dividers
+  let html = '';
+  let flatIdx = 0;
+
+  for (let si = 0; si < _brollPreviewSections.length; si++) {
+    const sec = _brollPreviewSections[si];
+
+    // Section divider
+    html += `<div class="tl-sec-divider">
+      <div class="tl-sec-divider-line"></div>
+      <span class="tl-sec-divider-label">SEC ${sec.secNum}</span>
+      <div class="tl-sec-divider-line"></div>
+    </div>`;
+
+    // Clips for this section
+    for (let ci = 0; ci < sec.clips.length; ci++) {
+      const clip = sec.clips[ci];
+      // Width proportional to duration (min 80px, ~20px per second)
+      const clipWidth = Math.max(80, Math.round(clip.duration * 20));
+      const thumbSrc = clip.thumbnail
+        ? `/api/broll-thumbnail/${_brollPreviewFolderName}/${clip.thumbnail}?t=${Date.now()}`
+        : '';
+      const thumbEl = clip.thumbnail
+        ? `<img class="tl-clip-thumb" src="${thumbSrc}" alt="clip" loading="lazy">`
+        : `<div class="tl-clip-thumb-placeholder"><i class="fas fa-image"></i></div>`;
+
+      html += `<div class="tl-clip" data-flat="${flatIdx}" data-section="${si}" data-clip="${ci}" style="width: ${clipWidth}px;" onclick="selectBrollClip(${flatIdx})">
+        <span class="tl-clip-type-badge ${clip.type}">${clip.type === 'video' ? 'VID' : 'IMG'}</span>
+        <button class="tl-clip-regen-btn" onclick="event.stopPropagation(); regenerateBrollClip(${si}, ${ci}, this)" title="Regenerar clip">
+          <i class="fas fa-sync-alt"></i>
+        </button>
+        ${thumbEl}
+        <div class="tl-clip-info">
+          <div class="tl-clip-duration"><i class="fas fa-clock"></i> ${clip.duration.toFixed(1)}s</div>
+          <div class="tl-clip-source" title="${clip.sourceFile}">${clip.sourceFile}</div>
+        </div>
+      </div>`;
+      flatIdx++;
+    }
+  }
+
+  container.innerHTML = html;
+
+  // Reset player to placeholder state
+  const placeholder = document.getElementById('tlPreviewPlaceholder');
+  const video = document.getElementById('tlPreviewVideo');
+  const image = document.getElementById('tlPreviewImage');
+  if (placeholder) placeholder.style.display = 'flex';
+  if (video) video.removeAttribute('src');
+  if (image) image.style.display = 'none';
+}
+
+function selectBrollClip(flatIdx) {
+  _brollCurrentFlatIdx = flatIdx;
+  document.querySelectorAll('.tl-clip.selected').forEach(e => e.classList.remove('selected'));
+  const el = document.querySelector(`.tl-clip[data-flat="${flatIdx}"]`);
+  if (el) {
+    el.classList.add('selected');
+    // Only smooth scroll when user clicks; instant during auto-advance
+    el.scrollIntoView({ behavior: _brollIsAutoAdvancing ? 'instant' : 'smooth', block: 'nearest', inline: 'center' });
+  }
+
+  const item = _brollFlatClips[flatIdx];
+  if (!item) return;
+  playBrollClipPreview(item);
+}
+
+function advanceToNextClip() {
+  const next = _brollCurrentFlatIdx + 1;
+  if (next < _brollFlatClips.length) {
+    // Check if same section — if so, mark auto-advancing (audio stays untouched)
+    const cur = _brollFlatClips[_brollCurrentFlatIdx];
+    const nxt = _brollFlatClips[next];
+    _brollIsAutoAdvancing = (cur && nxt && cur.secNum === nxt.secNum);
+    selectBrollClip(next);
+    _brollIsAutoAdvancing = false;
+  } else {
+    stopBrollAudio();
+  }
+}
+
+function preloadNextClip(currentFlatIdx) {
+  const nextIdx = currentFlatIdx + 1;
+  if (nextIdx >= _brollFlatClips.length) return;
+  const nextItem = _brollFlatClips[nextIdx];
+  if (!nextItem || nextItem.clip.type !== 'video') return;
+  // Load into the standby video element
+  const standby = document.querySelector('.tl-vid-standby');
+  if (!standby) return;
+  const url = `/api/broll-clip-preview/${_brollPreviewFolderName}/${nextItem.sectionIndex}/${nextItem.clipIndex}?t=${Date.now()}`;
+  if (standby.dataset.preloadUrl === url) return; // already preloading this one
+  standby.dataset.preloadUrl = url;
+  standby.src = url;
+  standby.load();
+}
+
+function clearVideoHandlers(vid) {
+  if (!vid) return;
+  vid.oncanplay = null;
+  vid.onended = null;
+  vid.onpause = null;
+  vid.onplay = null;
+  vid.onerror = null;
+}
+
+function swapVideoBuffers() {
+  const active = document.querySelector('.tl-vid-active');
+  const standby = document.querySelector('.tl-vid-standby');
+  if (!active || !standby) return false;
+  if (!standby.src || standby.readyState < 2) return false;
+
+  // Clear handlers BEFORE pausing to prevent old onpause from killing audio
+  clearVideoHandlers(active);
+  clearVideoHandlers(standby);
+  active.pause();
+
+  // Swap classes (z-index swap = instant visual switch)
+  active.classList.remove('tl-vid-active');
+  active.classList.add('tl-vid-standby');
+  active.removeAttribute('controls');
+  standby.classList.remove('tl-vid-standby');
+  standby.classList.add('tl-vid-active');
+  standby.setAttribute('controls', '');
+
+  // Clear old (now standby) for next preload
+  active.removeAttribute('src');
+  active.dataset.preloadUrl = '';
+
+  return true;
+}
+
+function getActiveVideo() {
+  return document.querySelector('.tl-vid-active');
+}
+
+function bindVideoHandlers(video, audio, audioOffset, loading, isContinuous) {
+  video.oncanplay = () => {
+    if (loading) loading.classList.remove('active');
+    video.play().catch(() => {});
+    if (audio) {
+      if (!isContinuous) audio.currentTime = audioOffset;
+      audio.play().catch(() => {});
+    }
+    preloadNextClip(_brollCurrentFlatIdx);
+  };
+  video.onended = () => { advanceToNextClip(); };
+  video.onpause = () => { if (!isContinuous && audio) audio.pause(); };
+  video.onplay = () => {
+    if (audio) {
+      if (!isContinuous) audio.currentTime = audioOffset + video.currentTime;
+      audio.play().catch(() => {});
+    }
+  };
+  video.onerror = () => { if (loading) loading.classList.remove('active'); };
+}
+
+function playBrollClipPreview(item) {
+  if (!_brollPreviewFolderName) return;
+  const { sectionIndex, clipIndex, secNum, clip, audioOffset } = item;
+
+  const image = document.getElementById('tlPreviewImage');
+  const loading = document.getElementById('tlPreviewLoading');
+  const placeholder = document.getElementById('tlPreviewPlaceholder');
+  const title = document.getElementById('tlPreviewTitle');
+  const meta = document.getElementById('tlPreviewMeta');
+  const audio = document.getElementById('tlPreviewAudio');
+  const sameSectionAutoAdvance = _brollIsAutoAdvancing;
+
+  if (placeholder) placeholder.style.display = 'none';
+  if (title) title.textContent = `Sección ${secNum} — Clip ${clipIndex + 1}: ${clip.sourceFile}`;
+  if (meta) {
+    const parts = [
+      clip.type === 'video' ? 'Video' : 'Imagen',
+      `${clip.duration.toFixed(1)}s`,
+      clip.type === 'video' ? `Corte desde ${formatSeconds(clip.cutFrom)}` : null,
+      `TTS offset: ${formatSeconds(audioOffset)}`
+    ].filter(Boolean);
+    meta.textContent = parts.join('  ·  ');
+  }
+
+  // Audio: only seek/reload on section change or manual click. Let it run continuously within a section.
+  const isContinuous = sameSectionAutoAdvance;
+  if (!isContinuous) {
+    if (audio) {
+      const audioSrc = `/api/broll-section-audio/${_brollPreviewFolderName}/${secNum}`;
+      if (audio.dataset.currentSec !== String(secNum)) {
+        audio.src = audioSrc;
+        audio.dataset.currentSec = String(secNum);
+      }
+      audio.currentTime = audioOffset;
+    }
+  }
+
+  if (_brollImageTimer) { clearTimeout(_brollImageTimer); _brollImageTimer = null; }
+
+  if (clip.type === 'image') {
+    const activeVid = getActiveVideo();
+    if (activeVid) { clearVideoHandlers(activeVid); activeVid.pause(); }
+    image.style.display = 'block';
+    image.src = `/api/broll-clip-preview/${_brollPreviewFolderName}/${sectionIndex}/${clipIndex}?t=${Date.now()}`;
+    if (loading) loading.classList.remove('active');
+    if (audio) audio.play().catch(() => {});
+    _brollImageTimer = setTimeout(() => { _brollImageTimer = null; advanceToNextClip(); }, clip.duration * 1000);
+    preloadNextClip(_brollCurrentFlatIdx);
+  } else {
+    image.style.display = 'none';
+
+    // Try double-buffer swap (instant, no flash)
+    const swapped = sameSectionAutoAdvance && swapVideoBuffers();
+    const video = getActiveVideo();
+    if (!video) return;
+
+    // Bind fresh handlers on the current active video
+    bindVideoHandlers(video, audio, audioOffset, loading, isContinuous);
+
+    if (swapped) {
+      if (loading) loading.classList.remove('active');
+      video.play().catch(() => {});
+      if (audio) {
+        if (!isContinuous) audio.currentTime = audioOffset;
+        audio.play().catch(() => {});
+      }
+      preloadNextClip(_brollCurrentFlatIdx);
+    } else {
+      if (loading) loading.classList.add('active');
+      const previewUrl = `/api/broll-clip-preview/${_brollPreviewFolderName}/${sectionIndex}/${clipIndex}?t=${Date.now()}`;
+      video.src = previewUrl;
+      video.load();
+    }
+  }
+}
+
+async function regenerateBrollClip(sectionIndex, clipIndex, btnEl) {
+  if (!_brollPreviewId || !_brollPreviewFolderName) return;
+
+  // Pause current playback immediately
+  const video = document.getElementById('tlPreviewVideo');
+  const audio = document.getElementById('tlPreviewAudio');
+  if (video) video.pause();
+  if (audio) audio.pause();
+  if (_brollImageTimer) { clearTimeout(_brollImageTimer); _brollImageTimer = null; }
+
+  btnEl.classList.add('spinning');
+
+  // Find the flat index for this clip
+  const flatIdx = _brollFlatClips.findIndex(f => f.sectionIndex === sectionIndex && f.clipIndex === clipIndex);
+
+  try {
+    const response = await fetch('/api/regenerate-broll-clip', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ previewId: _brollPreviewId, folderName: _brollPreviewFolderName, sectionIndex, clipIndex })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Error regenerando clip');
+
+    // Update local data
+    _brollPreviewSections[sectionIndex].clips[clipIndex] = data.clip;
+    _brollFlatClips = buildFlatClipList(_brollPreviewSections);
+
+    // Update thumbnail
+    const clipEl = document.querySelector(`.tl-clip[data-section="${sectionIndex}"][data-clip="${clipIndex}"]`);
+    if (clipEl) {
+      const thumbImg = clipEl.querySelector('.tl-clip-thumb');
+      const placeholder = clipEl.querySelector('.tl-clip-thumb-placeholder');
+      if (data.clip.thumbnail) {
+        const newSrc = `/api/broll-thumbnail/${_brollPreviewFolderName}/${data.clip.thumbnail}?t=${Date.now()}`;
+        if (thumbImg) { thumbImg.src = newSrc; }
+        else if (placeholder) {
+          const img = document.createElement('img');
+          img.className = 'tl-clip-thumb'; img.src = newSrc; img.alt = 'clip';
+          placeholder.replaceWith(img);
+        }
+      }
+      const sourceEl = clipEl.querySelector('.tl-clip-source');
+      if (sourceEl) { sourceEl.textContent = data.clip.sourceFile; sourceEl.title = data.clip.sourceFile; }
+
+      // Flash green
+      clipEl.style.transition = 'none';
+      clipEl.style.borderColor = '#10b981';
+      clipEl.style.boxShadow = '0 0 12px rgba(16,185,129,0.4)';
+      setTimeout(() => { clipEl.style.transition = 'all 0.3s'; clipEl.style.borderColor = ''; clipEl.style.boxShadow = ''; }, 800);
+    }
+
+    // Auto-play the regenerated clip from start and continue from there
+    if (flatIdx !== -1) {
+      selectBrollClip(flatIdx);
+    }
+  } catch (error) {
+    showNotification(`Error: ${error.message}`, 'error');
+  } finally {
+    btnEl.classList.remove('spinning');
+  }
+}
+
+async function regenerateAllBrollClips() {
+  if (!_brollPreviewFolderName) return;
+  stopBrollAudio();
+  const btn = document.getElementById('tlRegenerateAllBtn');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Regenerando...'; }
+
+  try {
+    const response = await fetch('/api/generate-broll-preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folderName: _brollPreviewFolderName, videoConfig: getVideoConfig() })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Error regenerando');
+
+    _brollPreviewId = data.previewId;
+    _brollPreviewSections = data.sections;
+    _brollFlatClips = buildFlatClipList(data.sections);
+    renderBrollTimeline();
+    showNotification('Timeline regenerado', 'success');
+  } catch (error) {
+    showNotification(`Error: ${error.message}`, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-sync-alt"></i> Regenerar Todo'; }
+  }
+}
+
+async function confirmBrollRender() {
+  if (!_brollPreviewId || !_brollPreviewFolderName) return;
+  closeBrollTimeline();
+
+  const btn = document.getElementById('generateBrollVideoBtn');
+  isGeneratingVideo = true;
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Renderizando...</span>'; }
+
+  const progressContainer = document.getElementById('brollVideoProgressContainer');
+  const progressBar = document.getElementById('brollVideoProgressBar');
+  const progressPercent = document.getElementById('brollVideoProgressPercent');
+  const progressInfo = document.getElementById('brollVideoProgressInfo');
+  const progressLabel = document.getElementById('brollVideoProgressLabel');
+  if (progressContainer) progressContainer.style.display = 'block';
+
+  let pollInterval = null;
+
+  try {
+    const response = await fetch('/api/render-broll-video', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ previewId: _brollPreviewId, folderName: _brollPreviewFolderName, videoConfig: getVideoConfig() })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Error del servidor');
+
+    pollInterval = setInterval(async () => {
+      try {
+        const progRes = await fetch(`/api/broll-video-progress/${data.sessionId}`);
+        const progData = await progRes.json();
+        if (!progData.success) return;
+        const p = progData.progress;
+        const pct = Math.round(p.percent || 0);
+
+        if (progressBar) progressBar.style.width = `${pct}%`;
+        if (progressPercent) progressPercent.textContent = `${pct}%`;
+        if (progressLabel) progressLabel.textContent = p.message || 'Renderizando...';
+        if (progressInfo) progressInfo.textContent = p.detail || '';
+
+        if (p.status === 'completed') {
+          clearInterval(pollInterval);
+          if (progressBar) progressBar.style.width = '100%';
+          if (progressPercent) progressPercent.textContent = '100%';
+          if (progressLabel) progressLabel.textContent = 'Video generado exitosamente';
+          if (progressInfo) progressInfo.textContent = p.outputFile ? `Guardado: ${p.outputFile}` : '';
+          showNotification('Video con B-Roll generado!', 'success');
+          if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-clapperboard"></i><span>Generar Video con B-Roll</span>'; }
+          isGeneratingVideo = false;
+        } else if (p.status === 'error') {
+          clearInterval(pollInterval);
+          throw new Error(p.error || 'Error durante el renderizado');
+        }
+      } catch (pollErr) { /* retry */ }
+    }, 1500);
+
+  } catch (error) {
+    if (pollInterval) clearInterval(pollInterval);
+    showNotification(`Error: ${error.message}`, 'error');
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-clapperboard"></i><span>Generar Video con B-Roll</span>'; }
+    isGeneratingVideo = false;
+    if (progressContainer) progressContainer.style.display = 'none';
+  }
+}
+

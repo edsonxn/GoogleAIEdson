@@ -15269,7 +15269,7 @@ app.post('/api/generate-broll-video', async (req, res) => {
       minResolution: Math.max(0, parseInt(videoConfig.minResolution) || 0),
       resolution: videoConfig.resolution || '1920:1080',
       crf: Math.max(18, Math.min(28, parseInt(videoConfig.crf) || 23)),
-      preset: ['ultrafast', 'fast', 'medium'].includes(videoConfig.preset) ? videoConfig.preset : 'fast'
+      preset: ['ultrafast', 'fast', 'medium', 'slow', 'slower'].includes(videoConfig.preset) ? videoConfig.preset : 'slow'
     };
 
     const normalizedFolderName = createSafeFolderName(folderName);
@@ -15334,6 +15334,579 @@ app.get('/api/broll-video-progress/:sessionId', (req, res) => {
   }
   res.json({ success: true, progress });
 });
+
+// ==================== B-ROLL PREVIEW / TIMELINE ====================
+
+// Storage for preview data
+const brollPreviewData = new Map();
+
+// Helper: parse video config with defaults
+function parseBrollVideoConfig(videoConfig = {}) {
+  return {
+    maxImagesPerSection: Math.max(0, Math.min(5, isNaN(parseInt(videoConfig.maxImagesPerSection)) ? 0 : parseInt(videoConfig.maxImagesPerSection))),
+    imageDuration: Math.max(2, Math.min(10, parseInt(videoConfig.imageDuration) || 5)),
+    minClipDuration: Math.max(2, Math.min(10, parseInt(videoConfig.minClipDuration) || 4)),
+    maxClipDuration: Math.max(5, Math.min(30, parseInt(videoConfig.maxClipDuration) || 10)),
+    minResolution: Math.max(0, parseInt(videoConfig.minResolution) || 0),
+    resolution: videoConfig.resolution || '1920:1080',
+    crf: Math.max(18, Math.min(28, parseInt(videoConfig.crf) || 23)),
+    preset: ['ultrafast', 'fast', 'medium', 'slow', 'slower'].includes(videoConfig.preset) ? videoConfig.preset : 'slow'
+  };
+}
+
+// Helper: resolve project path
+function resolveProjectPath(folderName) {
+  const normalizedFolderName = createSafeFolderName(folderName);
+  let projectPath = path.join(globalOutputDir, normalizedFolderName);
+  if (!fs.existsSync(projectPath)) {
+    projectPath = path.join(globalOutputDir, folderName);
+    if (!fs.existsSync(projectPath)) return null;
+  }
+  return projectPath;
+}
+
+// Helper: scan sections and gather B-Roll material for a project
+async function scanProjectSections(projectPath, cfg) {
+  const seccionesConAudio = [];
+  const items = fs.readdirSync(projectPath);
+  const audioExts = ['.mp3', '.wav', '.m4a', '.aac', '.ogg'];
+
+  for (const item of items) {
+    const itemPath = path.join(projectPath, item);
+    if (!fs.statSync(itemPath).isDirectory() || !item.startsWith('seccion_')) continue;
+    const secNum = parseInt(item.replace('seccion_', ''));
+    if (isNaN(secNum)) continue;
+
+    const files = fs.readdirSync(itemPath);
+    const audios = files
+      .filter(f => audioExts.includes(path.extname(f).toLowerCase()))
+      .map(f => ({ path: path.join(itemPath, f), name: f }));
+
+    if (audios.length > 0) {
+      const imageExts = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp'];
+      const imagenes = files
+        .filter(f => imageExts.includes(path.extname(f).toLowerCase()))
+        .map(f => ({ path: path.join(itemPath, f), name: f }));
+
+      seccionesConAudio.push({ numero: secNum, nombre: `Sección ${secNum}`, audios, imagenes, path: itemPath });
+    }
+  }
+  seccionesConAudio.sort((a, b) => a.numero - b.numero);
+
+  // Map legacy B-Roll
+  const legacyBrollDir = path.join(projectPath, 'broll');
+  const legacyBrollMap = {};
+  if (fs.existsSync(legacyBrollDir)) {
+    const brollFolders = fs.readdirSync(legacyBrollDir).filter(f => {
+      try { return fs.statSync(path.join(legacyBrollDir, f)).isDirectory(); } catch { return false; }
+    });
+    for (const folder of brollFolders) {
+      const num = parseInt(folder.split(' - ')[0]);
+      if (!isNaN(num)) legacyBrollMap[num] = path.join(legacyBrollDir, folder);
+    }
+  }
+
+  // Gather B-Roll per section
+  const sections = [];
+  for (const seccion of seccionesConAudio) {
+    const secNum = seccion.numero;
+    const audioPath = seccion.audios[0].path;
+    const audioDuration = await getAudioDuration(audioPath);
+    if (audioDuration <= 0) continue;
+
+    const newBrollPath = path.join(projectPath, `seccion_${secNum}`, 'broll');
+    const legacyBrollPath = legacyBrollMap[secNum];
+    const brollPath = fs.existsSync(newBrollPath) ? newBrollPath : (legacyBrollPath && fs.existsSync(legacyBrollPath) ? legacyBrollPath : null);
+
+    let videoFiles = [];
+    let imageFiles = [];
+
+    if (brollPath) {
+      const brollFiles = fs.readdirSync(brollPath);
+      const videoExts = ['.mp4', '.webm', '.mkv', '.avi', '.mov'];
+      const imageExtsB = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp'];
+      videoFiles = brollFiles.filter(f => videoExts.includes(path.extname(f).toLowerCase())).map(f => path.join(brollPath, f));
+      imageFiles = brollFiles.filter(f => imageExtsB.includes(path.extname(f).toLowerCase())).map(f => path.join(brollPath, f));
+
+      // Filter by min resolution
+      if (cfg.minResolution && cfg.minResolution > 0 && videoFiles.length > 0) {
+        const filtered = [];
+        for (const vf of videoFiles) {
+          try {
+            const probeRes = await new Promise((resolve, reject) => {
+              const proc = spawn('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=height', '-of', 'csv=p=0', vf]);
+              let out = '';
+              proc.stdout.on('data', d => out += d.toString());
+              proc.stderr.on('data', () => {});
+              proc.on('close', code => code === 0 ? resolve(parseInt(out.trim()) || 0) : resolve(0));
+              proc.on('error', () => resolve(0));
+            });
+            if (probeRes >= cfg.minResolution) filtered.push(vf);
+          } catch { filtered.push(vf); }
+        }
+        videoFiles = filtered;
+      }
+    }
+
+    if (cfg.maxImagesPerSection === 0 && videoFiles.length > 0) imageFiles = [];
+    if (videoFiles.length === 0 && imageFiles.length === 0) {
+      imageFiles = (seccion.imagenes || []).map(img => img.path).filter(p => fs.existsSync(p));
+    }
+    if (videoFiles.length === 0 && imageFiles.length === 0) continue;
+
+    sections.push({
+      secNum,
+      nombre: seccion.nombre,
+      audioPath,
+      audioDuration,
+      videoFiles,
+      imageFiles
+    });
+  }
+
+  return sections;
+}
+
+// Helper: generate thumbnail from video
+function generateVideoThumbnail(videoPath, cutFrom, outputPath) {
+  return new Promise((resolve) => {
+    const args = ['-y', '-ss', String(cutFrom), '-i', videoPath, '-vframes', '1', '-vf', 'scale=320:-1', '-q:v', '5', outputPath];
+    const proc = spawn('ffmpeg', args);
+    proc.stderr.on('data', () => {});
+    proc.on('close', code => resolve(code === 0 && fs.existsSync(outputPath)));
+    proc.on('error', () => resolve(false));
+  });
+}
+
+// Helper: generate thumbnail from image
+function generateImageThumbnail(imagePath, outputPath) {
+  return new Promise((resolve) => {
+    const args = ['-y', '-i', imagePath, '-vf', 'scale=320:-1', '-q:v', '5', outputPath];
+    const proc = spawn('ffmpeg', args);
+    proc.stderr.on('data', () => {});
+    proc.on('close', code => resolve(code === 0 && fs.existsSync(outputPath)));
+    proc.on('error', () => resolve(false));
+  });
+}
+
+// POST /api/generate-broll-preview
+app.post('/api/generate-broll-preview', async (req, res) => {
+  try {
+    const { folderName, videoConfig = {} } = req.body;
+    if (!folderName) return res.status(400).json({ error: 'Nombre de carpeta requerido' });
+
+    const projectPath = resolveProjectPath(folderName);
+    if (!projectPath) return res.status(404).json({ error: 'Proyecto no encontrado' });
+
+    const cfg = parseBrollVideoConfig(videoConfig);
+    const thumbsDir = path.join(projectPath, 'broll_thumbs');
+    if (!fs.existsSync(thumbsDir)) fs.mkdirSync(thumbsDir, { recursive: true });
+
+    // Scan sections
+    const sections = await scanProjectSections(projectPath, cfg);
+    if (sections.length === 0) {
+      return res.status(400).json({ error: 'No hay secciones con audio y material visual' });
+    }
+
+    // Generate sequences and thumbnails
+    const previewSections = [];
+    for (const sec of sections) {
+      const secuencia = await generarSecuenciaAleatoriaBroll(sec.videoFiles, sec.imageFiles, sec.audioDuration, cfg);
+
+      const clips = [];
+      for (let j = 0; j < secuencia.length; j++) {
+        const clip = secuencia[j];
+        const thumbName = `sec${sec.secNum}_clip${j}.jpg`;
+        const thumbPath = path.join(thumbsDir, thumbName);
+
+        let thumbOk = false;
+        if (clip.type === 'video') {
+          thumbOk = await generateVideoThumbnail(clip.path, clip.cutFrom, thumbPath);
+        } else {
+          thumbOk = await generateImageThumbnail(clip.path, thumbPath);
+        }
+
+        clips.push({
+          index: j,
+          type: clip.type,
+          sourcePath: clip.path,
+          sourceFile: path.basename(clip.path),
+          cutFrom: clip.cutFrom || 0,
+          duration: clip.duration,
+          thumbnail: thumbOk ? thumbName : null
+        });
+      }
+
+      previewSections.push({
+        secNum: sec.secNum,
+        nombre: sec.nombre,
+        audioPath: sec.audioPath,
+        audioDuration: sec.audioDuration,
+        videoFilesCount: sec.videoFiles.length,
+        imageFilesCount: sec.imageFiles.length,
+        clips
+      });
+    }
+
+    // Save preview data
+    const previewId = `preview-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const previewPayload = {
+      previewId,
+      folderName,
+      projectPath,
+      config: cfg,
+      sections: previewSections,
+      createdAt: new Date().toISOString()
+    };
+
+    // Save to disk and memory
+    const previewJsonPath = path.join(projectPath, 'broll_preview.json');
+    fs.writeFileSync(previewJsonPath, JSON.stringify(previewPayload, null, 2), 'utf8');
+    brollPreviewData.set(previewId, previewPayload);
+
+    // Cleanup old previews from memory after 30 min
+    setTimeout(() => brollPreviewData.delete(previewId), 1800000);
+
+    console.log(`🎬 Preview generado: ${previewSections.length} secciones, ${previewSections.reduce((a, s) => a + s.clips.length, 0)} clips`);
+    res.json({ success: true, previewId, sections: previewSections });
+
+  } catch (error) {
+    console.error('Error generate-broll-preview:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/broll-thumbnail/:folderName/:filename
+app.get('/api/broll-thumbnail/:folderName/:filename', (req, res) => {
+  const { folderName, filename } = req.params;
+  // Sanitize
+  if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
+    return res.status(400).json({ error: 'Invalid filename' });
+  }
+  const projectPath = resolveProjectPath(folderName);
+  if (!projectPath) return res.status(404).send('Not found');
+  const thumbPath = path.join(projectPath, 'broll_thumbs', filename);
+  if (!fs.existsSync(thumbPath)) return res.status(404).send('Thumbnail not found');
+  res.sendFile(thumbPath);
+});
+
+// POST /api/regenerate-broll-clip
+app.post('/api/regenerate-broll-clip', async (req, res) => {
+  try {
+    const { previewId, folderName, sectionIndex, clipIndex } = req.body;
+
+    // Load preview data
+    let preview = brollPreviewData.get(previewId);
+    if (!preview) {
+      // Try loading from disk
+      const projectPath = resolveProjectPath(folderName);
+      if (!projectPath) return res.status(404).json({ error: 'Proyecto no encontrado' });
+      const previewJsonPath = path.join(projectPath, 'broll_preview.json');
+      if (!fs.existsSync(previewJsonPath)) return res.status(404).json({ error: 'Preview no encontrado, genera uno primero' });
+      preview = JSON.parse(fs.readFileSync(previewJsonPath, 'utf8'));
+      brollPreviewData.set(preview.previewId, preview);
+    }
+
+    const section = preview.sections[sectionIndex];
+    if (!section) return res.status(400).json({ error: 'Sección no encontrada' });
+    const clip = section.clips[clipIndex];
+    if (!clip) return res.status(400).json({ error: 'Clip no encontrado' });
+
+    // Get the video/image pool for this section
+    const sec = (await scanProjectSections(preview.projectPath, preview.config))
+      .find(s => s.secNum === section.secNum);
+    if (!sec) return res.status(400).json({ error: 'Sección no encontrada en proyecto' });
+
+    const pool = clip.type === 'video' ? sec.videoFiles : sec.imageFiles;
+    if (pool.length === 0) return res.status(400).json({ error: 'No hay material alternativo disponible' });
+
+    // Pick a different source if possible, or different cut point
+    let newSourcePath;
+    if (pool.length > 1) {
+      const alternatives = pool.filter(p => p !== clip.sourcePath);
+      newSourcePath = alternatives[Math.floor(Math.random() * alternatives.length)];
+    } else {
+      newSourcePath = pool[0]; // Same file, different cut
+    }
+
+    let newCutFrom = 0;
+    if (clip.type === 'video') {
+      let videoDuration;
+      try { videoDuration = await getAudioDuration(newSourcePath); } catch { videoDuration = 30; }
+      const skipMargin = 20;
+      const safeStart = Math.min(skipMargin, videoDuration * 0.3);
+      const safeEnd = Math.max(videoDuration - skipMargin, videoDuration * 0.7);
+      const usableRange = safeEnd - clip.duration - safeStart;
+      if (usableRange > 0) {
+        newCutFrom = safeStart + Math.random() * usableRange;
+      } else {
+        newCutFrom = Math.random() * Math.max(0, videoDuration - clip.duration);
+      }
+    }
+
+    // Generate new thumbnail
+    const thumbsDir = path.join(preview.projectPath, 'broll_thumbs');
+    const thumbName = `sec${section.secNum}_clip${clipIndex}.jpg`;
+    const thumbPath = path.join(thumbsDir, thumbName);
+
+    let thumbOk = false;
+    if (clip.type === 'video') {
+      thumbOk = await generateVideoThumbnail(newSourcePath, newCutFrom, thumbPath);
+    } else {
+      thumbOk = await generateImageThumbnail(newSourcePath, thumbPath);
+    }
+
+    // Update clip data
+    clip.sourcePath = newSourcePath;
+    clip.sourceFile = path.basename(newSourcePath);
+    clip.cutFrom = newCutFrom;
+    clip.thumbnail = thumbOk ? thumbName : null;
+
+    // Delete cached preview clip so it regenerates on next play
+    const cachedPreview = path.join(thumbsDir, `preview_sec${section.secNum}_clip${clipIndex}.mp4`);
+    try { if (fs.existsSync(cachedPreview)) fs.unlinkSync(cachedPreview); } catch (e) {}
+
+    // Save updated preview
+    const previewJsonPath = path.join(preview.projectPath, 'broll_preview.json');
+    fs.writeFileSync(previewJsonPath, JSON.stringify(preview, null, 2), 'utf8');
+
+    console.log(`🔄 Clip regenerado: sec${section.secNum} clip${clipIndex} → ${clip.sourceFile} @${newCutFrom.toFixed(1)}s`);
+    res.json({ success: true, clip });
+
+  } catch (error) {
+    console.error('Error regenerate-broll-clip:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/render-broll-video — Render from confirmed preview sequence
+app.post('/api/render-broll-video', async (req, res) => {
+  try {
+    const { previewId, folderName, videoConfig = {} } = req.body;
+    if (!folderName) return res.status(400).json({ error: 'Nombre de carpeta requerido' });
+
+    const projectPath = resolveProjectPath(folderName);
+    if (!projectPath) return res.status(404).json({ error: 'Proyecto no encontrado' });
+
+    // Load preview
+    let preview = brollPreviewData.get(previewId);
+    if (!preview) {
+      const previewJsonPath = path.join(projectPath, 'broll_preview.json');
+      if (!fs.existsSync(previewJsonPath)) return res.status(404).json({ error: 'Preview no encontrado' });
+      preview = JSON.parse(fs.readFileSync(previewJsonPath, 'utf8'));
+    }
+
+    const cfg = parseBrollVideoConfig(videoConfig);
+
+    const sessionId = `broll-render-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    brollVideoProgress.set(sessionId, {
+      status: 'processing', percent: 0,
+      message: 'Iniciando renderizado desde preview...', detail: '', error: null, outputFile: null
+    });
+
+    res.json({ success: true, sessionId });
+
+    // Render in background using the confirmed sequence
+    renderFromPreview(preview, projectPath, folderName, sessionId, cfg).catch(err => {
+      console.error('Error renderFromPreview:', err);
+      const prog = brollVideoProgress.get(sessionId);
+      if (prog) { prog.status = 'error'; prog.error = err.message; prog.message = 'Error: ' + err.message; }
+    });
+
+  } catch (error) {
+    console.error('Error render-broll-video:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+async function renderFromPreview(preview, projectPath, projectName, sessionId, cfg) {
+  const tempDir = path.join(process.cwd(), 'temp', `broll_render_${Date.now()}`);
+  if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+
+  const updateProgress = (percent, message, detail = '') => {
+    const prog = brollVideoProgress.get(sessionId);
+    if (prog) { prog.percent = percent; prog.message = message; prog.detail = detail; }
+  };
+
+  try {
+    const sections = preview.sections;
+    const totalSections = sections.length;
+    const sectionVideos = [];
+
+    for (let i = 0; i < sections.length; i++) {
+      const sec = sections[i];
+      const progressBase = 5 + (i / totalSections) * 80;
+      updateProgress(Math.round(progressBase), `Renderizando sección ${sec.secNum}/${sections[sections.length - 1].secNum}...`);
+
+      const clipPaths = [];
+      for (let j = 0; j < sec.clips.length; j++) {
+        const clip = sec.clips[j];
+        const clipPath = path.join(tempDir, `sec${sec.secNum}_clip${j}.mp4`);
+
+        updateProgress(
+          Math.round(progressBase + (j / sec.clips.length) * (80 / totalSections)),
+          `Sección ${sec.secNum}: clip ${j + 1}/${sec.clips.length}`,
+          `${clip.type === 'video' ? 'Video' : 'Imagen'}: ${clip.sourceFile}`
+        );
+
+        if (clip.type === 'video') {
+          await crearClipDesdeVideo(clip.sourcePath, clip.cutFrom, clip.duration, clipPath, cfg);
+        } else {
+          await crearClipDesdeImagen(clip.sourcePath, clip.duration, clipPath, cfg);
+        }
+        if (fs.existsSync(clipPath)) clipPaths.push(clipPath);
+      }
+
+      if (clipPaths.length === 0) continue;
+
+      const sectionVideoPath = path.join(tempDir, `seccion_${sec.secNum}_visual.mp4`);
+      await concatenarClipsBroll(clipPaths, sectionVideoPath);
+
+      if (fs.existsSync(sectionVideoPath)) {
+        sectionVideos.push({ numero: sec.secNum, videoPath: sectionVideoPath, audioPath: sec.audioPath });
+      }
+    }
+
+    if (sectionVideos.length === 0) throw new Error('No se pudo generar ningún video de sección');
+
+    updateProgress(87, 'Uniendo secciones de video...');
+    const visualMasterPath = path.join(tempDir, 'visual_master.mp4');
+    await concatenarClipsBroll(sectionVideos.map(s => s.videoPath), visualMasterPath);
+
+    updateProgress(90, 'Uniendo audios TTS...');
+    const audioMasterPath = path.join(tempDir, 'audio_master.wav');
+    await concatenarAudiosBroll(sectionVideos.map(s => s.audioPath), audioMasterPath);
+
+    updateProgress(94, 'Generando video final...');
+    let outputFileName = `${projectName}_broll_video.mp4`;
+    let finalOutputPath = path.join(projectPath, outputFileName);
+    let videoIndex = 1;
+    while (fs.existsSync(finalOutputPath)) {
+      videoIndex++;
+      outputFileName = `${projectName}_broll_video_${videoIndex}.mp4`;
+      finalOutputPath = path.join(projectPath, outputFileName);
+    }
+    await mergeVideoAudioBroll(visualMasterPath, audioMasterPath, finalOutputPath);
+
+    updateProgress(98, 'Limpiando archivos temporales...');
+    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch (e) {}
+
+    // Cleanup preview thumbs
+    try {
+      const thumbsDir = path.join(projectPath, 'broll_thumbs');
+      if (fs.existsSync(thumbsDir)) fs.rmSync(thumbsDir, { recursive: true, force: true });
+    } catch (e) {}
+    try {
+      const previewJson = path.join(projectPath, 'broll_preview.json');
+      if (fs.existsSync(previewJson)) fs.unlinkSync(previewJson);
+    } catch (e) {}
+
+    const prog = brollVideoProgress.get(sessionId);
+    if (prog) {
+      prog.status = 'completed'; prog.percent = 100;
+      prog.message = 'Video generado exitosamente';
+      prog.outputFile = outputFileName;
+      prog.detail = `${sectionVideos.length} secciones procesadas`;
+    }
+    console.log(`Video B-Roll renderizado: ${finalOutputPath}`);
+    setTimeout(() => brollVideoProgress.delete(sessionId), 300000);
+
+  } catch (error) {
+    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch (e) {}
+    const prog = brollVideoProgress.get(sessionId);
+    if (prog) { prog.status = 'error'; prog.error = error.message; prog.message = 'Error: ' + error.message; }
+    throw error;
+  }
+}
+
+// GET /api/broll-clip-preview/:folderName/:sectionIndex/:clipIndex — generate and serve a quick preview clip
+app.get('/api/broll-clip-preview/:folderName/:sectionIndex/:clipIndex', async (req, res) => {
+  try {
+    const { folderName, sectionIndex, clipIndex } = req.params;
+    const si = parseInt(sectionIndex);
+    const ci = parseInt(clipIndex);
+
+    const projectPath = resolveProjectPath(folderName);
+    if (!projectPath) return res.status(404).send('Project not found');
+
+    const previewJsonPath = path.join(projectPath, 'broll_preview.json');
+    if (!fs.existsSync(previewJsonPath)) return res.status(404).send('Preview not found');
+
+    const preview = JSON.parse(fs.readFileSync(previewJsonPath, 'utf8'));
+    const section = preview.sections[si];
+    if (!section) return res.status(404).send('Section not found');
+    const clip = section.clips[ci];
+    if (!clip) return res.status(404).send('Clip not found');
+
+    // For images, just serve the image file
+    if (clip.type === 'image') {
+      if (fs.existsSync(clip.sourcePath)) return res.sendFile(clip.sourcePath);
+      return res.status(404).send('Image not found');
+    }
+
+    // For videos, generate a quick low-res preview clip (cached)
+    const previewDir = path.join(projectPath, 'broll_thumbs');
+    if (!fs.existsSync(previewDir)) fs.mkdirSync(previewDir, { recursive: true });
+    const previewFile = path.join(previewDir, `preview_sec${section.secNum}_clip${ci}.mp4`);
+
+    // Check cache — regenerate if source changed
+    if (fs.existsSync(previewFile)) {
+      return res.sendFile(previewFile);
+    }
+
+    // Generate quick preview: 480p, ultrafast, low quality
+    if (!fs.existsSync(clip.sourcePath)) return res.status(404).send('Source video not found');
+
+    await new Promise((resolve, reject) => {
+      const args = [
+        '-y', '-ss', String(clip.cutFrom || 0), '-t', String(clip.duration),
+        '-i', clip.sourcePath,
+        '-vf', 'scale=640:-2',
+        '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '30',
+        '-c:a', 'aac', '-b:a', '64k', '-ac', '1',
+        '-r', '24', '-pix_fmt', 'yuv420p',
+        '-movflags', '+faststart',
+        previewFile
+      ];
+      const proc = spawn('ffmpeg', args);
+      let stderr = '';
+      proc.stderr.on('data', d => stderr += d.toString());
+      proc.on('close', code => code === 0 ? resolve() : reject(new Error(`ffmpeg preview failed: ${stderr.slice(-200)}`)));
+      proc.on('error', reject);
+    });
+
+    if (fs.existsSync(previewFile)) {
+      res.sendFile(previewFile);
+    } else {
+      res.status(500).send('Failed to generate preview');
+    }
+  } catch (error) {
+    console.error('Error broll-clip-preview:', error.message);
+    res.status(500).send('Error: ' + error.message);
+  }
+});
+
+// GET /api/broll-section-audio/:folderName/:secNum — serve section TTS audio
+app.get('/api/broll-section-audio/:folderName/:secNum', (req, res) => {
+  const { folderName, secNum } = req.params;
+  const projectPath = resolveProjectPath(folderName);
+  if (!projectPath) return res.status(404).send('Not found');
+
+  const previewJsonPath = path.join(projectPath, 'broll_preview.json');
+  if (!fs.existsSync(previewJsonPath)) return res.status(404).send('Preview not found');
+
+  try {
+    const preview = JSON.parse(fs.readFileSync(previewJsonPath, 'utf8'));
+    const section = preview.sections.find(s => s.secNum === parseInt(secNum));
+    if (!section || !section.audioPath) return res.status(404).send('Section audio not found');
+    if (!fs.existsSync(section.audioPath)) return res.status(404).send('Audio file not found');
+    res.sendFile(section.audioPath);
+  } catch (e) {
+    res.status(500).send('Error: ' + e.message);
+  }
+});
+
+// ==================== END B-ROLL PREVIEW / TIMELINE ====================
 
 async function generarVideoConBroll(projectPath, projectName, sessionId, config = {}) {
   const tempDir = path.join(process.cwd(), 'temp', `broll_video_${Date.now()}`);
