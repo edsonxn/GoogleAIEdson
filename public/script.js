@@ -10541,6 +10541,14 @@ async function loadProject(folderName) {
       
       // Mostrar detalles del proyecto cargado
       showProjectDetails(window.currentProject);
+
+      // Auto-cargar status de B-Roll (resultados de búsqueda + descarga)
+      if (window.loadBrollStatusForProject) {
+        window.loadBrollStatusForProject(window.currentProject.folderName);
+      }
+
+      // Auto-cargar timeline de B-Roll si existe preview previo
+      loadExistingBrollTimeline(window.currentProject.folderName);
       
     } else {
       showNotification('Ã¢ÂÅ’ Error cargando el proyecto', 'error');
@@ -11494,17 +11502,19 @@ function updateProjectButtons(project) {
       }
     }
 
-    // Auto B-Roll: Si la casilla de auto-generar video B-Roll esta activa, disparar descarga
-    const autoGenBrollCheckbox = document.getElementById('autoGenerateBrollVideo');
-    if (autoGenBrollCheckbox && autoGenBrollCheckbox.checked && !isGeneratingVideo) {
-      console.log('Auto B-Roll: Proyecto completo, iniciando descarga de B-Roll...');
-      setTimeout(() => {
-        const brollQuickBtn = document.getElementById('brollQuickBtn');
-        if (brollQuickBtn) {
-          brollQuickBtn.click();
-        }
-      }, 3000);
-    }
+    // Auto B-Roll: disparar descarga si videos o imágenes por término > 0
+    const brollMaxVideos = parseInt(document.getElementById('brollMaxVideos')?.value) || 0;
+    const brollMaxImages = parseInt(document.getElementById('brollMaxImages')?.value) || 0;
+    // Auto B-Roll desactivado - solo se descarga manualmente o desde Telegram
+    // if ((brollMaxVideos > 0 || brollMaxImages > 0) && !isGeneratingVideo) {
+    //   console.log('Auto B-Roll: Proyecto completo, iniciando descarga de B-Roll...');
+    //   setTimeout(() => {
+    //     const brollQuickBtn = document.getElementById('brollQuickBtn');
+    //     if (brollQuickBtn) {
+    //       brollQuickBtn.click();
+    //     }
+    //   }, 3000);
+    // }
   }
   
   // Siempre mostrar el botón de regenerar audios cuando hay un proyecto cargado
@@ -16780,7 +16790,7 @@ if (downloadProjectZipBtn) {
       const searchRes = await fetch('/api/broll/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ terms, maxResults: maxVideos, maxDuration, excludeShorts, maxImages })
+        body: JSON.stringify({ terms, maxResults: maxVideos, maxDuration, excludeShorts, maxImages, folderName: projectFolder })
       });
       const searchData = await searchRes.json();
       if (!searchRes.ok) throw new Error(searchData.error);
@@ -17004,6 +17014,158 @@ if (downloadProjectZipBtn) {
       brollDownloadBtn.disabled = false;
     }
   }
+
+  // ── Load existing B-Roll status when opening a project ──
+  async function loadBrollStatusForProject(folderName) {
+    if (!folderName) return;
+    try {
+      // Load search results
+      const searchRes = await fetch(`/api/broll-search-results/${encodeURIComponent(folderName)}`);
+      let searchData = null;
+      if (searchRes.ok) {
+        searchData = await searchRes.json();
+      }
+
+      // Load download status
+      const statusRes = await fetch(`/api/broll/status/${encodeURIComponent(folderName)}`);
+      if (!statusRes.ok) return;
+      const statusData = await statusRes.json();
+      if (!statusData.exists) return;
+
+      // Show the panel
+      const panel = document.getElementById('brollPanel');
+      if (panel) { panel.style.display = 'block'; panel.open = true; }
+
+      // Render search results if available
+      if (searchData && searchData.results) {
+        renderBrollResults(searchData.results, searchData.maxImages || 0);
+      }
+
+      // Overlay download status
+      if (statusData.hasStatus && statusData.status) {
+        const st = statusData.status;
+        brollDownloadProgress.style.display = 'block';
+        brollDownloadList.innerHTML = '';
+
+        const failedVideos = [];
+
+        for (const v of st.videos) {
+          const row = document.createElement('div');
+          const statusClass = v.status === 'done' ? 'done' : v.status === 'error' ? 'error' : 'pending';
+          row.className = `broll-dl-item ${statusClass}`;
+
+          const displayTitle = v.title || v.url.replace('https://www.youtube.com/watch?v=', '');
+          const statusIcon = v.status === 'done' ? '✓' : v.status === 'error' ? '✗ ' + (v.error || 'Error') : '⏳';
+
+          row.innerHTML = `
+            <div class="broll-dl-info">
+              <span class="broll-dl-title">[${escHtml(v.section || '')}] ${escHtml(displayTitle)}</span>
+            </div>
+            <div class="broll-dl-bar-container"><div class="broll-dl-bar-fill" style="width:${v.status === 'done' ? '100' : '0'}%"></div></div>
+            <div class="broll-dl-meta"><span class="broll-dl-percent">${statusIcon}</span></div>
+          `;
+          brollDownloadList.appendChild(row);
+
+          if (v.status !== 'done') {
+            failedVideos.push(v);
+          }
+        }
+
+        // Image tasks
+        if (st.imageTasks) {
+          for (const img of st.imageTasks) {
+            const row = document.createElement('div');
+            row.className = `broll-dl-item ${img.status === 'done' ? 'done' : 'error'}`;
+            row.innerHTML = `
+              <div class="broll-dl-info">
+                <span class="broll-dl-title">🖼️ [${escHtml(img.section || '')}] "${escHtml(img.term)}"</span>
+              </div>
+              <div class="broll-dl-bar-container"><div class="broll-dl-bar-fill" style="width:${img.status === 'done' ? '100' : '0'}%"></div></div>
+              <div class="broll-dl-meta"><span class="broll-dl-percent">${img.status === 'done' ? `✓ ${img.downloaded} imgs` : img.error || 'Error'}</span></div>
+            `;
+            brollDownloadList.appendChild(row);
+          }
+        }
+
+        // Summary status
+        const summary = st.summary || {};
+        const msg = `B-Roll: ${summary.downloaded || 0}/${summary.totalVideos || 0} descargados` +
+          (summary.failed > 0 ? ` (${summary.failed} fallidos)` : ' ✓');
+        setBrollStatus(msg, summary.failed > 0);
+
+        // Retry button for failed downloads
+        if (failedVideos.length > 0) {
+          const retryBtn = document.createElement('button');
+          retryBtn.className = 'btn-primary';
+          retryBtn.style.marginTop = '10px';
+          retryBtn.innerHTML = `<i class="fas fa-redo"></i> Reintentar ${failedVideos.length} descarga(s) fallida(s)`;
+          retryBtn.onclick = async () => {
+            retryBtn.disabled = true;
+            retryBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Reintentando...';
+
+            // Build sections from failed videos grouped by outputDir
+            const grouped = {};
+            for (const v of failedVideos) {
+              const key = v.section || 'unknown';
+              if (!grouped[key]) grouped[key] = { section: v.section, urls: [], sectionNumber: null };
+              grouped[key].urls.push(v.url);
+            }
+
+            // Try to get section numbers from plan
+            if (statusData.plan && statusData.plan.sections) {
+              for (const planSec of statusData.plan.sections) {
+                if (grouped[planSec.section]) {
+                  grouped[planSec.section].sectionNumber = planSec.sectionNumber;
+                }
+              }
+            }
+
+            const retryFolderName = window.currentProject?.folderName || folderName;
+            const resolution = document.getElementById('brollResolution')?.value || '720';
+
+            try {
+              const res = await fetch('/api/broll/download', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ sections: Object.values(grouped), folderName: retryFolderName, maxImages: 0, resolution })
+              });
+              const data = await res.json();
+              if (!res.ok) throw new Error(data.error);
+
+              // Poll the new download job
+              retryBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Descargando...';
+              const jobId = data.jobId;
+              const poll = setInterval(async () => {
+                try {
+                  const sr = await fetch(`/api/broll/download/status/${jobId}`);
+                  const sd = await sr.json();
+                  if (sd.done) {
+                    clearInterval(poll);
+                    // Reload the full status
+                    loadBrollStatusForProject(folderName);
+                  }
+                } catch { clearInterval(poll); }
+              }, 1500);
+            } catch (err) {
+              retryBtn.disabled = false;
+              retryBtn.innerHTML = `<i class="fas fa-redo"></i> Reintentar (Error: ${err.message})`;
+            }
+          };
+          brollDownloadList.appendChild(retryBtn);
+        }
+      } else if (!searchData) {
+        // No search results and no download status with details — just show plan info
+        if (statusData.plan) {
+          setBrollStatus(`B-Roll: ${statusData.plan.totalVideos} videos planificados`);
+        }
+      }
+    } catch (e) {
+      console.log('B-Roll status no disponible:', e.message);
+    }
+  }
+
+  // Expose globally for loadProject to call
+  window.loadBrollStatusForProject = loadBrollStatusForProject;
 })();
 
 // ========== Generar Video con B-Roll ==========
@@ -17196,6 +17358,51 @@ async function generateBrollPreview() {
     showNotification(`Error: ${error.message}`, 'error');
   } finally {
     if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-clapperboard"></i><span>Generar Video con B-Roll</span>'; }
+  }
+}
+
+// Auto-load existing B-Roll timeline when loading a project
+async function loadExistingBrollTimeline(folderName) {
+  if (!folderName) return;
+  try {
+    // First try loading existing preview
+    let res = await fetch(`/api/broll-preview/${encodeURIComponent(folderName)}`);
+    let data;
+
+    if (res.ok) {
+      data = await res.json();
+      if (data.success && data.sections && data.sections.length > 0) {
+        _brollPreviewId = data.previewId;
+        _brollPreviewSections = data.sections;
+        _brollPreviewFolderName = folderName;
+        _brollFlatClips = buildFlatClipList(data.sections);
+        renderBrollTimeline();
+        showBrollTimelinePanel();
+        console.log(`🎬 Timeline de B-Roll cargada desde preview existente (${data.sections.length} secciones)`);
+        return;
+      }
+    }
+
+    // No existing preview — try generating one (project may have broll from Telegram)
+    res = await fetch('/api/generate-broll-preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folderName, videoConfig: getVideoConfig() })
+    });
+    if (!res.ok) return; // No B-Roll material available
+    data = await res.json();
+    if (!data.sections || data.sections.length === 0) return;
+
+    _brollPreviewId = data.previewId;
+    _brollPreviewSections = data.sections;
+    _brollPreviewFolderName = folderName;
+    _brollFlatClips = buildFlatClipList(data.sections);
+    renderBrollTimeline();
+    showBrollTimelinePanel();
+    console.log(`🎬 Timeline de B-Roll generada automáticamente (${data.sections.length} secciones)`);
+  } catch (e) {
+    // Silent fail — no timeline to show
+    console.log('Timeline B-Roll no disponible:', e.message);
   }
 }
 

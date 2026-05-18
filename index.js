@@ -12,6 +12,7 @@ import path from 'path';
 import fetch from 'node-fetch';
 import ApplioClient from "./applio-client.js";
 import { transcribeAudio, getAudioTracks } from "./transcriber.js";
+import { initTelegramBot } from "./telegram-bot.js";
 import multer from 'multer';
 import axios from 'axios';
 import os from 'os';
@@ -5416,8 +5417,16 @@ async function performBatchAudioGeneration(params = {}) {
       }
 
       if (useApplio) {
-        const selectedApplioVoice = applioVoice || 'es-ES-ElviraNeural.pth';
-        const selectedApplioModel = applioModel || 'rmvpe';
+        // applioModel = voz Edge TTS intermedia (ej: "fr-FR-RemyMultilingualNeural")
+        // applioVoice = archivo .pth del modelo RVC (ej: "RemyOriginal" o "logs\\VOCES\\RemyOriginal.pth")
+        const selectedApplioModel = applioModel || 'fr-FR-RemyMultilingualNeural';
+        let selectedApplioVoice = applioVoice || 'logs\\VOCES\\RemyOriginal.pth';
+        // Si solo es el nombre (sin ruta ni extensión), construir la ruta completa
+        if (!selectedApplioVoice.includes('/') && !selectedApplioVoice.includes('\\') && !selectedApplioVoice.endsWith('.pth')) {
+          selectedApplioVoice = `logs\\VOCES\\${selectedApplioVoice}.pth`;
+        } else if (!selectedApplioVoice.includes('/') && !selectedApplioVoice.includes('\\') && selectedApplioVoice.endsWith('.pth')) {
+          selectedApplioVoice = `logs\\VOCES\\${selectedApplioVoice}`;
+        }
   const selectedPitch = Number.isFinite(Number(applioPitch)) ? Number(applioPitch) : 0;
   const selectedSpeed = Number.isFinite(Number(applioSpeed)) ? Number(applioSpeed) : 0;
 
@@ -5428,6 +5437,8 @@ async function performBatchAudioGeneration(params = {}) {
         console.log(`📁 [${projectKey}] Guardando audio Applio en: ${filePath}`);
   console.log(`🚀 [${projectKey}] Velocidad Applio: ${selectedSpeed}`);
   console.log(`🎵 [${projectKey}] Pitch Applio: ${selectedPitch}`);
+  console.log(`🎤 [${projectKey}] Modelo TTS: ${selectedApplioModel}`);
+  console.log(`🎙️ [${projectKey}] Voice Path RVC: ${selectedApplioVoice}`);
 
         const result = await applioClient.textToSpeech(section.cleanScript, filePath, {
           model: selectedApplioModel,
@@ -5818,8 +5829,14 @@ app.post('/generate-batch-automatic', async (req, res) => {
         const startTime = Date.now();
 
         if (useApplio) {
-          const selectedApplioVoice = applioVoice || 'es-ES-ElviraNeural.pth';
-          const selectedApplioModel = applioModel || 'rmvpe';
+          // applioModel = voz Edge TTS, applioVoice = path .pth RVC
+          const selectedApplioModel = applioModel || 'fr-FR-RemyMultilingualNeural';
+          let selectedApplioVoice = applioVoice || 'logs\\VOCES\\RemyOriginal.pth';
+          if (!selectedApplioVoice.includes('/') && !selectedApplioVoice.includes('\\') && !selectedApplioVoice.endsWith('.pth')) {
+            selectedApplioVoice = `logs\\VOCES\\${selectedApplioVoice}.pth`;
+          } else if (!selectedApplioVoice.includes('/') && !selectedApplioVoice.includes('\\') && selectedApplioVoice.endsWith('.pth')) {
+            selectedApplioVoice = `logs\\VOCES\\${selectedApplioVoice}`;
+          }
           const selectedPitch = Number.isFinite(Number(applioPitch)) ? Number(applioPitch) : 0;
           const selectedSpeed = Number.isFinite(Number(applioSpeed)) ? Number(applioSpeed) : 0;
 
@@ -5834,7 +5851,7 @@ app.post('/generate-batch-automatic', async (req, res) => {
           }
           
           const result = await applioClient.textToSpeech(cleanScript, filePath, {
-            voice: selectedApplioVoice,
+            voicePath: selectedApplioVoice,
             model: selectedApplioModel,
             pitch: selectedPitch,
             speed: selectedSpeed
@@ -6551,11 +6568,18 @@ app.post('/generate-missing-applio-audios', async (req, res) => {
         console.log(`🧹 Script limpio: ${cleanScript.substring(0, 100)}...`);
         
         // Generar audio con Applio usando solo el contenido del guión
+        const effectiveApplioModel = applioModel || 'fr-FR-RemyMultilingualNeural';
+        let effectiveApplioVoice = applioVoice || 'logs\\VOCES\\RemyOriginal.pth';
+        if (!effectiveApplioVoice.includes('/') && !effectiveApplioVoice.includes('\\') && !effectiveApplioVoice.endsWith('.pth')) {
+          effectiveApplioVoice = `logs\\VOCES\\${effectiveApplioVoice}.pth`;
+        } else if (!effectiveApplioVoice.includes('/') && !effectiveApplioVoice.includes('\\') && effectiveApplioVoice.endsWith('.pth')) {
+          effectiveApplioVoice = `logs\\VOCES\\${effectiveApplioVoice}`;
+        }
         const result = await applioClient.textToSpeech(cleanScript, filePath, {
-          model: applioModel || 'rmvpe',
+          model: effectiveApplioModel,
           speed: Number.isFinite(Number(applioSpeed)) ? Number(applioSpeed) : 0,
           pitch: Number.isFinite(Number(applioPitch)) ? Number(applioPitch) : 0,
-          voicePath: applioVoice || 'es-ES-ElviraNeural.pth'
+          voicePath: effectiveApplioVoice
         });
         
         if (!result.success) {
@@ -6939,11 +6963,18 @@ app.post('/regenerate-applio-audios', async (req, res) => {
         console.log(`🧹 Script limpio: ${cleanScript.substring(0, 100)}...`);
         
         // Generar audio con Applio usando solo el contenido del guión
+        const effectiveApplioModel2 = applioModel || 'fr-FR-RemyMultilingualNeural';
+        let effectiveApplioVoice2 = applioVoice || 'logs\\VOCES\\RemyOriginal.pth';
+        if (!effectiveApplioVoice2.includes('/') && !effectiveApplioVoice2.includes('\\') && !effectiveApplioVoice2.endsWith('.pth')) {
+          effectiveApplioVoice2 = `logs\\VOCES\\${effectiveApplioVoice2}.pth`;
+        } else if (!effectiveApplioVoice2.includes('/') && !effectiveApplioVoice2.includes('\\') && effectiveApplioVoice2.endsWith('.pth')) {
+          effectiveApplioVoice2 = `logs\\VOCES\\${effectiveApplioVoice2}`;
+        }
         const result = await applioClient.textToSpeech(cleanScript, filePath, {
-          model: applioModel || 'rmvpe',
+          model: effectiveApplioModel2,
           speed: Number.isFinite(Number(applioSpeed)) ? Number(applioSpeed) : 0,
           pitch: Number.isFinite(Number(applioPitch)) ? Number(applioPitch) : 0,
-          voicePath: applioVoice || 'es-ES-ElviraNeural.pth'
+          voicePath: effectiveApplioVoice2
         });
         
         if (!result.success) {
@@ -15425,7 +15456,23 @@ async function scanProjectSections(projectPath, cfg) {
       const brollFiles = fs.readdirSync(brollPath);
       const videoExts = ['.mp4', '.webm', '.mkv', '.avi', '.mov'];
       const imageExtsB = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp'];
-      videoFiles = brollFiles.filter(f => videoExts.includes(path.extname(f).toLowerCase())).map(f => path.join(brollPath, f));
+      
+      // Filter out temp files, fragments, and part files from yt-dlp
+      const isValidVideoFile = (f) => {
+        const lower = f.toLowerCase();
+        // Skip yt-dlp temp/fragment files
+        if (lower.includes('.temp.') || lower.includes('.part')) return false;
+        if (/\.f\d+\.(mp4|webm|m4a|mkv)$/.test(lower)) return false; // fragment like .f399.mp4
+        if (!videoExts.includes(path.extname(lower))) return false;
+        // Verify file actually exists and has size > 0
+        try {
+          const fullPath = path.join(brollPath, f);
+          const stat = fs.statSync(fullPath);
+          return stat.size > 10000; // at least 10KB to be a real video
+        } catch { return false; }
+      };
+      
+      videoFiles = brollFiles.filter(isValidVideoFile).map(f => path.join(brollPath, f));
       imageFiles = brollFiles.filter(f => imageExtsB.includes(path.extname(f).toLowerCase())).map(f => path.join(brollPath, f));
 
       // Filter by min resolution
@@ -15488,6 +15535,33 @@ function generateImageThumbnail(imagePath, outputPath) {
     proc.on('error', () => resolve(false));
   });
 }
+
+// GET /api/broll-preview/:folderName — Load existing preview from disk (no regeneration)
+app.get('/api/broll-preview/:folderName', (req, res) => {
+  try {
+    const { folderName } = req.params;
+    const projectPath = resolveProjectPath(folderName);
+    if (!projectPath) return res.status(404).json({ error: 'Proyecto no encontrado' });
+
+    const previewJsonPath = path.join(projectPath, 'broll_preview.json');
+    if (!fs.existsSync(previewJsonPath)) {
+      return res.status(404).json({ error: 'No hay preview existente', exists: false });
+    }
+
+    const preview = JSON.parse(fs.readFileSync(previewJsonPath, 'utf8'));
+
+    // Reload into memory map if not there
+    if (!brollPreviewData.has(preview.previewId)) {
+      brollPreviewData.set(preview.previewId, preview);
+      setTimeout(() => brollPreviewData.delete(preview.previewId), 1800000);
+    }
+
+    res.json({ success: true, exists: true, previewId: preview.previewId, sections: preview.sections });
+  } catch (error) {
+    console.error('Error loading broll-preview:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
 
 // POST /api/generate-broll-preview
 app.post('/api/generate-broll-preview', async (req, res) => {
@@ -15998,6 +16072,7 @@ async function generarVideoConBroll(projectPath, projectName, sessionId, config 
     console.log(`🎬 B-Roll Video: ${seccionesConAudio.length} secciones con audio, ${Object.keys(legacyBrollMap).length} carpetas B-Roll legacy`);
 
     const sectionVideos = [];
+    const previewSectionsData = []; // Track sequence for broll_preview.json
     const totalSections = seccionesConAudio.length;
 
     // Paso 3: Procesar cada sección
@@ -16075,13 +16150,58 @@ async function generarVideoConBroll(projectPath, projectName, sessionId, config 
         imageFiles = (seccion.imagenes || []).map(img => img.path).filter(p => fs.existsSync(p));
       }
 
+      // Si TODAVÍA no hay material visual, generar clip negro (NUNCA saltar sección)
       if (videoFiles.length === 0 && imageFiles.length === 0) {
-        console.log(`⚠️ Sección ${secNum} no tiene material visual, saltando...`);
+        console.log(`⚠️ Sección ${secNum} sin material visual, generando clip negro como fallback`);
+        const blackClipPath = path.join(tempDir, `sec${secNum}_black.mp4`);
+        const [bw, bh] = (cfg.resolution || '1920:1080').split(':');
+        await new Promise((resolve) => {
+          const args = [
+            '-y', '-f', 'lavfi', '-i', `color=c=black:s=${bw}x${bh}:r=30:d=${audioDuration}`,
+            '-c:v', 'libx264', '-preset', cfg.preset || 'fast', '-crf', String(cfg.crf || 23),
+            '-pix_fmt', 'yuv420p', '-an', blackClipPath
+          ];
+          const proc = spawn('ffmpeg', args);
+          proc.stderr.on('data', () => {});
+          proc.on('close', () => resolve());
+          proc.on('error', () => resolve());
+        });
+
+        if (fs.existsSync(blackClipPath)) {
+          // Save preview data for this section (black fallback)
+          previewSectionsData.push({
+            secNum, nombre: seccion.nombre, audioPath, audioDuration,
+            videoFilesCount: 0, imageFilesCount: 0,
+            clips: [{ index: 0, type: 'black', sourcePath: '', sourceFile: '[pantalla negra]', cutFrom: 0, duration: audioDuration, thumbnail: null }]
+          });
+          sectionVideos.push({ numero: secNum, videoPath: blackClipPath, audioPath });
+        } else {
+          console.log(`❌ No se pudo generar clip negro para sección ${secNum}`);
+        }
         continue;
       }
 
       // Generar secuencia aleatoria de clips
       const secuencia = await generarSecuenciaAleatoriaBroll(videoFiles, imageFiles, audioDuration, cfg);
+
+      // Save sequence data for broll_preview.json
+      previewSectionsData.push({
+        secNum,
+        nombre: seccion.nombre,
+        audioPath,
+        audioDuration,
+        videoFilesCount: videoFiles.length,
+        imageFilesCount: imageFiles.length,
+        clips: secuencia.map((clip, j) => ({
+          index: j,
+          type: clip.type,
+          sourcePath: clip.path,
+          sourceFile: path.basename(clip.path),
+          cutFrom: clip.cutFrom || 0,
+          duration: clip.duration,
+          thumbnail: null // Will be generated below if needed
+        }))
+      });
 
       // Crear clips individuales
       const clipPaths = [];
@@ -16126,6 +16246,42 @@ async function generarVideoConBroll(projectPath, projectName, sessionId, config 
 
     if (sectionVideos.length === 0) {
       throw new Error('No se pudo generar ningún video de sección');
+    }
+
+    // Guardar broll_preview.json con la secuencia exacta usada en este render
+    try {
+      const thumbsDir = path.join(projectPath, 'broll_thumbs');
+      if (!fs.existsSync(thumbsDir)) fs.mkdirSync(thumbsDir, { recursive: true });
+      for (const sec of previewSectionsData) {
+        for (let j = 0; j < sec.clips.length; j++) {
+          const clip = sec.clips[j];
+          const thumbName = `sec${sec.secNum}_clip${j}.jpg`;
+          const thumbPath = path.join(thumbsDir, thumbName);
+          let thumbOk = false;
+          if (clip.type === 'video') {
+            thumbOk = await generateVideoThumbnail(clip.sourcePath, clip.cutFrom, thumbPath);
+          } else {
+            thumbOk = await generateImageThumbnail(clip.sourcePath, thumbPath);
+          }
+          clip.thumbnail = thumbOk ? thumbName : null;
+        }
+      }
+      const previewId = `render-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      const previewPayload = {
+        previewId,
+        folderName: projectName,
+        projectPath,
+        config: cfg,
+        sections: previewSectionsData,
+        createdAt: new Date().toISOString()
+      };
+      const previewJsonPath = path.join(projectPath, 'broll_preview.json');
+      fs.writeFileSync(previewJsonPath, JSON.stringify(previewPayload, null, 2), 'utf8');
+      brollPreviewData.set(previewId, previewPayload);
+      setTimeout(() => brollPreviewData.delete(previewId), 1800000);
+      console.log(`🎬 broll_preview.json guardado con la secuencia del render`);
+    } catch (previewErr) {
+      console.log('⚠️ No se pudo guardar broll_preview.json:', previewErr.message);
     }
 
     // Paso 4: Concatenar todos los visuales
@@ -18533,7 +18689,7 @@ ${sec.text.slice(0, 3000)}`;
 
 // Buscar videos en YouTube con yt-dlp
 app.post('/api/broll/search', async (req, res) => {
-  const { terms, maxResults = 3, maxDuration = 20, excludeShorts = true, maxImages = 0 } = req.body;
+  const { terms, maxResults = 3, maxDuration = 20, excludeShorts = true, maxImages = 0, folderName } = req.body;
 
   if (!terms || !Array.isArray(terms)) {
     return res.status(400).json({ error: 'terms es requerido (array)' });
@@ -18582,6 +18738,20 @@ app.post('/api/broll/search', async (req, res) => {
       }
 
       results.push(sectionResults);
+    }
+
+    // Save search results to disk if folderName provided
+    if (folderName) {
+      try {
+        const projectPath = resolveProjectPath(folderName);
+        if (projectPath) {
+          const searchResultsPath = path.join(projectPath, 'broll_search_results.json');
+          fs.writeFileSync(searchResultsPath, JSON.stringify({ results, maxImages, searchedAt: new Date().toISOString() }, null, 2), 'utf8');
+          console.log(`💾 broll_search_results.json guardado en: ${searchResultsPath}`);
+        }
+      } catch (e) {
+        console.warn('⚠️ No se pudo guardar broll_search_results.json:', e.message);
+      }
     }
 
     res.json({ results, maxImages });
@@ -18645,6 +18815,18 @@ app.post('/api/broll/download', async (req, res) => {
 
   brollDownloadProgress.set(jobId, { videos, imageTasks, done: false, folder: projectDir });
 
+  // Save broll_plan.json for resume support (Telegram bot & web)
+  try {
+    const planPath = path.join(projectDir, 'broll_plan.json');
+    if (!fs.existsSync(planPath)) {
+      const planData = { sections, totalVideos: videos.length, createdAt: new Date().toISOString() };
+      fs.writeFileSync(planPath, JSON.stringify(planData), 'utf8');
+      console.log(`💾 broll_plan.json guardado para resume en: ${planPath}`);
+    }
+  } catch (e) {
+    console.warn('⚠️ No se pudo guardar broll_plan.json:', e.message);
+  }
+
   // Iniciar descargas en background
   brollDownloadAll(jobId, resolution);
 
@@ -18657,6 +18839,50 @@ app.get('/api/broll/download/status/:jobId', (req, res) => {
   res.json(progress);
 });
 
+// GET /api/broll-search-results/:folderName — Load saved search results
+app.get('/api/broll-search-results/:folderName', (req, res) => {
+  const { folderName } = req.params;
+  const projectPath = resolveProjectPath(folderName);
+  if (!projectPath) return res.status(404).json({ error: 'Proyecto no encontrado' });
+
+  const searchPath = path.join(projectPath, 'broll_search_results.json');
+  if (!fs.existsSync(searchPath)) return res.status(404).json({ error: 'No hay resultados de búsqueda guardados' });
+
+  try {
+    const data = JSON.parse(fs.readFileSync(searchPath, 'utf8'));
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/broll/status/:folderName — Load saved B-Roll download status for a project
+app.get('/api/broll/status/:folderName', (req, res) => {
+  const { folderName } = req.params;
+  const projectPath = resolveProjectPath(folderName);
+  if (!projectPath) return res.status(404).json({ error: 'Proyecto no encontrado' });
+
+  const statusPath = path.join(projectPath, 'broll_download_status.json');
+  const planPath = path.join(projectPath, 'broll_plan.json');
+
+  if (!fs.existsSync(statusPath)) {
+    // No download status — check if there's at least a plan
+    if (fs.existsSync(planPath)) {
+      const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
+      return res.json({ exists: true, hasStatus: false, plan });
+    }
+    return res.json({ exists: false });
+  }
+
+  try {
+    const status = JSON.parse(fs.readFileSync(statusPath, 'utf8'));
+    const plan = fs.existsSync(planPath) ? JSON.parse(fs.readFileSync(planPath, 'utf8')) : null;
+    res.json({ exists: true, hasStatus: true, status, plan });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ─── Helpers B-Roll ───
 async function brollDownloadAll(jobId, resolution) {
   const job = brollDownloadProgress.get(jobId);
@@ -18665,6 +18891,32 @@ async function brollDownloadAll(jobId, resolution) {
     brollDownloadAllImages(job)
   ]);
   job.done = true;
+
+  // Guardar resultado final en broll_download_status.json
+  try {
+    if (job.folder && fs.existsSync(job.folder)) {
+      const statusData = {
+        completedAt: new Date().toISOString(),
+        videos: job.videos.map(v => ({
+          url: v.url, title: v.title || '', section: v.section || '',
+          status: v.status, error: v.error || '', outputDir: v.outputDir
+        })),
+        imageTasks: (job.imageTasks || []).map(t => ({
+          term: t.term, section: t.section || '', status: t.status,
+          downloaded: t.downloaded || 0, error: t.error || ''
+        })),
+        summary: {
+          totalVideos: job.videos.length,
+          downloaded: job.videos.filter(v => v.status === 'done').length,
+          failed: job.videos.filter(v => v.status === 'error').length
+        }
+      };
+      fs.writeFileSync(path.join(job.folder, 'broll_download_status.json'), JSON.stringify(statusData, null, 2), 'utf8');
+    }
+  } catch (e) {
+    console.warn('⚠️ No se pudo guardar broll_download_status.json:', e.message);
+  }
+
   // Limpiar después de 5 minutos
   setTimeout(() => brollDownloadProgress.delete(jobId), 5 * 60 * 1000);
 }
@@ -18722,6 +18974,7 @@ function brollDownloadSingle(videoState, resolution, spawn) {
     const proc = spawn(YT_DLP_PATH, [
       '-f', `bestvideo[height<=${resolution}]+bestaudio/best[height<=${resolution}]`,
       '--merge-output-format', 'mp4',
+      '--windows-filenames',
       '-o', path.join(videoState.outputDir, '%(title)s.%(ext)s'),
       '--no-playlist',
       '--newline',
@@ -18976,6 +19229,16 @@ app.listen(PORT, '0.0.0.0', async () => {
     console.warn(`⚠️ Error verificando ComfyUI: ${error.message}`);
     console.warn(`🔧 Las funciones de IA local requerirán que ComfyUI esté ejecutándose`);
   }
+
+  // Iniciar Bot de Telegram
+  initTelegramBot({
+    globalOutputDir,
+    getGoogleAI,
+    getAvailableVoices,
+    projectProgressTracker,
+    createSafeFolderName,
+    brollVideoProgress
+  });
 });
 
 // Manejadores para cerrar ComfyUI y Applio cuando la aplicación se cierre
