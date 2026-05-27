@@ -2389,6 +2389,7 @@ const defaultThumbnailStyles = {
 
 // Función para la generación automática completa
 async function runAutoGeneration() {
+  window._isActiveGeneration = true;
   console.log("🤖 Iniciando generación automática completa");
   
   // Verificar que los elementos del DOM estén disponibles
@@ -3990,6 +3991,8 @@ async function showAutoGenerationComplete() {
       console.error('Ã¢ÂÅ’ Error actualizando los botones del proyecto tras la generación automática:', projectButtonsError);
     }
   }
+
+  window._isActiveGeneration = false;
 
   if (!projectButtonsUpdated) {
     showVideoGenerationButton();
@@ -10296,6 +10299,7 @@ function initializeScriptCollapse() {
 
 // Función para cargar un proyecto
 async function loadProject(folderName) {
+  window._isActiveGeneration = false;
   try {
     // Evitar cargar el mismo proyecto múltiples veces
     if (window.currentProject && window.currentProject.folderName === folderName) {
@@ -11503,18 +11507,18 @@ function updateProjectButtons(project) {
     }
 
     // Auto B-Roll: disparar descarga si videos o imágenes por término > 0
+    // Solo se activa durante generación activa, NO al cargar proyecto
     const brollMaxVideos = parseInt(document.getElementById('brollMaxVideos')?.value) || 0;
     const brollMaxImages = parseInt(document.getElementById('brollMaxImages')?.value) || 0;
-    // Auto B-Roll desactivado - solo se descarga manualmente o desde Telegram
-    // if ((brollMaxVideos > 0 || brollMaxImages > 0) && !isGeneratingVideo) {
-    //   console.log('Auto B-Roll: Proyecto completo, iniciando descarga de B-Roll...');
-    //   setTimeout(() => {
-    //     const brollQuickBtn = document.getElementById('brollQuickBtn');
-    //     if (brollQuickBtn) {
-    //       brollQuickBtn.click();
-    //     }
-    //   }, 3000);
-    // }
+    if ((brollMaxVideos > 0 || brollMaxImages > 0) && !isGeneratingVideo && window._isActiveGeneration) {
+      console.log('Auto B-Roll: Proyecto completo tras generación, iniciando descarga de B-Roll...');
+      setTimeout(() => {
+        const brollQuickBtn = document.getElementById('brollQuickBtn');
+        if (brollQuickBtn) {
+          brollQuickBtn.click();
+        }
+      }, 3000);
+    }
   }
   
   // Siempre mostrar el botón de regenerar audios cuando hay un proyecto cargado
@@ -16758,6 +16762,7 @@ if (downloadProjectZipBtn) {
     const maxImages = parseInt(document.getElementById('brollMaxImages').value) || 0;
     const maxDuration = parseInt(document.getElementById('brollMaxDuration').value) || 20;
     const excludeShorts = document.getElementById('brollExcludeShorts').checked;
+    const validations = parseInt(document.getElementById('brollValidations')?.value) ?? 1;
 
     if (maxVideos === 0 && maxImages === 0) {
       setBrollStatus('Debes poner al menos 1 video o 1 imagen por término.', true);
@@ -16790,7 +16795,7 @@ if (downloadProjectZipBtn) {
       const searchRes = await fetch('/api/broll/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ terms, maxResults: maxVideos, maxDuration, excludeShorts, maxImages, folderName: projectFolder })
+        body: JSON.stringify({ terms, maxResults: maxVideos, maxDuration, excludeShorts, maxImages, folderName: projectFolder, validations })
       });
       const searchData = await searchRes.json();
       if (!searchRes.ok) throw new Error(searchData.error);
@@ -17093,17 +17098,20 @@ if (downloadProjectZipBtn) {
           (summary.failed > 0 ? ` (${summary.failed} fallidos)` : ' ✓');
         setBrollStatus(msg, summary.failed > 0);
 
-        // Retry button for failed downloads
+        // Retry button for failed downloads — prominent, above the list
         if (failedVideos.length > 0) {
+          const retryContainer = document.createElement('div');
+          retryContainer.style.cssText = 'margin: 12px 0; display: flex; gap: 10px; align-items: center;';
+
           const retryBtn = document.createElement('button');
-          retryBtn.className = 'btn-primary';
-          retryBtn.style.marginTop = '10px';
-          retryBtn.innerHTML = `<i class="fas fa-redo"></i> Reintentar ${failedVideos.length} descarga(s) fallida(s)`;
+          retryBtn.className = 'action-btn primary-action';
+          retryBtn.style.cssText = 'flex: 1; justify-content: center; padding: 12px; font-size: 0.9rem;';
+          retryBtn.innerHTML = `<i class="fas fa-download"></i> <span>Descargar ${failedVideos.length} video(s) faltantes</span>`;
           retryBtn.onclick = async () => {
             retryBtn.disabled = true;
-            retryBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Reintentando...';
+            retryBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span>Descargando...</span>';
 
-            // Build sections from failed videos grouped by outputDir
+            // Build sections from failed videos grouped by section
             const grouped = {};
             for (const v of failedVideos) {
               const key = v.section || 'unknown';
@@ -17132,8 +17140,7 @@ if (downloadProjectZipBtn) {
               const data = await res.json();
               if (!res.ok) throw new Error(data.error);
 
-              // Poll the new download job
-              retryBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Descargando...';
+              retryBtn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> <span>Descargando ${failedVideos.length} videos...</span>`;
               const jobId = data.jobId;
               const poll = setInterval(async () => {
                 try {
@@ -17141,17 +17148,19 @@ if (downloadProjectZipBtn) {
                   const sd = await sr.json();
                   if (sd.done) {
                     clearInterval(poll);
-                    // Reload the full status
                     loadBrollStatusForProject(folderName);
                   }
                 } catch { clearInterval(poll); }
               }, 1500);
             } catch (err) {
               retryBtn.disabled = false;
-              retryBtn.innerHTML = `<i class="fas fa-redo"></i> Reintentar (Error: ${err.message})`;
+              retryBtn.innerHTML = `<i class="fas fa-exclamation-triangle"></i> <span>Error: ${err.message} — Click para reintentar</span>`;
             }
           };
-          brollDownloadList.appendChild(retryBtn);
+
+          retryContainer.appendChild(retryBtn);
+          // Insert retry button BEFORE the download list (so it's visible at top)
+          brollDownloadProgress.insertBefore(retryContainer, brollDownloadList);
         }
       } else if (!searchData) {
         // No search results and no download status with details — just show plan info
@@ -17188,7 +17197,12 @@ if (downloadProjectZipBtn) {
     // Si auto-generate está activo, renderizar directo sin preview
     const autoGen = document.getElementById('autoGenerateBrollVideo');
     if (autoGen && autoGen.checked) {
-      // Direct render (old flow)
+      // If we already have a preview loaded, use it (consistent render)
+      if (_brollPreviewId && _brollPreviewFolderName === folderName) {
+        confirmBrollRender();
+        return;
+      }
+      // Direct render (old flow — generates new random sequence)
       isGeneratingVideo = true;
       btn.disabled = true;
       btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Generando Video...</span>';
@@ -17472,8 +17486,11 @@ function renderBrollTimeline() {
 
       html += `<div class="tl-clip" data-flat="${flatIdx}" data-section="${si}" data-clip="${ci}" style="width: ${clipWidth}px;" onclick="selectBrollClip(${flatIdx})">
         <span class="tl-clip-type-badge ${clip.type}">${clip.type === 'video' ? 'VID' : 'IMG'}</span>
-        <button class="tl-clip-regen-btn" onclick="event.stopPropagation(); regenerateBrollClip(${si}, ${ci}, this)" title="Regenerar clip">
+        <button class="tl-clip-regen-btn" onclick="event.stopPropagation(); regenerateBrollClip(${si}, ${ci}, this)" title="Regenerar clip (misma sección)">
           <i class="fas fa-sync-alt"></i>
+        </button>
+        <button class="tl-clip-regen-cross-btn" onclick="event.stopPropagation(); regenerateBrollClipCross(${si}, ${ci}, this)" title="Regenerar clip (otras secciones)">
+          <i class="fas fa-random"></i>
         </button>
         ${thumbEl}
         <div class="tl-clip-info">
@@ -17729,6 +17746,64 @@ async function regenerateBrollClip(sectionIndex, clipIndex, btnEl) {
     }
 
     // Auto-play the regenerated clip from start and continue from there
+    if (flatIdx !== -1) {
+      selectBrollClip(flatIdx);
+    }
+  } catch (error) {
+    showNotification(`Error: ${error.message}`, 'error');
+  } finally {
+    btnEl.classList.remove('spinning');
+  }
+}
+
+async function regenerateBrollClipCross(sectionIndex, clipIndex, btnEl) {
+  if (!_brollPreviewId || !_brollPreviewFolderName) return;
+
+  const video = document.getElementById('tlPreviewVideo');
+  const audio = document.getElementById('tlPreviewAudio');
+  if (video) video.pause();
+  if (audio) audio.pause();
+  if (_brollImageTimer) { clearTimeout(_brollImageTimer); _brollImageTimer = null; }
+
+  btnEl.classList.add('spinning');
+
+  const flatIdx = _brollFlatClips.findIndex(f => f.sectionIndex === sectionIndex && f.clipIndex === clipIndex);
+
+  try {
+    const response = await fetch('/api/regenerate-broll-clip-cross', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ previewId: _brollPreviewId, folderName: _brollPreviewFolderName, sectionIndex, clipIndex })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Error regenerando clip cross-section');
+
+    _brollPreviewSections[sectionIndex].clips[clipIndex] = data.clip;
+    _brollFlatClips = buildFlatClipList(_brollPreviewSections);
+
+    const clipEl = document.querySelector(`.tl-clip[data-section="${sectionIndex}"][data-clip="${clipIndex}"]`);
+    if (clipEl) {
+      const thumbImg = clipEl.querySelector('.tl-clip-thumb');
+      const placeholder = clipEl.querySelector('.tl-clip-thumb-placeholder');
+      if (data.clip.thumbnail) {
+        const newSrc = `/api/broll-thumbnail/${_brollPreviewFolderName}/${data.clip.thumbnail}?t=${Date.now()}`;
+        if (thumbImg) { thumbImg.src = newSrc; }
+        else if (placeholder) {
+          const img = document.createElement('img');
+          img.className = 'tl-clip-thumb'; img.src = newSrc; img.alt = 'clip';
+          placeholder.replaceWith(img);
+        }
+      }
+      const sourceEl = clipEl.querySelector('.tl-clip-source');
+      if (sourceEl) { sourceEl.textContent = data.clip.sourceFile; sourceEl.title = data.clip.sourceFile; }
+
+      // Flash orange for cross-section
+      clipEl.style.transition = 'none';
+      clipEl.style.borderColor = '#f59e0b';
+      clipEl.style.boxShadow = '0 0 12px rgba(245,158,11,0.4)';
+      setTimeout(() => { clipEl.style.transition = 'all 0.3s'; clipEl.style.borderColor = ''; clipEl.style.boxShadow = ''; }, 800);
+    }
+
     if (flatIdx !== -1) {
       selectBrollClip(flatIdx);
     }

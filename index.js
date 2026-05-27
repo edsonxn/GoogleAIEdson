@@ -1069,7 +1069,7 @@ async function generateMissingScript(topic, sectionNumber, totalSections, chapte
     }
 
     // Usar el cliente de IA con fallback automático
-  const { model } = await getGoogleAI("gemini-3.1-flash-lite-preview", { context: 'llm' });
+  const { model } = await getGoogleAI("gemini-3.5-flash", { context: 'llm' });
     
     console.log('🤖 Enviando prompt al modelo de IA...');
     const result = await model.generateContent({
@@ -2275,7 +2275,7 @@ REGLAS ESTRICTAS:
 `;
 
     // Llamar a la IA para generar metadatos
-  const { model } = await getGoogleAI('gemini-3.1-flash-lite-preview', { context: 'llm' });
+  const { model } = await getGoogleAI('gemini-3.5-flash', { context: 'llm' });
     
     console.log(`🤖 Enviando request a Gemini para generar metadatos...`);
     const result = await model.generateContent([{ text: prompt }]);
@@ -13895,7 +13895,7 @@ app.post('/generate-youtube-metadata', async (req, res) => {
       chaptersTimestamps
     });
 
-  const { model } = await getGoogleAI("gemini-3.1-flash-lite-preview", { context: 'llm' });
+  const { model } = await getGoogleAI("gemini-3.5-flash", { context: 'llm' });
     
     const response = await model.generateContent([{ text: prompt }]);
     const responseText = response.response.text();
@@ -15749,6 +15749,102 @@ app.post('/api/regenerate-broll-clip', async (req, res) => {
 
   } catch (error) {
     console.error('Error regenerate-broll-clip:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/regenerate-broll-clip-cross — Regenerate clip using material from ANY section
+app.post('/api/regenerate-broll-clip-cross', async (req, res) => {
+  try {
+    const { previewId, folderName, sectionIndex, clipIndex } = req.body;
+
+    let preview = brollPreviewData.get(previewId);
+    if (!preview) {
+      const projectPath = resolveProjectPath(folderName);
+      if (!projectPath) return res.status(404).json({ error: 'Proyecto no encontrado' });
+      const previewJsonPath = path.join(projectPath, 'broll_preview.json');
+      if (!fs.existsSync(previewJsonPath)) return res.status(404).json({ error: 'Preview no encontrado' });
+      preview = JSON.parse(fs.readFileSync(previewJsonPath, 'utf8'));
+      brollPreviewData.set(preview.previewId, preview);
+    }
+
+    const section = preview.sections[sectionIndex];
+    if (!section) return res.status(400).json({ error: 'Sección no encontrada' });
+    const clip = section.clips[clipIndex];
+    if (!clip) return res.status(400).json({ error: 'Clip no encontrado' });
+
+    // Get ALL sections' material (cross-section pool)
+    const allSections = await scanProjectSections(preview.projectPath, preview.config);
+    if (!allSections || allSections.length === 0) return res.status(400).json({ error: 'No hay secciones con material' });
+
+    // Build pool from ALL sections except current source
+    let pool = [];
+    for (const sec of allSections) {
+      if (sec.secNum === section.secNum) continue; // Exclude current section
+      const files = clip.type === 'video' ? sec.videoFiles : sec.imageFiles;
+      pool.push(...files);
+    }
+
+    // If cross-section pool is empty, fall back to including current section too
+    if (pool.length === 0) {
+      for (const sec of allSections) {
+        const files = clip.type === 'video' ? sec.videoFiles : sec.imageFiles;
+        pool.push(...files);
+      }
+    }
+
+    if (pool.length === 0) return res.status(400).json({ error: 'No hay material alternativo en otras secciones' });
+
+    // Pick random source (different from current if possible)
+    let newSourcePath;
+    const alternatives = pool.filter(p => p !== clip.sourcePath);
+    newSourcePath = alternatives.length > 0
+      ? alternatives[Math.floor(Math.random() * alternatives.length)]
+      : pool[Math.floor(Math.random() * pool.length)];
+
+    let newCutFrom = 0;
+    if (clip.type === 'video') {
+      let videoDuration;
+      try { videoDuration = await getAudioDuration(newSourcePath); } catch { videoDuration = 30; }
+      const skipMargin = 20;
+      const safeStart = Math.min(skipMargin, videoDuration * 0.3);
+      const safeEnd = Math.max(videoDuration - skipMargin, videoDuration * 0.7);
+      const usableRange = safeEnd - clip.duration - safeStart;
+      if (usableRange > 0) {
+        newCutFrom = safeStart + Math.random() * usableRange;
+      } else {
+        newCutFrom = Math.random() * Math.max(0, videoDuration - clip.duration);
+      }
+    }
+
+    // Generate new thumbnail
+    const thumbsDir = path.join(preview.projectPath, 'broll_thumbs');
+    const thumbName = `sec${section.secNum}_clip${clipIndex}.jpg`;
+    const thumbPath = path.join(thumbsDir, thumbName);
+
+    let thumbOk = false;
+    if (clip.type === 'video') {
+      thumbOk = await generateVideoThumbnail(newSourcePath, newCutFrom, thumbPath);
+    } else {
+      thumbOk = await generateImageThumbnail(newSourcePath, thumbPath);
+    }
+
+    clip.sourcePath = newSourcePath;
+    clip.sourceFile = path.basename(newSourcePath);
+    clip.cutFrom = newCutFrom;
+    clip.thumbnail = thumbOk ? thumbName : null;
+
+    const cachedPreview = path.join(thumbsDir, `preview_sec${section.secNum}_clip${clipIndex}.mp4`);
+    try { if (fs.existsSync(cachedPreview)) fs.unlinkSync(cachedPreview); } catch (e) {}
+
+    const previewJsonPath = path.join(preview.projectPath, 'broll_preview.json');
+    fs.writeFileSync(previewJsonPath, JSON.stringify(preview, null, 2), 'utf8');
+
+    console.log(`🔀 Clip cross-section: sec${section.secNum} clip${clipIndex} → ${clip.sourceFile} @${newCutFrom.toFixed(1)}s`);
+    res.json({ success: true, clip });
+
+  } catch (error) {
+    console.error('Error regenerate-broll-clip-cross:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -18541,7 +18637,7 @@ app.post('/api/generate-folder-name', async (req, res) => {
   }
 
   try {
-    const { model: aiModel } = await getGoogleAI('gemini-3-flash-preview', { context: 'folder-name', forcePrimary: true });
+    const { model: aiModel } = await getGoogleAI('gemini-3.5-flash', { context: 'folder-name', forcePrimary: true });
 
     const prompt = `Tu tarea es inventar un TÍTULO CORTO y CREATIVO para un proyecto de video basado en el tema descrito abajo.
 
@@ -18643,7 +18739,7 @@ app.post('/api/broll/analyze', async (req, res) => {
       return res.status(400).json({ error: 'No se encontraron guiones en las secciones. Genera los guiones primero.' });
     }
 
-    const { model: aiModel } = await getGoogleAI('gemini-3-flash-preview', { context: 'broll', forcePrimary: true });
+    const { model: aiModel } = await getGoogleAI('gemini-3.5-flash', { context: 'broll', forcePrimary: true });
 
     // Generar términos para cada sección basados en su guion individual
     const terms = [];
@@ -18689,7 +18785,7 @@ ${sec.text.slice(0, 3000)}`;
 
 // Buscar videos en YouTube con yt-dlp
 app.post('/api/broll/search', async (req, res) => {
-  const { terms, maxResults = 3, maxDuration = 20, excludeShorts = true, maxImages = 0, folderName } = req.body;
+  const { terms, maxResults = 3, maxDuration = 20, excludeShorts = true, maxImages = 0, folderName, validations = 1 } = req.body;
 
   if (!terms || !Array.isArray(terms)) {
     return res.status(400).json({ error: 'terms es requerido (array)' });
@@ -18720,11 +18816,16 @@ app.post('/api/broll/search', async (req, res) => {
         }
       }
 
-      // Una sola validación LLM por sección completa
-      if (allCandidates.length > 0) {
+      // Validación LLM por sección (controlada por parámetro validations)
+      if (allCandidates.length > 0 && validations > 0) {
         try {
-          const validIndices = await brollValidateRelevance(allCandidates, group.terms.join(', '), group.section);
-          const validUrls = new Set(validIndices.map(i => allCandidates[i]?.url).filter(Boolean));
+          // Run N validation passes — only keep videos approved in ALL passes
+          let validUrls = new Set(allCandidates.map(v => v.url));
+          for (let v = 0; v < validations; v++) {
+            const validIndices = await brollValidateRelevance(allCandidates, group.terms.join(', '), group.section);
+            const passUrls = new Set(validIndices.map(i => allCandidates[i]?.url).filter(Boolean));
+            validUrls = new Set([...validUrls].filter(u => passUrls.has(u)));
+          }
           
           // Filtrar resultados no relevantes de cada grupo de términos
           for (const videoGroup of sectionResults.videos) {
@@ -19147,7 +19248,7 @@ function brollYtSearch(query, maxResults, spawn) {
 
 async function brollValidateRelevance(videos, searchTerm, sectionName) {
   try {
-    const { model: aiModel } = await getGoogleAI('gemini-3-flash-preview', { context: 'broll-validate', forcePrimary: true });
+    const { model: aiModel } = await getGoogleAI('gemini-3.5-flash', { context: 'broll-validate', forcePrimary: true });
 
     const titles = videos.map((v, i) => `${i}. "${v.title}" (${v.channel})`).join('\n');
 
@@ -20664,7 +20765,7 @@ if __name__ == "__main__":
                             // Si falla la API principal con 503 y estabamos usando flash 3, intentar fallback a 2.5
                             if (isPrimaryOverloaded && selectedModel === GEMINI_TEXT_MODEL) {
                                 console.warn(`⚠️ Gemini 3 Flash saturado incluso en API PRINCIPAL (503). Intentando fallback a Gemini 2.5 Flash...`);
-                                const { model: fallbackModel } = await getGoogleAI("gemini-3.1-flash-lite-preview", { context: 'llm', forcePrimary: true });
+                                const { model: fallbackModel } = await getGoogleAI("gemini-3.5-flash", { context: 'llm', forcePrimary: true });
                                 result = await fallbackModel.generateContent(prompt);
                             } else {
                                 throw primaryError;

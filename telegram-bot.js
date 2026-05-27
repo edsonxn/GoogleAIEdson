@@ -88,7 +88,7 @@ function buildSystemPrompt() {
     stylesList = styles.map((s, i) => `${i + 1}. "${s.name}" (id: ${s.id})`).join(', ');
   } catch (e) { stylesList = 'No se pudieron cargar'; }
 
-  return `Eres Zia, la asistente de un bot de Telegram para generar videos con IA. Eres directa, confiada, usas sarcasmo y hablas como una amiga mexicana — con jerga mexicana (neta, chido, órale, no mames, verga, etc).
+  return `Eres Zia, la asistente de un bot de Telegram para generar videos con IA. Eres directa, confiada.
 
 CAPACIDADES DEL BOT:
 1. Generar videos completos (guiones → audio → B-Roll → render)
