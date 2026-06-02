@@ -685,7 +685,14 @@
             <label for="brollMaxDuration" class="field-label">
               <i class="fas fa-clock"></i> Duración máx (min)
             </label>
-            <input type="number" id="brollMaxDuration" class="field-input" value="5" min="1" max="120">
+            <input type="number" id="brollMaxDuration" class="field-input" value="20" min="1" max="120">
+          </div>
+
+          <div class="field-group">
+            <label for="brollSearchTerms" class="field-label">
+              <i class="fas fa-search"></i> Términos por sección
+            </label>
+            <input type="number" id="brollSearchTerms" class="field-input" value="3" min="1" max="10">
           </div>
 
           <div class="field-group">
@@ -708,8 +715,8 @@
             </label>
             <select id="brollResolution" class="field-select">
               <option value="480">480p</option>
-              <option value="720" selected>720p</option>
-              <option value="1080">1080p</option>
+              <option value="720">720p</option>
+              <option value="1080" selected>1080p</option>
               <option value="1440">1440p</option>
               <option value="2160">4K</option>
             </select>
@@ -728,7 +735,7 @@
             <label for="brollValidations" class="field-label">
               <i class="fas fa-check-double"></i> Verificaciones IA
             </label>
-            <input type="number" id="brollValidations" class="field-input" value="1" min="0" max="5">
+            <input type="number" id="brollValidations" class="field-input" value="0" min="0" max="5">
           </div>
 
 

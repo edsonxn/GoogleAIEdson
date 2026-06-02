@@ -5764,7 +5764,7 @@ app.post('/generate-batch-automatic/multi', async (req, res) => {
 // NUEVO ENDPOINT PARA GENERACIÓN AUTOMÁTICA POR LOTES
 app.post('/generate-batch-automatic', async (req, res) => {
   try {
-  const { topic, folderName, voice, totalSections, minWords, maxWords, imageCount, aspectRatio, promptModifier, imageModel, llmModel, skipImages, googleImages, localAIImages, geminiGeneratedImages, comfyUISettings, scriptStyle, customStyleInstructions, applioVoice, applioModel, applioPitch, applioSpeed, useApplio } = req.body;
+  const { topic, folderName, voice, totalSections, minWords, maxWords, imageCount, aspectRatio, promptModifier, imageModel, llmModel, skipImages, googleImages, localAIImages, geminiGeneratedImages, comfyUISettings, scriptStyle, customStyleInstructions, applioVoice, applioModel, applioPitch, applioSpeed, useApplio, generateQwenAudio, qwenVoice } = req.body;
     
     console.log('\n' + '='.repeat(80));
     console.log('🚀 INICIANDO GENERACIÓN AUTOMÁTICA POR LOTES');
@@ -12345,7 +12345,7 @@ app.get('/comfyui-status', async (req, res) => {
 // Nueva ruta para generar audio de sección específica usando cliente Applio Node.js
 app.post('/generate-section-audio', async (req, res) => {
   try {
-    const { script, topic, folderName, currentSection, voice, applioVoice, applioModel, applioPitch, applioSpeed } = req.body;
+    const { script, topic, folderName, currentSection, voice, applioVoice, applioModel, applioPitch, applioSpeed, generateQwenAudio, qwenVoice } = req.body;
     
     if (!script || !topic || !currentSection) {
       return res.status(400).json({ 
@@ -18699,7 +18699,7 @@ ${topic.slice(0, 500)}`;
 
 // Analizar el guion del proyecto y extraer términos de búsqueda
 app.post('/api/broll/analyze', async (req, res) => {
-  const { folderName } = req.body;
+  const { folderName, termsPerSection = 3 } = req.body;
   if (!folderName) return res.status(400).json({ error: 'folderName es requerido' });
 
   try {
@@ -18750,7 +18750,7 @@ Tu tarea es extraer términos de búsqueda ÓPTIMOS para YouTube basados en el s
 REGLAS CRÍTICAS:
 - Devuelve SOLO un JSON válido, sin markdown ni explicaciones.
 - El formato es: {"section": "nombre corto descriptivo", "terms": ["término 1", "término 2", "término 3"]}
-- Genera 2-4 términos de búsqueda.
+- Genera exactamente ${termsPerSection} términos de búsqueda.
 - Los términos deben ser CORTOS y DIRECTOS (3-5 palabras máximo).
 - SIEMPRE usa el nombre propio/oficial del elemento (juego, película, personaje, item, etc.) en su idioma ORIGINAL (generalmente inglés).
 - Para videojuegos: usa "nombre del item/personaje + nombre del juego" (ej: "ivory raptor wow classic", "nether drake tbc mount").
@@ -21138,3 +21138,90 @@ app.post('/api/manual-translate-video', upload.fields(manualUploadFields), async
         res.end();
     }
 });
+/ /   F u n c i � n   p a r a   o b t e n e r   l a s   v o c e s   d i s p o n i b l e s   d e   Q w e n 
+ 
+ f u n c t i o n   g e t Q w e n V o i c e s ( )   { 
+ 
+     t r y   { 
+ 
+         c o n s t   v o i c e s P a t h   =   p a t h . j o i n ( _ _ d i r n a m e ,   ' q w e n _ v o i c e s ' ) ; 
+ 
+         i f   ( ! f s . e x i s t s S y n c ( v o i c e s P a t h ) )   { 
+ 
+             f s . m k d i r S y n c ( v o i c e s P a t h ,   {   r e c u r s i v e :   t r u e   } ) ; 
+ 
+         } 
+ 
+         
+ 
+         c o n s t   f i l e s   =   f s . r e a d d i r S y n c ( v o i c e s P a t h ) ; 
+ 
+         c o n s t   v o i c e F i l e s   =   f i l e s . f i l t e r ( f i l e   = >   f i l e . e n d s W i t h ( ' . p t ' ) ) ; 
+ 
+         
+ 
+         i f   ( v o i c e F i l e s . l e n g t h   = = =   0 )   { 
+ 
+             r e t u r n   [ { 
+ 
+                 n a m e :   ' S i n   v o c e s   d i s p o n i b l e s ' , 
+ 
+                 p a t h :   ' ' , 
+ 
+                 d i s p l a y N a m e :   ' A � a d e   a r c h i v o s   . p t   e n   l a   c a r p e t a   q w e n _ v o i c e s ' 
+ 
+             } ] ; 
+ 
+         } 
+ 
+         
+ 
+         c o n s t   v o i c e s   =   v o i c e F i l e s . m a p ( f i l e   = >   { 
+ 
+             c o n s t   d i s p l a y N a m e   =   f i l e . r e p l a c e ( ' . p t ' ,   ' ' ) ; 
+ 
+             r e t u r n   { 
+ 
+                 n a m e :   d i s p l a y N a m e , 
+ 
+                 p a t h :   p a t h . j o i n ( v o i c e s P a t h ,   f i l e ) , 
+ 
+                 d i s p l a y N a m e :   d i s p l a y N a m e 
+ 
+             } ; 
+ 
+         } ) ; 
+ 
+         
+ 
+         r e t u r n   v o i c e s . s o r t ( ( a ,   b )   = >   a . d i s p l a y N a m e . l o c a l e C o m p a r e ( b . d i s p l a y N a m e ) ) ; 
+ 
+     }   c a t c h   ( e r r o r )   { 
+ 
+         c o n s o l e . e r r o r ( ' L'  E r r o r   l e y e n d o   c a r p e t a   d e   v o c e s   Q w e n : ' ,   e r r o r ) ; 
+ 
+         r e t u r n   [ ] ; 
+ 
+     } 
+ 
+ } 
+ 
+ 
+ 
+ a p p . g e t ( ' / a p i / q w e n - v o i c e s ' ,   ( r e q ,   r e s )   = >   { 
+ 
+     t r y   { 
+ 
+         c o n s t   v o i c e s   =   g e t Q w e n V o i c e s ( ) ; 
+ 
+         r e s . j s o n ( {   s u c c e s s :   t r u e ,   v o i c e s ,   c o u n t :   v o i c e s . l e n g t h   } ) ; 
+ 
+     }   c a t c h   ( e r r o r )   { 
+ 
+         r e s . s t a t u s ( 5 0 0 ) . j s o n ( {   s u c c e s s :   f a l s e ,   e r r o r :   e r r o r . m e s s a g e   } ) ; 
+ 
+     } 
+ 
+ } ) ; 
+ 
+ 
