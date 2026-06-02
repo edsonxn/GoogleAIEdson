@@ -677,6 +677,26 @@
           </div>
         </div>
 
+        <!-- QWEN CHECKBOX -->
+        <div class="checkbox-group" style="margin-top: 15px;">
+          <label class="checkbox-label">
+            <input type="checkbox" id="autoGenerateQwenAudio" class="checkbox-input">
+            <span class="checkbox-custom"></span>
+            <i class="fas fa-robot"></i>
+            Incluir audio Qwen
+          </label>
+        </div>
+
+        <!-- Dropdown de voces de Qwen (inicialmente oculto) -->
+        <div class="field-group" id="qwenVoiceGroup" style="display: none; margin-top: 10px; margin-left: 20px;">
+          <label for="qwenVoiceSelect" class="field-label">
+            <i class="fas fa-user-alt"></i> Voz Qwen (Gradio):
+          </label>
+          <select id="qwenVoiceSelect" class="field-select">
+            <option value="">Cargando voces...</option>
+          </select>
+        </div>
+
         <!-- Columna 3: B-Roll -->
         <div class="config-column">
           <h3 class="column-title"><i class="fas fa-film"></i> B-Roll</h3>
