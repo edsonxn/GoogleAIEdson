@@ -19273,6 +19273,50 @@ No incluyas explicaciones, solo el array.`;
   }
 }
 
+// Función para obtener las voces disponibles de Qwen
+function getQwenVoices() {
+  try {
+    const voicesPath = path.resolve('qwen_voices');
+    if (!fs.existsSync(voicesPath)) {
+      fs.mkdirSync(voicesPath, { recursive: true });
+    }
+    
+    const files = fs.readdirSync(voicesPath);
+    const voiceFiles = files.filter(file => file.endsWith('.pt'));
+    
+    if (voiceFiles.length === 0) {
+      return [{
+        name: 'Sin voces disponibles',
+        path: '',
+        displayName: 'Añade archivos .pt en la carpeta qwen_voices'
+      }];
+    }
+    
+    const voices = voiceFiles.map(file => {
+      const displayName = file.replace('.pt', '');
+      return {
+        name: displayName,
+        path: path.join(voicesPath, file),
+        displayName: displayName
+      };
+    });
+    
+    return voices.sort((a, b) => a.displayName.localeCompare(b.displayName));
+  } catch (error) {
+    console.error('Error leyendo carpeta de voces Qwen:', error);
+    return [];
+  }
+}
+
+app.get('/api/qwen-voices', (req, res) => {
+  try {
+    const voices = getQwenVoices();
+    res.json({ success: true, voices, count: voices.length });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 app.listen(PORT, '0.0.0.0', async () => {
   const localIP = getLocalIP();
   console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`);
