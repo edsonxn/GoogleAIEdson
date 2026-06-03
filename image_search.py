@@ -20,7 +20,7 @@ def main():
     before = set(f for f in os.listdir(output_dir) if os.path.splitext(f)[1].lower() in img_exts)
 
     # Search for images using DuckDuckGo
-    from ddgs import DDGS
+    from duckduckgo_search import DDGS
 
     try:
         results = DDGS().images(
