@@ -9945,8 +9945,9 @@ body.prompts-panel-active .container {
 
 /* Timeline area */
 .tl-timeline-area {
-  overflow: hidden; display: flex; flex-direction: column;
+  overflow: hidden; display: flex; flex-direction: row;
   padding: 12px 0 0 0;
+  align-items: stretch;
 }
 .tl-flat-timeline {
   display: flex; align-items: flex-start; gap: 3px;
@@ -10044,6 +10045,18 @@ body.prompts-panel-active .container {
 .tl-clip:hover .tl-clip-regen-cross-btn { opacity: 1; }
 .tl-clip-regen-cross-btn:hover { background: rgba(245,158,11,1); }
 .tl-clip-regen-cross-btn.spinning i { animation: tl-spin 0.6s linear infinite; }
+
+.tl-clip-replace-img-btn {
+  position: absolute; top: 3px; right: 53px;
+  width: 22px; height: 22px; border-radius: 5px;
+  background: rgba(168,85,247,0.85); color: white;
+  border: none; cursor: pointer; font-size: 0.6rem;
+  display: flex; align-items: center; justify-content: center;
+  opacity: 0; transition: opacity 0.15s;
+}
+.tl-clip:hover .tl-clip-replace-img-btn { opacity: 1; }
+.tl-clip-replace-img-btn:hover { background: rgba(168,85,247,1); }
+.tl-clip-replace-img-btn.spinning i { animation: tl-spin 0.6s linear infinite; }
 
 .tl-clip-regen-btn.spinning i { animation: tl-spin 0.6s linear infinite; }
 @keyframes tl-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
@@ -11385,4 +11398,202 @@ body.prompts-panel-active .container {
 @media (max-width: 768px) {
   .broll-config-row { flex-direction: column; }
   .broll-field { min-width: 100%; }
+}
+
+/* === B-Roll Download Progress === */
+.broll-progress-wrapper {
+  margin-top: 12px;
+  padding: 12px 16px;
+  background: rgba(30, 41, 59, 0.7);
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  border-radius: 12px;
+}
+.broll-progress-wrapper.broll-standalone {
+  margin: 12px auto;
+  max-width: 600px;
+  background: rgba(15, 23, 42, 0.95);
+  border: 1px solid rgba(99, 102, 241, 0.5);
+  box-shadow: 0 4px 20px rgba(99, 102, 241, 0.15);
+  overflow: visible;
+}
+.broll-progress-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: 0.85rem;
+  color: rgba(255,255,255,0.85);
+  font-weight: 600;
+}
+.broll-progress-header .broll-percentage {
+  color: #a78bfa;
+  font-weight: 700;
+}
+.broll-capsules {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(30px, 38px));
+  gap: 4px;
+  justify-content: center;
+}
+.broll-capsule {
+  height: 16px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(99, 102, 241, 0.25);
+  transition: background 0.3s ease, box-shadow 0.3s ease, border-color 0.3s ease;
+}
+.broll-capsule.completed {
+  background: linear-gradient(135deg, #818cf8, #a78bfa);
+  box-shadow: 0 0 6px rgba(129, 140, 248, 0.5);
+  border-color: rgba(129, 140, 248, 0.6);
+}
+.broll-capsule.active {
+  background: linear-gradient(135deg, #fbbf24, #f59e0b);
+  box-shadow: 0 0 8px rgba(251, 191, 36, 0.5);
+  border-color: rgba(251, 191, 36, 0.6);
+  animation: broll-pulse 1.2s ease-in-out infinite;
+}
+.broll-capsule.error {
+  background: linear-gradient(135deg, #ff5f6d, #ffc371);
+  box-shadow: 0 0 6px rgba(255, 95, 109, 0.4);
+  border-color: rgba(255, 95, 109, 0.5);
+}
+@keyframes broll-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+.broll-progress-info {
+  margin-top: 6px;
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+/* === End Screen & Background Music === */
+.tl-endscreen-zone {
+  flex: 0 0 auto;
+  min-width: 160px;
+  max-width: 220px;
+  margin-left: 8px;
+  border: 2px dashed rgba(251, 191, 36, 0.4);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.2s, background 0.2s;
+  cursor: pointer;
+  position: relative;
+  align-self: stretch;
+}
+.tl-endscreen-zone.dragover {
+  border-color: #fbbf24;
+  background: rgba(251, 191, 36, 0.08);
+}
+.tl-endscreen-zone.has-clip {
+  border-color: rgba(251, 191, 36, 0.7);
+  background: rgba(251, 191, 36, 0.05);
+}
+.tl-endscreen-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  color: rgba(255,255,255,0.45);
+  font-size: 0.72rem;
+  text-align: center;
+  padding: 8px;
+}
+.tl-endscreen-placeholder i {
+  font-size: 1.4rem;
+  color: #fbbf24;
+}
+.tl-endscreen-preview {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 10px;
+}
+.tl-endscreen-preview video {
+  width: 100%;
+  flex: 1;
+  object-fit: cover;
+  border-radius: 10px 10px 0 0;
+}
+.tl-endscreen-info {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  background: rgba(0,0,0,0.5);
+  font-size: 0.7rem;
+  color: #fbbf24;
+  gap: 4px;
+}
+.tl-endscreen-info span:first-child {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tl-endscreen-remove {
+  background: none;
+  border: none;
+  color: #ef4444;
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 2px 4px;
+}
+.tl-music-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: rgba(15, 23, 42, 0.6);
+  border-top: 1px solid rgba(255,255,255,0.06);
+}
+.tl-music-drop {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border: 1px dashed rgba(139, 92, 246, 0.4);
+  border-radius: 8px;
+  color: rgba(255,255,255,0.55);
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+  flex: 1;
+  max-width: 400px;
+}
+.tl-music-drop i {
+  color: #a78bfa;
+}
+.tl-music-drop.dragover {
+  border-color: #a78bfa;
+  background: rgba(139, 92, 246, 0.08);
+}
+.tl-music-drop.has-music {
+  border-color: rgba(139, 92, 246, 0.7);
+  color: #c4b5fd;
+}
+.tl-music-drop.has-music #tlMusicRemoveBtn {
+  display: inline-flex !important;
+  background: none;
+  border: none;
+  color: #ef4444;
+  cursor: pointer;
+  font-size: 0.9rem;
+  padding: 0 4px;
+}
+.tl-music-volume {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: rgba(255,255,255,0.6);
+  font-size: 0.8rem;
+}
+.tl-music-volume input[type=range] {
+  width: 100px;
+  accent-color: #a78bfa;
 }

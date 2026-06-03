@@ -11,6 +11,7 @@ import { writeFile } from 'fs/promises';
 import path from 'path';
 import fetch from 'node-fetch';
 import ApplioClient from "./applio-client.js";
+import QwenClient from "./qwen-client.js";
 import { transcribeAudio, getAudioTracks } from "./transcriber.js";
 import { initTelegramBot } from "./telegram-bot.js";
 import multer from 'multer';
@@ -613,6 +614,9 @@ const PORT = 3000;
 
 // Configurar cliente Applio
 const applioClient = new ApplioClient();
+
+// Configurar cliente Qwen TTS
+const qwenClient = new QwenClient();
 
 // Variables para control de proceso ComfyUI
 let comfyUIProcess = null;
@@ -2233,10 +2237,26 @@ ${fullScript}
 Por favor genera:
 
 1. **10 TÍTULOS CLICKBAIT** (cada uno en una línea, numerados):
-   - Usa palabras que generen curiosidad.
-   - Si el contenido es una lista, incluye el número y sigue la estructura: "Las [Número] [Adjetivo] [Sujeto] en [Tema]".
-   - Ejemplo: "Las 5 Armas Más Raras de Conseguir en Skyrim".
+   - REGLA PRINCIPAL: Determina si el video habla de UN SOLO TEMA/OBJETO/EVENTO específico o si es una LISTA de cosas.
+   
+   **Si es UN SOLO TEMA** (la mayoría de los casos): Usa títulos estilo narrativo-provocador con palabras en MAYÚSCULAS para el gancho emocional:
+   - Estructura: "[Sujeto específico] [VERBO IMPACTANTE en mayúsculas] [consecuencia o complemento]"
+   - Ejemplos:
+     * "Como Nintendo hizo el PEOR ACCESORIO que EMPEORABA LOS JUEGOS"
+     * "La NES tenia un PUERTO SECRETO para APOSTAR"
+     * "¿Que paso con THX? El sistema de sonido que REVENTABA OIDOS"
+     * "Cómo UNA SOLA habilidad ROMPIÓ raids enteras en WoW"
+     * "¿Por qué los jugadores ODIAN estas razas jugables?"
+     * "Este objeto ARRUINÓ la economía de todo un servidor"
+   - Usa 2-4 palabras en MAYÚSCULAS por título (las más impactantes/emocionales).
+   - Sé ESPECÍFICO al tema real del video, no genérico.
+   
+   **Si es una LISTA de cosas**: Usa formato con número:
+   - Estructura: "Los/Las [Número] [Adjetivo IMPACTANTE] [Sujeto] que [ACCIÓN en mayúsculas]"
+   - Ejemplos: "Los 5 Glitches que DESTRUYERON speedruns enteros", "Las 3 Armas PROHIBIDAS que Nadie Debería Usar"
+   
    - Máximo 15 palabras, mínimo 8.
+   - NUNCA hagas todos los títulos con formato de lista si el video no es una lista.
 
 2. **DESCRIPCIÓN PARA VIDEO** (optimizada para SEO):
    - Entre 150-300 palabras
@@ -5334,6 +5354,8 @@ async function performBatchAudioGeneration(params = {}) {
   const {
     projectData,
     useApplio,
+    generateQwenAudio = false,
+    qwenVoice = '',
     voice,
     applioVoice,
     applioModel,
@@ -5347,12 +5369,14 @@ async function performBatchAudioGeneration(params = {}) {
     wordsMax
   } = params;
 
+  const useQwen = generateQwenAudio === true;
+
   if (!projectData || !Array.isArray(projectData.sections) || !projectData.sections.length) {
     throw new Error('projectData inválido: se requieren secciones para generar audio');
   }
 
   const { sections, projectKey } = projectData;
-  const audioMethod = useApplio ? 'Applio' : 'Google TTS';
+  const audioMethod = useQwen ? 'Qwen TTS' : useApplio ? 'Applio' : 'Google TTS';
   const requestedNarrationStyle = narrationStyle || projectData?.audioConfig?.narrationStyle || null;
   const baseTopic = projectData.sections[0]?.title?.split(':')[0] || projectData.topic || 'Proyecto';
 
@@ -5373,7 +5397,9 @@ async function performBatchAudioGeneration(params = {}) {
     wordsMax: normalizedWordsMax
   });
 
-  if (useApplio) {
+  if (useQwen) {
+    console.log('🤖 Usando Qwen TTS para generación de audio...');
+  } else if (useApplio) {
     console.log('🔄 Verificando disponibilidad de Applio para la cola actual...');
     const applioStarted = await startApplio();
     if (!applioStarted) {
@@ -5416,7 +5442,23 @@ async function performBatchAudioGeneration(params = {}) {
         }
       }
 
-      if (useApplio) {
+      if (useQwen) {
+        // Qwen TTS: usar archivo .pt como voice prompt
+        const effectiveQwenVoice = qwenVoice || '';
+        const fileName = `${projectKey}_seccion_${section.section}_qwen_${Date.now()}.wav`;
+        const filePath = path.join(sectionFolderStructure.sectionDir, fileName);
+
+        console.log(`🤖 [${projectKey}] Generando audio Qwen para sección ${section.section} (voz: ${effectiveQwenVoice || 'default'})...`);
+
+        const qwenOutput = await qwenClient.generateFromPrompt(effectiveQwenVoice, section.cleanScript, 'Auto', filePath);
+
+        if (!qwenOutput) {
+          throw new Error('Qwen TTS no generó el audio correctamente');
+        }
+
+        audioPath = path.relative('./public', filePath).replace(/\\/g, '/');
+        console.log(`✅ [${projectKey}] Audio Qwen generado: ${audioPath}`);
+      } else if (useApplio) {
         // applioModel = voz Edge TTS intermedia (ej: "fr-FR-RemyMultilingualNeural")
         // applioVoice = archivo .pth del modelo RVC (ej: "RemyOriginal" o "logs\\VOCES\\RemyOriginal.pth")
         const selectedApplioModel = applioModel || 'fr-FR-RemyMultilingualNeural';
@@ -5561,9 +5603,9 @@ async function performBatchAudioGeneration(params = {}) {
 }
 
 async function scheduleBatchAudioGeneration(params = {}) {
-  const { useApplio, applioQueueRunId, applioQueueOrder, applioQueueLabel } = params;
+  const { useApplio, generateQwenAudio, applioQueueRunId, applioQueueOrder, applioQueueLabel } = params;
 
-  const shouldQueueApplio = Boolean(useApplio) && applioQueueRunId !== undefined && applioQueueRunId !== null && applioQueueOrder !== undefined && applioQueueOrder !== null;
+  const shouldQueueApplio = Boolean(useApplio) && !generateQwenAudio && applioQueueRunId !== undefined && applioQueueRunId !== null && applioQueueOrder !== undefined && applioQueueOrder !== null;
 
   const task = () => performBatchAudioGeneration(params);
 
@@ -5639,7 +5681,8 @@ function launchParallelBatchGenerationTask(entry, sharedConfig = {}) {
 
   const shouldGenerateGoogleAudio = Boolean(sharedConfig.generateAudio);
   const shouldGenerateApplioAudio = Boolean(sharedConfig.generateApplioAudio || sharedConfig.useApplio);
-  const shouldGenerateAudio = shouldGenerateGoogleAudio || shouldGenerateApplioAudio;
+  const shouldGenerateQwenAudio = Boolean(sharedConfig.generateQwenAudio);
+  const shouldGenerateAudio = shouldGenerateGoogleAudio || shouldGenerateApplioAudio || shouldGenerateQwenAudio;
 
   console.log(`🎙️ [${entry.folderName}] Voz seleccionada para proyecto paralelo: ${payload.voice}`);
   console.log(`🖼️ [${entry.folderName}] Modelo de imágenes seleccionado: ${imageModelLabel} (${imageModel})`);
@@ -5667,6 +5710,8 @@ function launchParallelBatchGenerationTask(entry, sharedConfig = {}) {
         const audioPayload = {
           projectData,
           useApplio: shouldGenerateApplioAudio,
+          generateQwenAudio: sharedConfig.generateQwenAudio || false,
+          qwenVoice: sharedConfig.qwenVoice || '',
           voice: payload.voice,
           narrationStyle: sharedConfig.narrationStyle || null,
           applioVoice: sharedConfig.applioVoice,
@@ -5771,7 +5816,7 @@ app.post('/generate-batch-automatic', async (req, res) => {
     console.log('='.repeat(80));
     console.log(`🎯 Tema: "${topic}"`);
     console.log(`📊 Total de secciones: ${totalSections}`);
-    console.log(`🎤 Sistema de audio: ${useApplio ? 'Applio' : 'Google TTS'}`);
+    console.log(`🎤 Sistema de audio: ${generateQwenAudio ? 'Qwen TTS' : useApplio ? 'Applio' : 'Google TTS'}`);
     const selectedImageModel = normalizeImageModel(imageModel);
     const selectedImageModelLabel = getImageModelLabel(selectedImageModel);
     console.log(`🖼️ Sistema de imágenes: ${localAIImages ? 'IA Local (ComfyUI)' : googleImages ? 'Google Images' : skipImages ? 'Sin imágenes' : `IA en la nube (${selectedImageModelLabel})`}`);
@@ -5818,7 +5863,9 @@ app.post('/generate-batch-automatic', async (req, res) => {
       applioSpeed,
       selectedVoice,
       selectedStyle,
-      totalSections
+      totalSections,
+      generateQwenAudioParam,
+      qwenVoiceParam
     ) => {
       try {
         console.log(`🎵 [PARALELO] Iniciando generación de audio para sección ${section}...`);
@@ -5828,7 +5875,23 @@ app.post('/generate-batch-automatic', async (req, res) => {
         
         const startTime = Date.now();
 
-        if (useApplio) {
+        if (generateQwenAudioParam) {
+          // Qwen TTS
+          const effectiveQwenVoice = qwenVoiceParam || '';
+          const fileName = `${projectKey}_seccion_${section}_qwen_${Date.now()}.wav`;
+          const filePath = path.join(sectionFolderStructure.sectionDir, fileName);
+
+          console.log(`🤖 [PARALELO] Generando audio Qwen para sección ${section} (voz: ${effectiveQwenVoice || 'default'})...`);
+
+          const qwenOutput = await qwenClient.generateFromPrompt(effectiveQwenVoice, cleanScript, 'Auto', filePath);
+
+          if (qwenOutput) {
+            generatedAudioPath = path.relative('./public', filePath).replace(/\\/g, '/');
+            console.log(`✅ [PARALELO] Audio Qwen generado para sección ${section}: ${generatedAudioPath}`);
+          } else {
+            console.error(`❌ [PARALELO] Falló generación Qwen sección ${section}`);
+          }
+        } else if (useApplio) {
           // applioModel = voz Edge TTS, applioVoice = path .pth RVC
           const selectedApplioModel = applioModel || 'fr-FR-RemyMultilingualNeural';
           let selectedApplioVoice = applioVoice || 'logs\\VOCES\\RemyOriginal.pth';
@@ -6394,10 +6457,13 @@ app.post('/generate-batch-audio', async (req, res) => {
 // ENDPOINT PARA GENERAR SOLO AUDIOS FALTANTES CON APPLIO
 app.post('/generate-missing-applio-audios', async (req, res) => {
   try {
-    const { folderName, applioVoice, applioModel, applioPitch, applioSpeed, totalSections, scriptStyle = 'professional', customStyleInstructions = '', wordsMin = 800, wordsMax = 1100 } = req.body;
+    const { folderName, applioVoice, applioModel, applioPitch, applioSpeed, totalSections, scriptStyle = 'professional', customStyleInstructions = '', wordsMin = 800, wordsMax = 1100, generateQwenAudio = false, qwenVoice = '' } = req.body;
+    
+    const useQwen = generateQwenAudio === true;
+    const providerLabel = useQwen ? 'Qwen' : 'Applio';
     
     console.log('\n' + '🔍'.repeat(20));
-    console.log('🔍 VERIFICANDO Y GENERANDO AUDIOS FALTANTES CON APPLIO');
+    console.log(`🔍 VERIFICANDO Y GENERANDO AUDIOS FALTANTES CON ${providerLabel}`);
     console.log('🔍'.repeat(20));
     
     console.log('🎤 Configuración de generación:', {
@@ -6430,7 +6496,8 @@ app.post('/generate-missing-applio-audios', async (req, res) => {
       }
       
       // Buscar archivos de audio en la carpeta de la sección
-      let hasApplioAudio = false;
+      const audioTag = useQwen ? '_qwen' : '_applio';
+      let hasTargetAudio = false;
       
       if (fs.existsSync(sectionDir)) {
         const files = fs.readdirSync(sectionDir);
@@ -6441,20 +6508,20 @@ app.post('/generate-missing-applio-audios', async (req, res) => {
           file.endsWith('.ogg')
         );
 
-        const applioAudioFiles = audioFiles.filter(file => file.includes('_applio'));
-        const otherAudioFiles = audioFiles.filter(file => !file.includes('_applio'));
+        const targetAudioFiles = audioFiles.filter(file => file.includes(audioTag));
+        const otherAudioFiles = audioFiles.filter(file => !file.includes(audioTag));
         
-        hasApplioAudio = applioAudioFiles.length > 0;
+        hasTargetAudio = targetAudioFiles.length > 0;
         
-        if (hasApplioAudio) {
-          console.log(`✅ Sección ${section.section} ya tiene audio Applio: ${applioAudioFiles.join(', ')}`);
+        if (hasTargetAudio) {
+          console.log(`✅ Sección ${section.section} ya tiene audio ${providerLabel}: ${targetAudioFiles.join(', ')}`);
         } else if (otherAudioFiles.length > 0) {
-          console.log(`ℹ️ Sección ${section.section} tiene audio de otro origen (${otherAudioFiles.join(', ')}), pero falta la versión Applio`);
+          console.log(`ℹ️ Sección ${section.section} tiene audio de otro origen (${otherAudioFiles.join(', ')}), pero falta la versión ${providerLabel}`);
         }
       }
       
-      if (!hasApplioAudio) {
-        console.log(`🎵 Sección ${section.section} necesita audio Applio`);
+      if (!hasTargetAudio) {
+        console.log(`🎵 Sección ${section.section} necesita audio ${providerLabel}`);
         missingAudioSections.push(section);
       }
     }
@@ -6474,11 +6541,15 @@ app.post('/generate-missing-applio-audios', async (req, res) => {
       });
     }
     
-    // Inicializar Applio solo si hay audios que generar
-    console.log('🔄 Iniciando Applio para generación de audios faltantes...');
-    const applioStarted = await startApplio();
-    if (!applioStarted) {
-      throw new Error('No se pudo iniciar Applio');
+    // Inicializar el proveedor de TTS solo si hay audios que generar
+    if (useQwen) {
+      console.log('🤖 Usando Qwen TTS para generación de audios faltantes...');
+    } else {
+      console.log('🔄 Iniciando Applio para generación de audios faltantes...');
+      const applioStarted = await startApplio();
+      if (!applioStarted) {
+        throw new Error('No se pudo iniciar Applio');
+      }
     }
     
     const generationResults = [];
@@ -6492,11 +6563,7 @@ app.post('/generate-missing-applio-audios', async (req, res) => {
         // Obtener el directorio de la sección
         const sectionDir = path.join(projectDir, `seccion_${section.section}`);
         
-        // Crear nombre de archivo único
-        const fileName = `${folderName}_seccion_${section.section}_applio_${Date.now()}.wav`;
-        const filePath = path.join(sectionDir, fileName);
-        
-        console.log(`📁 Generando audio en: ${filePath}`);
+        console.log(`📁 Generando audio en sección ${section.section}...`);
         console.log(`📝 Script completo: ${section.script.substring(0, 100)}...`);
         
         // Extraer solo el contenido del guión sin metadatos
@@ -6567,23 +6634,36 @@ app.post('/generate-missing-applio-audios', async (req, res) => {
         
         console.log(`🧹 Script limpio: ${cleanScript.substring(0, 100)}...`);
         
-        // Generar audio con Applio usando solo el contenido del guión
-        const effectiveApplioModel = applioModel || 'fr-FR-RemyMultilingualNeural';
-        let effectiveApplioVoice = applioVoice || 'logs\\VOCES\\RemyOriginal.pth';
-        if (!effectiveApplioVoice.includes('/') && !effectiveApplioVoice.includes('\\') && !effectiveApplioVoice.endsWith('.pth')) {
-          effectiveApplioVoice = `logs\\VOCES\\${effectiveApplioVoice}.pth`;
-        } else if (!effectiveApplioVoice.includes('/') && !effectiveApplioVoice.includes('\\') && effectiveApplioVoice.endsWith('.pth')) {
-          effectiveApplioVoice = `logs\\VOCES\\${effectiveApplioVoice}`;
+        // Generar audio con el proveedor seleccionado
+        const fileName = `${folderName}_seccion_${section.section}_${useQwen ? 'qwen' : 'applio'}_${Date.now()}.wav`;
+        const filePath = path.join(sectionDir, fileName);
+        
+        let result;
+        if (useQwen) {
+          // Generar audio con Qwen TTS
+          const effectiveQwenVoice = qwenVoice || '';
+          console.log(`🤖 Generando audio con Qwen TTS (voz: ${effectiveQwenVoice || 'default'})...`);
+          const qwenOutput = await qwenClient.generateFromPrompt(effectiveQwenVoice, cleanScript, 'Auto', filePath);
+          result = { success: !!qwenOutput };
+        } else {
+          // Generar audio con Applio
+          const effectiveApplioModel = applioModel || 'fr-FR-RemyMultilingualNeural';
+          let effectiveApplioVoice = applioVoice || 'logs\\VOCES\\RemyOriginal.pth';
+          if (!effectiveApplioVoice.includes('/') && !effectiveApplioVoice.includes('\\') && !effectiveApplioVoice.endsWith('.pth')) {
+            effectiveApplioVoice = `logs\\VOCES\\${effectiveApplioVoice}.pth`;
+          } else if (!effectiveApplioVoice.includes('/') && !effectiveApplioVoice.includes('\\') && effectiveApplioVoice.endsWith('.pth')) {
+            effectiveApplioVoice = `logs\\VOCES\\${effectiveApplioVoice}`;
+          }
+          result = await applioClient.textToSpeech(cleanScript, filePath, {
+            model: effectiveApplioModel,
+            speed: Number.isFinite(Number(applioSpeed)) ? Number(applioSpeed) : 0,
+            pitch: Number.isFinite(Number(applioPitch)) ? Number(applioPitch) : 0,
+            voicePath: effectiveApplioVoice
+          });
         }
-        const result = await applioClient.textToSpeech(cleanScript, filePath, {
-          model: effectiveApplioModel,
-          speed: Number.isFinite(Number(applioSpeed)) ? Number(applioSpeed) : 0,
-          pitch: Number.isFinite(Number(applioPitch)) ? Number(applioPitch) : 0,
-          voicePath: effectiveApplioVoice
-        });
         
         if (!result.success) {
-          throw new Error('Applio no generó el audio correctamente');
+          throw new Error(`${providerLabel} no generó el audio correctamente`);
         }
         
         // Retornar ruta relativa para acceso web
@@ -12366,6 +12446,29 @@ app.post('/generate-section-audio', async (req, res) => {
     
     // Crear estructura de carpetas usando el nombre normalizado
     const folderStructure = createProjectStructure(topic, section, actualFolderName);
+
+    // Si generateQwenAudio está activo, usar Qwen TTS en lugar de Applio
+    if (generateQwenAudio) {
+      console.log(`🤖 Generando audio con Qwen TTS para sección ${section}...`);
+      const effectiveQwenVoice = qwenVoice || '';
+      const fileName = `${actualFolderName}_seccion_${section}_qwen_${Date.now()}.wav`;
+      const filePath = path.join(folderStructure.sectionDir, fileName);
+
+      const qwenOutput = await qwenClient.generateFromPrompt(effectiveQwenVoice, script, 'Auto', filePath);
+
+      if (!qwenOutput) {
+        return res.status(500).json({ error: 'Qwen TTS no generó el audio correctamente' });
+      }
+
+      const audioPath = path.relative('./public', filePath).replace(/\\/g, '/');
+      console.log(`✅ Audio Qwen generado exitosamente: ${filePath}`);
+      return res.json({
+        success: true,
+        audioPath: audioPath,
+        section: section,
+        method: 'qwen'
+      });
+    }
     
     console.log(`🎵 Generando audio con Applio para sección ${section}...`);
     console.log(`🎤 Voz de Applio seleccionada: ${selectedApplioVoice}`);
@@ -15686,25 +15789,53 @@ app.post('/api/regenerate-broll-clip', async (req, res) => {
     const clip = section.clips[clipIndex];
     if (!clip) return res.status(400).json({ error: 'Clip no encontrado' });
 
-    // Get the video/image pool for this section
-    const sec = (await scanProjectSections(preview.projectPath, preview.config))
-      .find(s => s.secNum === section.secNum);
-    if (!sec) return res.status(400).json({ error: 'Sección no encontrada en proyecto' });
+    // Scan broll folder directly (bypass config filters like maxImagesPerSection)
+    const secNum = section.secNum;
+    const brollPath = (() => {
+      const newPath = path.join(preview.projectPath, `seccion_${secNum}`, 'broll');
+      if (fs.existsSync(newPath)) return newPath;
+      const legacyDir = path.join(preview.projectPath, 'broll');
+      if (fs.existsSync(legacyDir)) {
+        const match = fs.readdirSync(legacyDir).find(f => {
+          const num = parseInt(f.split(' - ')[0]);
+          return num === secNum && fs.statSync(path.join(legacyDir, f)).isDirectory();
+        });
+        if (match) return path.join(legacyDir, match);
+      }
+      return null;
+    })();
+    if (!brollPath) return res.status(400).json({ error: 'No se encontró la carpeta broll de esta sección' });
 
-    const pool = clip.type === 'video' ? sec.videoFiles : sec.imageFiles;
+    const brollFiles = fs.readdirSync(brollPath);
+    const videoExts = ['.mp4', '.webm', '.mkv', '.avi', '.mov'];
+    const imageExts = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp'];
+    const videoFiles = brollFiles.filter(f => {
+      const lower = f.toLowerCase();
+      if (lower.includes('.temp.') || lower.includes('.part')) return false;
+      if (/\.f\d+\.(mp4|webm|m4a|mkv)$/.test(lower)) return false;
+      if (!videoExts.includes(path.extname(lower))) return false;
+      try { return fs.statSync(path.join(brollPath, f)).size > 10000; } catch { return false; }
+    }).map(f => path.join(brollPath, f));
+    const imageFiles = brollFiles.filter(f => imageExts.includes(path.extname(f).toLowerCase())).map(f => path.join(brollPath, f));
+
+    // If clip is currently an image, switch back to video; otherwise stay on video
+    const targetType = videoFiles.length > 0 ? 'video' : 'image';
+    const pool = targetType === 'video' ? videoFiles : imageFiles;
     if (pool.length === 0) return res.status(400).json({ error: 'No hay material alternativo disponible' });
 
     // Pick a different source if possible, or different cut point
     let newSourcePath;
-    if (pool.length > 1) {
-      const alternatives = pool.filter(p => p !== clip.sourcePath);
-      newSourcePath = alternatives[Math.floor(Math.random() * alternatives.length)];
-    } else {
-      newSourcePath = pool[0]; // Same file, different cut
-    }
+    const alternatives = pool.filter(p => p !== clip.sourcePath);
+    newSourcePath = alternatives.length > 0
+      ? alternatives[Math.floor(Math.random() * alternatives.length)]
+      : pool[Math.floor(Math.random() * pool.length)];
+
+    // Update clip type if switching from image to video
+    clip.type = targetType;
+    clip.zoomEffect = targetType === 'image' ? true : undefined;
 
     let newCutFrom = 0;
-    if (clip.type === 'video') {
+    if (targetType === 'video') {
       let videoDuration;
       try { videoDuration = await getAudioDuration(newSourcePath); } catch { videoDuration = 30; }
       const skipMargin = 20;
@@ -15724,7 +15855,7 @@ app.post('/api/regenerate-broll-clip', async (req, res) => {
     const thumbPath = path.join(thumbsDir, thumbName);
 
     let thumbOk = false;
-    if (clip.type === 'video') {
+    if (targetType === 'video') {
       thumbOk = await generateVideoThumbnail(newSourcePath, newCutFrom, thumbPath);
     } else {
       thumbOk = await generateImageThumbnail(newSourcePath, thumbPath);
@@ -15744,11 +15875,97 @@ app.post('/api/regenerate-broll-clip', async (req, res) => {
     const previewJsonPath = path.join(preview.projectPath, 'broll_preview.json');
     fs.writeFileSync(previewJsonPath, JSON.stringify(preview, null, 2), 'utf8');
 
-    console.log(`🔄 Clip regenerado: sec${section.secNum} clip${clipIndex} → ${clip.sourceFile} @${newCutFrom.toFixed(1)}s`);
+    console.log(`🔄 Clip regenerado: sec${section.secNum} clip${clipIndex} → ${clip.sourceFile} (${targetType}) @${newCutFrom.toFixed(1)}s`);
     res.json({ success: true, clip });
 
   } catch (error) {
     console.error('Error regenerate-broll-clip:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/replace-broll-clip-with-image — Replace any clip with a random image from same section's broll folder
+app.post('/api/replace-broll-clip-with-image', async (req, res) => {
+  try {
+    const { previewId, folderName, sectionIndex, clipIndex } = req.body;
+
+    let preview = brollPreviewData.get(previewId);
+    if (!preview) {
+      const projectPath = resolveProjectPath(folderName);
+      if (!projectPath) return res.status(404).json({ error: 'Proyecto no encontrado' });
+      const previewJsonPath = path.join(projectPath, 'broll_preview.json');
+      if (!fs.existsSync(previewJsonPath)) return res.status(404).json({ error: 'Preview no encontrado' });
+      preview = JSON.parse(fs.readFileSync(previewJsonPath, 'utf8'));
+      brollPreviewData.set(preview.previewId, preview);
+    }
+
+    const section = preview.sections[sectionIndex];
+    if (!section) return res.status(400).json({ error: 'Sección no encontrada' });
+    const clip = section.clips[clipIndex];
+    if (!clip) return res.status(400).json({ error: 'Clip no encontrado' });
+
+    // Scan broll folder directly (bypass config filters like maxImagesPerSection)
+    const secNum = section.secNum;
+    const brollPath = (() => {
+      const newPath = path.join(preview.projectPath, `seccion_${secNum}`, 'broll');
+      if (fs.existsSync(newPath)) return newPath;
+      const legacyDir = path.join(preview.projectPath, 'broll');
+      if (fs.existsSync(legacyDir)) {
+        const match = fs.readdirSync(legacyDir).find(f => {
+          const num = parseInt(f.split(' - ')[0]);
+          return num === secNum && fs.statSync(path.join(legacyDir, f)).isDirectory();
+        });
+        if (match) return path.join(legacyDir, match);
+      }
+      return null;
+    })();
+
+    if (!brollPath) return res.status(400).json({ error: 'No se encontró la carpeta broll de esta sección' });
+
+    const imageExts = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp'];
+    const imageFiles = fs.readdirSync(brollPath)
+      .filter(f => imageExts.includes(path.extname(f).toLowerCase()))
+      .map(f => path.join(brollPath, f));
+
+    if (imageFiles.length === 0) return res.status(400).json({ error: 'No hay imágenes en la carpeta broll de esta sección' });
+
+    // Pick a random image (prefer a different one if current is already an image)
+    let newImagePath;
+    if (clip.type === 'image' && imageFiles.length > 1) {
+      const alternatives = imageFiles.filter(p => p !== clip.sourcePath);
+      newImagePath = alternatives[Math.floor(Math.random() * alternatives.length)];
+    } else {
+      newImagePath = imageFiles[Math.floor(Math.random() * imageFiles.length)];
+    }
+
+    // Generate thumbnail
+    const thumbsDir = path.join(preview.projectPath, 'broll_thumbs');
+    if (!fs.existsSync(thumbsDir)) fs.mkdirSync(thumbsDir, { recursive: true });
+    const thumbName = `sec${section.secNum}_clip${clipIndex}.jpg`;
+    const thumbPath = path.join(thumbsDir, thumbName);
+    const thumbOk = await generateImageThumbnail(newImagePath, thumbPath);
+
+    // Update clip to image type (keep same duration)
+    clip.type = 'image';
+    clip.sourcePath = newImagePath;
+    clip.sourceFile = path.basename(newImagePath);
+    clip.cutFrom = 0;
+    clip.thumbnail = thumbOk ? thumbName : null;
+    clip.zoomEffect = true; // Ken Burns zoom
+
+    // Delete cached preview clip
+    const cachedPreview = path.join(thumbsDir, `preview_sec${section.secNum}_clip${clipIndex}.mp4`);
+    try { if (fs.existsSync(cachedPreview)) fs.unlinkSync(cachedPreview); } catch (e) {}
+
+    // Save updated preview
+    const previewJsonPath = path.join(preview.projectPath, 'broll_preview.json');
+    fs.writeFileSync(previewJsonPath, JSON.stringify(preview, null, 2), 'utf8');
+
+    console.log(`🖼️ Clip reemplazado con imagen: sec${section.secNum} clip${clipIndex} → ${clip.sourceFile}`);
+    res.json({ success: true, clip });
+
+  } catch (error) {
+    console.error('Error replace-broll-clip-with-image:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -15849,22 +16066,63 @@ app.post('/api/regenerate-broll-clip-cross', async (req, res) => {
   }
 });
 
+// POST /api/broll-upload-assets — Upload end screen clip and/or background music
+app.post('/api/broll-upload-assets', multer({ dest: path.join(process.cwd(), 'temp', 'broll_assets') }).fields([
+  { name: 'endScreenClip', maxCount: 1 },
+  { name: 'bgMusic', maxCount: 1 }
+]), (req, res) => {
+  try {
+    const { folderName } = req.body;
+    if (!folderName) return res.status(400).json({ error: 'folderName requerido' });
+
+    const projectPath = resolveProjectPath(folderName);
+    if (!projectPath) return res.status(404).json({ error: 'Proyecto no encontrado' });
+
+    const result = {};
+
+    if (req.files?.endScreenClip?.[0]) {
+      const f = req.files.endScreenClip[0];
+      const ext = path.extname(f.originalname) || '.mp4';
+      const dest = path.join(projectPath, `endscreen_clip${ext}`);
+      fs.copyFileSync(f.path, dest);
+      fs.unlinkSync(f.path);
+      result.endScreenPath = dest;
+    }
+
+    if (req.files?.bgMusic?.[0]) {
+      const f = req.files.bgMusic[0];
+      const ext = path.extname(f.originalname) || '.mp3';
+      const dest = path.join(projectPath, `bg_music${ext}`);
+      fs.copyFileSync(f.path, dest);
+      fs.unlinkSync(f.path);
+      result.bgMusicPath = dest;
+    }
+
+    res.json({ success: true, ...result });
+  } catch (error) {
+    console.error('Error uploading broll assets:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // POST /api/render-broll-video — Render from confirmed preview sequence
 app.post('/api/render-broll-video', async (req, res) => {
   try {
-    const { previewId, folderName, videoConfig = {} } = req.body;
+    const { previewId, folderName, videoConfig = {}, endScreenPath = null, bgMusicPath = null, bgMusicVolume = 0.2 } = req.body;
     if (!folderName) return res.status(400).json({ error: 'Nombre de carpeta requerido' });
 
     const projectPath = resolveProjectPath(folderName);
     if (!projectPath) return res.status(404).json({ error: 'Proyecto no encontrado' });
 
-    // Load preview
-    let preview = brollPreviewData.get(previewId);
-    if (!preview) {
-      const previewJsonPath = path.join(projectPath, 'broll_preview.json');
-      if (!fs.existsSync(previewJsonPath)) return res.status(404).json({ error: 'Preview no encontrado' });
+    // Load preview - always prefer disk version (source of truth after regenerations)
+    const previewJsonPath = path.join(projectPath, 'broll_preview.json');
+    let preview;
+    if (fs.existsSync(previewJsonPath)) {
       preview = JSON.parse(fs.readFileSync(previewJsonPath, 'utf8'));
+    } else {
+      preview = brollPreviewData.get(previewId);
     }
+    if (!preview) return res.status(404).json({ error: 'Preview no encontrado' });
 
     const cfg = parseBrollVideoConfig(videoConfig);
 
@@ -15877,7 +16135,7 @@ app.post('/api/render-broll-video', async (req, res) => {
     res.json({ success: true, sessionId });
 
     // Render in background using the confirmed sequence
-    renderFromPreview(preview, projectPath, folderName, sessionId, cfg).catch(err => {
+    renderFromPreview(preview, projectPath, folderName, sessionId, cfg, { endScreenPath, bgMusicPath, bgMusicVolume }).catch(err => {
       console.error('Error renderFromPreview:', err);
       const prog = brollVideoProgress.get(sessionId);
       if (prog) { prog.status = 'error'; prog.error = err.message; prog.message = 'Error: ' + err.message; }
@@ -15889,7 +16147,8 @@ app.post('/api/render-broll-video', async (req, res) => {
   }
 });
 
-async function renderFromPreview(preview, projectPath, projectName, sessionId, cfg) {
+async function renderFromPreview(preview, projectPath, projectName, sessionId, cfg, extras = {}) {
+  const { endScreenPath = null, bgMusicPath = null, bgMusicVolume = 0.2 } = extras;
   const tempDir = path.join(process.cwd(), 'temp', `broll_render_${Date.now()}`);
   if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 
@@ -15922,7 +16181,7 @@ async function renderFromPreview(preview, projectPath, projectName, sessionId, c
         if (clip.type === 'video') {
           await crearClipDesdeVideo(clip.sourcePath, clip.cutFrom, clip.duration, clipPath, cfg);
         } else {
-          await crearClipDesdeImagen(clip.sourcePath, clip.duration, clipPath, cfg);
+          await crearClipDesdeImagen(clip.sourcePath, clip.duration, clipPath, cfg, clip.zoomEffect === true);
         }
         if (fs.existsSync(clipPath)) clipPaths.push(clipPath);
       }
@@ -15947,7 +16206,117 @@ async function renderFromPreview(preview, projectPath, projectName, sessionId, c
     const audioMasterPath = path.join(tempDir, 'audio_master.wav');
     await concatenarAudiosBroll(sectionVideos.map(s => s.audioPath), audioMasterPath);
 
-    updateProgress(94, 'Generando video final...');
+    // === END SCREEN: append to visual master and prepare its audio ===
+    let finalVisualPath = visualMasterPath;
+    let endScreenAudioPath = null;
+    let mainContentDuration = null;
+
+    if (endScreenPath && fs.existsSync(endScreenPath)) {
+      updateProgress(91, 'Procesando pantalla final...');
+      // Re-encode end screen to match format
+      const endScreenClipPath = path.join(tempDir, 'endscreen_reencoded.mp4');
+      await new Promise((resolve, reject) => {
+        const args = ['-y', '-i', endScreenPath, '-c:v', 'libx264', '-preset', cfg.preset || 'slow',
+          '-crf', String(cfg.crf || 23), '-vf', `scale=${cfg.resolution || '1920:1080'}:force_original_aspect_ratio=decrease,pad=${cfg.resolution || '1920:1080'}:(ow-iw)/2:(oh-ih)/2`,
+          '-r', '30', '-an', endScreenClipPath];
+        const proc = spawn('ffmpeg', args);
+        let stderr = '';
+        proc.stderr.on('data', d => stderr += d.toString());
+        proc.on('close', code => code === 0 ? resolve() : reject(new Error(`End screen reencode failed: ${stderr.slice(-200)}`)));
+        proc.on('error', reject);
+      });
+
+      // Extract audio from end screen clip
+      const endScreenAudioFile = path.join(tempDir, 'endscreen_audio.wav');
+      await new Promise((resolve, reject) => {
+        const args = ['-y', '-i', endScreenPath, '-vn', '-c:a', 'pcm_s16le', '-ar', '44100', '-ac', '2', endScreenAudioFile];
+        const proc = spawn('ffmpeg', args);
+        let stderr = '';
+        proc.stderr.on('data', d => stderr += d.toString());
+        proc.on('close', code => {
+          if (code === 0 && fs.existsSync(endScreenAudioFile)) { endScreenAudioPath = endScreenAudioFile; resolve(); }
+          else resolve(); // No audio in end screen is OK
+        });
+        proc.on('error', () => resolve());
+      });
+
+      // Get main content duration for music loop
+      mainContentDuration = await getMediaDuration(visualMasterPath);
+
+      // Concatenate visual master + end screen video
+      const combinedVisualPath = path.join(tempDir, 'visual_with_endscreen.mp4');
+      await concatenarClipsBroll([visualMasterPath, endScreenClipPath], combinedVisualPath);
+      finalVisualPath = combinedVisualPath;
+    }
+
+    // === FINAL AUDIO MIX: TTS + background music (looped) + end screen audio ===
+    updateProgress(94, 'Generando mezcla de audio final...');
+
+    let finalAudioPath = audioMasterPath;
+
+    if (bgMusicPath && fs.existsSync(bgMusicPath)) {
+      // Get duration of TTS audio (main content) for music loop
+      if (!mainContentDuration) mainContentDuration = await getMediaDuration(audioMasterPath);
+
+      const mixedAudioPath = path.join(tempDir, 'audio_mixed.wav');
+      const volStr = bgMusicVolume.toFixed(2);
+
+      if (endScreenAudioPath) {
+        // Mix: [TTS + looped music for main duration] then [end screen audio only]
+        // Use duration=longest so audio matches visual master duration (music is trimmed to mainContentDuration)
+        const mainMixedPath = path.join(tempDir, 'main_mixed.wav');
+        await new Promise((resolve, reject) => {
+          const args = ['-y',
+            '-i', audioMasterPath,
+            '-stream_loop', '-1', '-i', bgMusicPath,
+            '-filter_complex', `[1:a]volume=${volStr},atrim=0:${mainContentDuration}[music];[0:a]apad[padded];[padded][music]amix=inputs=2:duration=longest:dropout_transition=2,atrim=0:${mainContentDuration}[out]`,
+            '-map', '[out]', '-c:a', 'pcm_s16le', '-ar', '44100', '-ac', '2', mainMixedPath];
+          const proc = spawn('ffmpeg', args);
+          let stderr = '';
+          proc.stderr.on('data', d => stderr += d.toString());
+          proc.on('close', code => code === 0 ? resolve() : reject(new Error(`Music mix failed: ${stderr.slice(-300)}`)));
+          proc.on('error', reject);
+        });
+        // Concatenate main mixed + end screen audio
+        await concatenarAudiosBroll([mainMixedPath, endScreenAudioPath], mixedAudioPath);
+        finalAudioPath = mixedAudioPath;
+      } else {
+        // Just mix TTS with looped background music for entire duration
+        const totalDuration = mainContentDuration || 9999;
+        await new Promise((resolve, reject) => {
+          const args = ['-y',
+            '-i', audioMasterPath,
+            '-stream_loop', '-1', '-i', bgMusicPath,
+            '-filter_complex', `[1:a]volume=${volStr},atrim=0:${totalDuration}[music];[0:a][music]amix=inputs=2:duration=first:dropout_transition=2[out]`,
+            '-map', '[out]', '-c:a', 'pcm_s16le', '-ar', '44100', '-ac', '2', mixedAudioPath];
+          const proc = spawn('ffmpeg', args);
+          let stderr = '';
+          proc.stderr.on('data', d => stderr += d.toString());
+          proc.on('close', code => code === 0 ? resolve() : reject(new Error(`Music mix failed: ${stderr.slice(-300)}`)));
+          proc.on('error', reject);
+        });
+        finalAudioPath = mixedAudioPath;
+      }
+    } else if (endScreenAudioPath) {
+      // No background music but has end screen audio - pad TTS to visual duration then concat
+      if (!mainContentDuration) mainContentDuration = await getMediaDuration(visualMasterPath || audioMasterPath);
+      const paddedAudioPath = path.join(tempDir, 'audio_padded.wav');
+      await new Promise((resolve, reject) => {
+        const args = ['-y', '-i', audioMasterPath,
+          '-af', `apad,atrim=0:${mainContentDuration}`,
+          '-c:a', 'pcm_s16le', '-ar', '44100', '-ac', '2', paddedAudioPath];
+        const proc = spawn('ffmpeg', args);
+        let stderr = '';
+        proc.stderr.on('data', d => stderr += d.toString());
+        proc.on('close', code => code === 0 ? resolve() : reject(new Error(`Audio pad failed: ${stderr.slice(-200)}`)));
+        proc.on('error', reject);
+      });
+      const combinedAudioPath = path.join(tempDir, 'audio_combined.wav');
+      await concatenarAudiosBroll([paddedAudioPath, endScreenAudioPath], combinedAudioPath);
+      finalAudioPath = combinedAudioPath;
+    }
+
+    updateProgress(96, 'Generando video final...');
     let outputFileName = `${projectName}_broll_video.mp4`;
     let finalOutputPath = path.join(projectPath, outputFileName);
     let videoIndex = 1;
@@ -15956,7 +16325,7 @@ async function renderFromPreview(preview, projectPath, projectName, sessionId, c
       outputFileName = `${projectName}_broll_video_${videoIndex}.mp4`;
       finalOutputPath = path.join(projectPath, outputFileName);
     }
-    await mergeVideoAudioBroll(visualMasterPath, audioMasterPath, finalOutputPath);
+    await mergeVideoAudioBroll(finalVisualPath, finalAudioPath, finalOutputPath);
 
     updateProgress(98, 'Limpiando archivos temporales...');
     try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch (e) {}
@@ -16556,10 +16925,28 @@ function crearClipDesdeVideo(videoPath, cutFrom, duration, outputPath, cfg = {})
   });
 }
 
-function crearClipDesdeImagen(imagePath, duration, outputPath, cfg = {}) {
+function crearClipDesdeImagen(imagePath, duration, outputPath, cfg = {}, zoomEffect = false) {
   const [w, h] = (cfg.resolution || '1920:1080').split(':');
   const crf = String(cfg.crf || 23);
   const preset = cfg.preset || 'fast';
+
+  // Ken Burns smooth zoom-in effect (1.0→1.2 over clip duration)
+  let vf;
+  if (zoomEffect) {
+    const totalFrames = Math.max(1, Math.ceil(duration * 30));
+    const zoomStep = (0.2 / totalFrames).toFixed(6); // zoom from 1.0 to 1.2
+    const wInt = parseInt(w);
+    const hInt = parseInt(h);
+    vf = [
+      `scale=${wInt * 2}:${hInt * 2}:force_original_aspect_ratio=increase:flags=lanczos`,
+      `crop=${wInt * 2}:${hInt * 2}`,
+      `zoompan=z='min(zoom+${zoomStep}\\,1.2)':d=${totalFrames}:s=${w}x${h}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'`,
+      'setsar=1',
+      'format=yuv420p'
+    ].join(',');
+  } else {
+    vf = `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:black`;
+  }
 
   return new Promise((resolve, reject) => {
     const args = [
@@ -16567,7 +16954,7 @@ function crearClipDesdeImagen(imagePath, duration, outputPath, cfg = {}) {
       '-loop', '1',
       '-i', imagePath,
       '-t', String(duration),
-      '-vf', `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:black`,
+      '-vf', vf,
       '-c:v', 'libx264',
       '-preset', preset,
       '-crf', crf,
@@ -16652,6 +17039,21 @@ function concatenarAudiosBroll(audioPaths, outputPath) {
       else reject(new Error(`Concat audio falló (code ${code}): ${stderr.slice(-300)}`));
     });
     proc.on('error', err => reject(err));
+  });
+}
+
+function getMediaDuration(filePath) {
+  return new Promise((resolve, reject) => {
+    const args = ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', filePath];
+    const proc = spawn('ffprobe', args);
+    let stdout = '';
+    proc.stdout.on('data', d => stdout += d.toString());
+    proc.on('close', code => {
+      const dur = parseFloat(stdout.trim());
+      if (code === 0 && isFinite(dur)) resolve(dur);
+      else resolve(0);
+    });
+    proc.on('error', () => resolve(0));
   });
 }
 

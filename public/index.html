@@ -1036,6 +1036,34 @@
           </div>
           <div class="tl-timeline-area">
             <div id="brollTimelineContainer" class="tl-flat-timeline"></div>
+            <!-- End Screen Clip Drop Zone -->
+            <div id="tlEndScreenZone" class="tl-endscreen-zone" ondragover="event.preventDefault(); this.classList.add('dragover')" ondragleave="this.classList.remove('dragover')" ondrop="handleEndScreenDrop(event)">
+              <div class="tl-endscreen-placeholder" id="tlEndScreenPlaceholder">
+                <i class="fas fa-flag-checkered"></i>
+                <span>Arrastra aquí tu clip de pantalla final (con audio)</span>
+              </div>
+              <div class="tl-endscreen-preview" id="tlEndScreenPreview" style="display:none;">
+                <video id="tlEndScreenVideo" muted></video>
+                <div class="tl-endscreen-info">
+                  <span id="tlEndScreenName"></span>
+                  <span id="tlEndScreenDur"></span>
+                  <button onclick="removeEndScreen()" class="tl-endscreen-remove" title="Quitar"><i class="fas fa-times"></i></button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <!-- Background Music -->
+          <div class="tl-music-bar">
+            <div class="tl-music-drop" id="tlMusicDropZone" ondragover="event.preventDefault(); this.classList.add('dragover')" ondragleave="this.classList.remove('dragover')" ondrop="handleMusicDrop(event)">
+              <i class="fas fa-music"></i>
+              <span id="tlMusicLabel">Arrastra música de fondo aquí</span>
+              <button id="tlMusicRemoveBtn" onclick="removeBackgroundMusic()" style="display:none;" title="Quitar música"><i class="fas fa-times-circle"></i></button>
+            </div>
+            <div class="tl-music-volume">
+              <i class="fas fa-volume-down"></i>
+              <input type="range" id="tlMusicVolume" min="0" max="100" value="20" oninput="updateMusicVolume(this.value)">
+              <span id="tlMusicVolumeLabel">20%</span>
+            </div>
           </div>
         </div>
 
