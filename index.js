@@ -1,4 +1,4 @@
-import 'dotenv/config';
+﻿import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import bodyParser from 'body-parser';
@@ -13077,11 +13077,25 @@ ${fullScript}
 Por favor genera:
 
 1. **10 TÍTULOS CLICKBAIT** (cada uno en una línea, numerados):
-  - Usa palabras que generen curiosidad.
-  - Si el contenido es una lista (ej. 5 cosas), el título DEBE incluir el número.
-  - Estructura: "Las [Número] [Adjetivo] [Sujeto] en [Tema/Juego]". Ej: "Las 5 Armas Más Difíciles de Conseguir en World of Warcraft".
-  - Menciona el juego o tema específico explícitamente.
-  - Máximo 12 palabras, mínimo 6.
+  - REGLA PRINCIPAL: Determina si el video habla de UN SOLO TEMA/OBJETO/EVENTO específico o si es una LISTA de cosas.
+  
+  **Si es UN SOLO TEMA** (la mayoría de los casos): Usa títulos estilo narrativo-provocador con palabras en MAYÚSCULAS para el gancho emocional:
+  - Estructura: "[Sujeto específico] [VERBO IMPACTANTE en mayúsculas] [consecuencia o complemento]"
+  - Ejemplos:
+    * "Como Nintendo hizo el PEOR ACCESORIO que EMPEORABA LOS JUEGOS"
+    * "La NES tenia un PUERTO SECRETO para APOSTAR"
+    * "¿Que paso con THX? El sistema de sonido que REVENTABA OIDOS"
+    * "Cómo UNA SOLA habilidad ROMPIÓ raids enteras en WoW"
+    * "¿Por qué los jugadores ODIAN estas razas jugables?"
+  - Usa 2-4 palabras en MAYÚSCULAS por título (las más impactantes/emocionales).
+  - Sé ESPECÍFICO al tema real del video, no genérico.
+  
+  **Si es una LISTA de cosas**: Usa formato con número:
+  - Estructura: "Los/Las [Número] [Adjetivo IMPACTANTE] [Sujeto] que [ACCIÓN en mayúsculas]"
+  - Ejemplos: "Los 5 Glitches que DESTRUYERON speedruns enteros"
+  
+  - Máximo 15 palabras, mínimo 8.
+  - NUNCA hagas todos los títulos con formato de lista si el video no es explícitamente una lista.
 
 2. **DESCRIPCIÓN PARA VIDEO** (optimizada para SEO):
   - Entre 150-300 palabras
@@ -13904,7 +13918,7 @@ app.post('/translate-title', async (req, res) => {
       Do not include markdown formatting or explanations.
     `;
 
-    const { model } = await getGoogleAI(GEMINI_TEXT_MODEL, { context: 'llm', forcePrimary: true });
+    const { model } = await getGoogleAI(GEMINI_TEXT_MODEL, { context: 'llm' });
     const result = await model.generateContent(prompt);
     const responseText = result.response.text().replace(/```json|```/g, '').trim();
     
@@ -14027,7 +14041,7 @@ app.post('/generate-youtube-metadata', async (req, res) => {
           targetLanguage
         });
         
-  const { model: regenerateModel } = await getGoogleAI(GEMINI_TEXT_MODEL, { context: 'llm', forcePrimary: true });
+  const { model: regenerateModel } = await getGoogleAI(GEMINI_TEXT_MODEL, { context: 'llm' });
         const regenerateResponse = await regenerateModel.generateContent([
           { text: regeneratePrompt }
         ]);
@@ -15786,7 +15800,9 @@ app.post('/api/regenerate-broll-clip', async (req, res) => {
 
     const section = preview.sections[sectionIndex];
     if (!section) return res.status(400).json({ error: 'Sección no encontrada' });
-    const clip = section.clips[clipIndex];
+    const isPause = req.body.isPause === true;
+    const clipArray = isPause ? (section.pauseClips || []) : section.clips;
+    const clip = clipArray[clipIndex];
     if (!clip) return res.status(400).json({ error: 'Clip no encontrado' });
 
     // Scan broll folder directly (bypass config filters like maxImagesPerSection)
@@ -15851,7 +15867,8 @@ app.post('/api/regenerate-broll-clip', async (req, res) => {
 
     // Generate new thumbnail
     const thumbsDir = path.join(preview.projectPath, 'broll_thumbs');
-    const thumbName = `sec${section.secNum}_clip${clipIndex}.jpg`;
+    const thumbPrefix = isPause ? 'pause_' : '';
+    const thumbName = `${thumbPrefix}sec${section.secNum}_clip${clipIndex}.jpg`;
     const thumbPath = path.join(thumbsDir, thumbName);
 
     let thumbOk = false;
@@ -15868,14 +15885,14 @@ app.post('/api/regenerate-broll-clip', async (req, res) => {
     clip.thumbnail = thumbOk ? thumbName : null;
 
     // Delete cached preview clip so it regenerates on next play
-    const cachedPreview = path.join(thumbsDir, `preview_sec${section.secNum}_clip${clipIndex}.mp4`);
+    const cachedPreview = path.join(thumbsDir, `${isPause ? 'pause_' : 'preview_'}sec${section.secNum}_clip${clipIndex}.mp4`);
     try { if (fs.existsSync(cachedPreview)) fs.unlinkSync(cachedPreview); } catch (e) {}
 
     // Save updated preview
     const previewJsonPath = path.join(preview.projectPath, 'broll_preview.json');
     fs.writeFileSync(previewJsonPath, JSON.stringify(preview, null, 2), 'utf8');
 
-    console.log(`🔄 Clip regenerado: sec${section.secNum} clip${clipIndex} → ${clip.sourceFile} (${targetType}) @${newCutFrom.toFixed(1)}s`);
+    console.log(`🔄 Clip regenerado: sec${section.secNum} ${isPause ? 'pause_' : ''}clip${clipIndex} → ${clip.sourceFile} (${targetType}) @${newCutFrom.toFixed(1)}s`);
     res.json({ success: true, clip });
 
   } catch (error) {
@@ -15901,7 +15918,9 @@ app.post('/api/replace-broll-clip-with-image', async (req, res) => {
 
     const section = preview.sections[sectionIndex];
     if (!section) return res.status(400).json({ error: 'Sección no encontrada' });
-    const clip = section.clips[clipIndex];
+    const isPause = req.body.isPause === true;
+    const clipArray = isPause ? (section.pauseClips || []) : section.clips;
+    const clip = clipArray[clipIndex];
     if (!clip) return res.status(400).json({ error: 'Clip no encontrado' });
 
     // Scan broll folder directly (bypass config filters like maxImagesPerSection)
@@ -15941,7 +15960,8 @@ app.post('/api/replace-broll-clip-with-image', async (req, res) => {
     // Generate thumbnail
     const thumbsDir = path.join(preview.projectPath, 'broll_thumbs');
     if (!fs.existsSync(thumbsDir)) fs.mkdirSync(thumbsDir, { recursive: true });
-    const thumbName = `sec${section.secNum}_clip${clipIndex}.jpg`;
+    const thumbPrefix = isPause ? 'pause_' : '';
+    const thumbName = `${thumbPrefix}sec${section.secNum}_clip${clipIndex}.jpg`;
     const thumbPath = path.join(thumbsDir, thumbName);
     const thumbOk = await generateImageThumbnail(newImagePath, thumbPath);
 
@@ -15954,7 +15974,7 @@ app.post('/api/replace-broll-clip-with-image', async (req, res) => {
     clip.zoomEffect = true; // Ken Burns zoom
 
     // Delete cached preview clip
-    const cachedPreview = path.join(thumbsDir, `preview_sec${section.secNum}_clip${clipIndex}.mp4`);
+    const cachedPreview = path.join(thumbsDir, `${isPause ? 'pause_' : 'preview_'}sec${section.secNum}_clip${clipIndex}.mp4`);
     try { if (fs.existsSync(cachedPreview)) fs.unlinkSync(cachedPreview); } catch (e) {}
 
     // Save updated preview
@@ -15967,6 +15987,268 @@ app.post('/api/replace-broll-clip-with-image', async (req, res) => {
   } catch (error) {
     console.error('Error replace-broll-clip-with-image:', error);
     res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/shift-broll-clip
+app.post('/api/shift-broll-clip', async (req, res) => {
+  try {
+    const { previewId, folderName, sectionIndex, clipIndex, shiftSeconds } = req.body;
+
+    let preview = brollPreviewData.get(previewId);
+    if (!preview) {
+      const projectPath = resolveProjectPath(folderName);
+      if (!projectPath) return res.status(404).json({ error: 'Proyecto no encontrado' });
+      const previewJsonPath = path.join(projectPath, 'broll_preview.json');
+      if (!fs.existsSync(previewJsonPath)) return res.status(404).json({ error: 'Preview no encontrado' });
+      preview = JSON.parse(fs.readFileSync(previewJsonPath, 'utf8'));
+      brollPreviewData.set(preview.previewId, preview);
+    }
+
+    const section = preview.sections[sectionIndex];
+    if (!section) return res.status(400).json({ error: 'Sección no encontrada' });
+    const isPause = req.body.isPause === true;
+    const clipArray = isPause ? (section.pauseClips || []) : section.clips;
+    const clip = clipArray[clipIndex];
+    if (!clip) return res.status(400).json({ error: 'Clip no encontrado' });
+    if (clip.type !== 'video') return res.status(400).json({ error: 'Sólo videos se pueden desplazar' });
+
+    let videoDuration;
+    try { videoDuration = await getMediaDuration(clip.sourcePath); } catch { videoDuration = 120; }
+    
+    let newCutFrom = clip.cutFrom + shiftSeconds;
+    let atLimit = false;
+    
+    if (newCutFrom < 0) {
+      newCutFrom = 0;
+      atLimit = true;
+    }
+    
+    const maxCut = Math.max(0, videoDuration - 1);
+    if (newCutFrom > maxCut) {
+      newCutFrom = maxCut;
+      atLimit = true;
+    }
+
+    // Solo regenerar si realmente cambió
+    if (clip.cutFrom !== newCutFrom) {
+      clip.cutFrom = newCutFrom;
+      const thumbsDir = path.join(preview.projectPath, 'broll_thumbs');
+      const thumbPrefix = isPause ? 'pause_' : '';
+      const thumbName = `${thumbPrefix}sec${section.secNum}_clip${clipIndex}.jpg`;
+      const thumbPath = path.join(thumbsDir, thumbName);
+
+      // Borrar el video preview cacheado para forzar regeneración
+      const cachedPreview = path.join(thumbsDir, `${isPause ? 'pause_' : 'preview_'}sec${section.secNum}_clip${clipIndex}.mp4`);
+      if (fs.existsSync(cachedPreview)) fs.unlinkSync(cachedPreview);
+      
+      const thumbOk = await generateVideoThumbnail(clip.sourcePath, clip.cutFrom, thumbPath);
+      if (thumbOk) Object.assign(clip, { thumbnail: thumbName });
+
+      const previewJsonPath = path.join(preview.projectPath, 'broll_preview.json');
+      fs.writeFileSync(previewJsonPath, JSON.stringify(preview, null, 2), 'utf8');
+    } else {
+      atLimit = true;
+    }
+
+    res.json({ success: true, clip, atLimit });
+  } catch (err) {
+    console.error('Error shifting clip:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/broll-section-pause — Add or remove individual pause clips between sections
+app.post('/api/broll-section-pause', async (req, res) => {
+  try {
+    const { previewId, folderName, sectionIndex, action } = req.body;
+
+    let preview = brollPreviewData.get(previewId);
+    if (!preview) {
+      const projectPath = resolveProjectPath(folderName);
+      if (!projectPath) return res.status(404).json({ error: 'Proyecto no encontrado' });
+      const previewJsonPath = path.join(projectPath, 'broll_preview.json');
+      if (!fs.existsSync(previewJsonPath)) return res.status(404).json({ error: 'Preview no encontrado' });
+      preview = JSON.parse(fs.readFileSync(previewJsonPath, 'utf8'));
+      brollPreviewData.set(preview.previewId, preview);
+    }
+
+    const section = preview.sections[sectionIndex];
+    if (!section) return res.status(400).json({ error: 'Sección no encontrada' });
+    if (!section.pauseClips) section.pauseClips = [];
+
+    if (action === 'remove') {
+      if (section.pauseClips.length > 0) {
+        // Delete cached preview for the removed clip
+        const removedIdx = section.pauseClips.length - 1;
+        const thumbsDir = path.join(preview.projectPath, 'broll_thumbs');
+        const cachedPath = path.join(thumbsDir, `pause_sec${section.secNum}_clip${removedIdx}.mp4`);
+        try { if (fs.existsSync(cachedPath)) fs.unlinkSync(cachedPath); } catch (e) {}
+        section.pauseClips.pop();
+      }
+      section.pauseAfter = section.pauseClips.reduce((sum, c) => sum + c.duration, 0);
+      const previewJsonPath = path.join(preview.projectPath, 'broll_preview.json');
+      fs.writeFileSync(previewJsonPath, JSON.stringify(preview, null, 2), 'utf8');
+      return res.json({ success: true, pauseClips: section.pauseClips, pauseAfter: section.pauseAfter });
+    }
+
+    // action === 'add' — Generate ONE 3-second clip
+    const clipDuration = 3;
+    const lastPause = section.pauseClips.length > 0 ? section.pauseClips[section.pauseClips.length - 1] : null;
+
+    // Scan broll folder for this section
+    const secNum = section.secNum;
+    const brollPath = (() => {
+      const newPath = path.join(preview.projectPath, `seccion_${secNum}`, 'broll');
+      if (fs.existsSync(newPath)) return newPath;
+      const legacyDir = path.join(preview.projectPath, 'broll');
+      if (fs.existsSync(legacyDir)) {
+        const match = fs.readdirSync(legacyDir).find(f => {
+          const num = parseInt(f.split(' - ')[0]);
+          return num === secNum && fs.statSync(path.join(legacyDir, f)).isDirectory();
+        });
+        if (match) return path.join(legacyDir, match);
+      }
+      return null;
+    })();
+
+    const videoExts = ['.mp4', '.webm', '.mkv', '.avi', '.mov'];
+    let videoFiles = [];
+    if (brollPath) {
+      videoFiles = fs.readdirSync(brollPath).filter(f => {
+        const lower = f.toLowerCase();
+        if (lower.includes('.temp.') || lower.includes('.part')) return false;
+        if (/\.f\d+\.(mp4|webm|m4a|mkv)$/.test(lower)) return false;
+        return videoExts.includes(path.extname(lower));
+      }).map(f => path.join(brollPath, f));
+    }
+    // Fallback to section.videoFiles if scan finds nothing
+    if (videoFiles.length === 0) videoFiles = section.videoFiles || [];
+    if (videoFiles.length === 0) return res.status(400).json({ error: 'No hay videos disponibles para pausa' });
+
+    let newClip;
+    if (lastPause && lastPause.type === 'video') {
+      // Continue from previous pause clip (same video, next 3 seconds)
+      let videoDuration;
+      try { videoDuration = await getMediaDuration(lastPause.sourcePath); } catch { videoDuration = 120; }
+      let nextCutFrom = (lastPause.cutFrom || 0) + lastPause.duration;
+      // If we'd go past the video, wrap or pick a new random point
+      if (nextCutFrom + clipDuration > videoDuration) {
+        nextCutFrom = Math.random() * Math.max(0, videoDuration - clipDuration);
+      }
+      newClip = {
+        type: 'video',
+        path: lastPause.sourcePath,
+        sourcePath: lastPause.sourcePath,
+        sourceFile: lastPause.sourceFile,
+        cutFrom: nextCutFrom,
+        duration: clipDuration
+      };
+    } else {
+      // First pause clip — pick a random video
+      const videoPath = videoFiles[Math.floor(Math.random() * videoFiles.length)];
+      let videoDuration;
+      try { videoDuration = await getMediaDuration(videoPath); } catch { videoDuration = 30; }
+      const skipMargin = 20;
+      const safeStart = Math.min(skipMargin, videoDuration * 0.3);
+      const safeEnd = Math.max(videoDuration - skipMargin, videoDuration * 0.7);
+      const usableRange = safeEnd - clipDuration - safeStart;
+      let cutFrom = 0;
+      if (usableRange > 0) {
+        cutFrom = safeStart + Math.random() * usableRange;
+      } else {
+        cutFrom = Math.random() * Math.max(0, videoDuration - clipDuration);
+      }
+      newClip = {
+        type: 'video',
+        path: videoPath,
+        sourcePath: videoPath,
+        sourceFile: path.basename(videoPath),
+        cutFrom,
+        duration: clipDuration
+      };
+    }
+
+    // Generate thumbnail
+    const thumbsDir = path.join(preview.projectPath, 'broll_thumbs');
+    if (!fs.existsSync(thumbsDir)) fs.mkdirSync(thumbsDir, { recursive: true });
+    const newIdx = section.pauseClips.length;
+    const thumbName = `pause_sec${secNum}_clip${newIdx}.jpg`;
+    const thumbPath = path.join(thumbsDir, thumbName);
+    const thumbOk = await generateVideoThumbnail(newClip.sourcePath, newClip.cutFrom, thumbPath);
+    if (thumbOk) newClip.thumbnail = thumbName;
+
+    section.pauseClips.push(newClip);
+    section.pauseAfter = section.pauseClips.reduce((sum, c) => sum + c.duration, 0);
+
+    const previewJsonPath = path.join(preview.projectPath, 'broll_preview.json');
+    fs.writeFileSync(previewJsonPath, JSON.stringify(preview, null, 2), 'utf8');
+
+    res.json({ success: true, pauseClips: section.pauseClips, pauseAfter: section.pauseAfter, newClip });
+  } catch (err) {
+    console.error('Error generating pause clip:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/broll-pause-preview/:folderName/:sectionIndex/:clipIndex — Preview for pause clips
+app.get('/api/broll-pause-preview/:folderName/:sectionIndex/:clipIndex', async (req, res) => {
+  try {
+    const { folderName, sectionIndex, clipIndex } = req.params;
+    const projectPath = resolveProjectPath(folderName);
+    if (!projectPath) return res.status(404).json({ error: 'Proyecto no encontrado' });
+
+    const previewJsonPath = path.join(projectPath, 'broll_preview.json');
+    if (!fs.existsSync(previewJsonPath)) return res.status(404).json({ error: 'Preview no encontrado' });
+    const preview = JSON.parse(fs.readFileSync(previewJsonPath, 'utf8'));
+
+    const section = preview.sections[parseInt(sectionIndex)];
+    if (!section || !section.pauseClips) return res.status(404).json({ error: 'Pausa no encontrada' });
+    const clip = section.pauseClips[parseInt(clipIndex)];
+    if (!clip) return res.status(404).json({ error: 'Clip de pausa no encontrado' });
+
+    if (clip.type === 'image') {
+      if (fs.existsSync(clip.sourcePath)) return res.sendFile(clip.sourcePath);
+      return res.status(404).json({ error: 'Archivo no encontrado' });
+    }
+
+    // Video: generate a quick preview clip
+    const thumbsDir = path.join(projectPath, 'broll_thumbs');
+    if (!fs.existsSync(thumbsDir)) fs.mkdirSync(thumbsDir, { recursive: true });
+    const cachedPath = path.join(thumbsDir, `pause_sec${section.secNum}_clip${clipIndex}.mp4`);
+
+    if (fs.existsSync(cachedPath)) return res.sendFile(cachedPath);
+
+    // Read resolution from broll_preview.json config
+    const cfgRes = preview.config?.resolution || '1920:1080';
+    const [tw, th] = cfgRes.split(':').map(Number);
+    const isVertical = th > tw;
+
+    // Vertical: scale to cover then crop (same as regular clips). Horizontal: scale 640:-2
+    const previewVf = isVertical
+      ? 'scale=360:640:force_original_aspect_ratio=increase,crop=360:640'
+      : 'scale=640:-2';
+
+    await new Promise((resolve, reject) => {
+      const args = [
+        '-y', '-ss', String(clip.cutFrom || 0), '-t', String(clip.duration),
+        '-i', clip.sourcePath,
+        '-vf', previewVf,
+        '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '30',
+        '-c:a', 'aac', '-b:a', '64k', '-ac', '1',
+        '-r', '24', '-pix_fmt', 'yuv420p',
+        '-movflags', '+faststart',
+        cachedPath
+      ];
+      const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      proc.on('close', code => code === 0 ? resolve() : reject(new Error(`FFmpeg exit ${code}`)));
+      proc.on('error', reject);
+    });
+
+    res.sendFile(cachedPath);
+  } catch (err) {
+    console.error('Error pause preview:', err);
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -15987,7 +16269,9 @@ app.post('/api/regenerate-broll-clip-cross', async (req, res) => {
 
     const section = preview.sections[sectionIndex];
     if (!section) return res.status(400).json({ error: 'Sección no encontrada' });
-    const clip = section.clips[clipIndex];
+    const isPause = req.body.isPause === true;
+    const clipArray = isPause ? (section.pauseClips || []) : section.clips;
+    const clip = clipArray[clipIndex];
     if (!clip) return res.status(400).json({ error: 'Clip no encontrado' });
 
     // Get ALL sections' material (cross-section pool)
@@ -16036,7 +16320,8 @@ app.post('/api/regenerate-broll-clip-cross', async (req, res) => {
 
     // Generate new thumbnail
     const thumbsDir = path.join(preview.projectPath, 'broll_thumbs');
-    const thumbName = `sec${section.secNum}_clip${clipIndex}.jpg`;
+    const thumbPrefix = isPause ? 'pause_' : '';
+    const thumbName = `${thumbPrefix}sec${section.secNum}_clip${clipIndex}.jpg`;
     const thumbPath = path.join(thumbsDir, thumbName);
 
     let thumbOk = false;
@@ -16051,13 +16336,13 @@ app.post('/api/regenerate-broll-clip-cross', async (req, res) => {
     clip.cutFrom = newCutFrom;
     clip.thumbnail = thumbOk ? thumbName : null;
 
-    const cachedPreview = path.join(thumbsDir, `preview_sec${section.secNum}_clip${clipIndex}.mp4`);
+    const cachedPreview = path.join(thumbsDir, `${isPause ? 'pause_' : 'preview_'}sec${section.secNum}_clip${clipIndex}.mp4`);
     try { if (fs.existsSync(cachedPreview)) fs.unlinkSync(cachedPreview); } catch (e) {}
 
     const previewJsonPath = path.join(preview.projectPath, 'broll_preview.json');
     fs.writeFileSync(previewJsonPath, JSON.stringify(preview, null, 2), 'utf8');
 
-    console.log(`🔀 Clip cross-section: sec${section.secNum} clip${clipIndex} → ${clip.sourceFile} @${newCutFrom.toFixed(1)}s`);
+    console.log(`🔀 Clip cross-section: sec${section.secNum} ${isPause ? 'pause_' : ''}clip${clipIndex} → ${clip.sourceFile} @${newCutFrom.toFixed(1)}s`);
     res.json({ success: true, clip });
 
   } catch (error) {
@@ -16192,7 +16477,47 @@ async function renderFromPreview(preview, projectPath, projectName, sessionId, c
       await concatenarClipsBroll(clipPaths, sectionVideoPath);
 
       if (fs.existsSync(sectionVideoPath)) {
-        sectionVideos.push({ numero: sec.secNum, videoPath: sectionVideoPath, audioPath: sec.audioPath });
+        sectionVideos.push({ numero: sec.secNum, videoPath: sectionVideoPath, audioPath: sec.audioPath, pauseAfter: sec.pauseAfter || 0 });
+      }
+
+      // Render pause clips if section has a pause configured
+      if (sec.pauseClips && sec.pauseClips.length > 0) {
+        updateProgress(Math.round(progressBase + (80 / totalSections) * 0.9), `Sección ${sec.secNum}: renderizando pausa...`);
+        const pauseClipPaths = [];
+        let totalPauseDur = 0;
+        for (let pk = 0; pk < sec.pauseClips.length; pk++) {
+          const pclip = sec.pauseClips[pk];
+          const pclipPath = path.join(tempDir, `sec${sec.secNum}_pause_clip${pk}.mp4`);
+          if (pclip.type === 'video') {
+            await crearClipDesdeVideo(pclip.sourcePath, pclip.cutFrom || 0, pclip.duration, pclipPath, cfg);
+          } else {
+            await crearClipDesdeImagen(pclip.sourcePath, pclip.duration, pclipPath, cfg, false);
+          }
+          if (fs.existsSync(pclipPath)) {
+            const clipRealDur = await getMediaDuration(pclipPath);
+            console.log(`⏸️ Pause clip ${pk}: requested ${pclip.duration}s, actual ${clipRealDur.toFixed(2)}s`);
+            totalPauseDur += clipRealDur;
+            pauseClipPaths.push(pclipPath);
+          }
+        }
+        if (pauseClipPaths.length > 0) {
+          const pauseVideoPath = path.join(tempDir, `seccion_${sec.secNum}_pause_visual.mp4`);
+          await concatenarClipsBroll(pauseClipPaths, pauseVideoPath);
+          const concatDur = await getMediaDuration(pauseVideoPath);
+          console.log(`⏸️ Pause video sec${sec.secNum}: clips sum=${totalPauseDur.toFixed(2)}s, concat=${concatDur.toFixed(2)}s, using ${totalPauseDur.toFixed(2)}s for silence`);
+          // Use sum of individual clip durations (more reliable than concat container duration)
+          const silenceDur = totalPauseDur;
+          const pauseSilencePath = path.join(tempDir, `seccion_${sec.secNum}_pause_silence.wav`);
+          await new Promise((resolve, reject) => {
+            const args = ['-y', '-f', 'lavfi', '-i', `anullsrc=r=44100:cl=stereo`, '-t', String(silenceDur), '-c:a', 'pcm_s16le', pauseSilencePath];
+            const proc = spawn('ffmpeg', args);
+            proc.on('close', code => code === 0 ? resolve() : reject(new Error(`Silence gen failed`)));
+            proc.on('error', reject);
+          });
+          if (fs.existsSync(pauseVideoPath)) {
+            sectionVideos.push({ numero: sec.secNum + 0.5, videoPath: pauseVideoPath, audioPath: pauseSilencePath, isPause: true, pauseDuration: silenceDur });
+          }
+        }
       }
     }
 
@@ -16203,8 +16528,51 @@ async function renderFromPreview(preview, projectPath, projectName, sessionId, c
     await concatenarClipsBroll(sectionVideos.map(s => s.videoPath), visualMasterPath);
 
     updateProgress(90, 'Uniendo audios TTS...');
+    // Normalize each audio segment to EXACTLY match its video duration, then concat
+    const normalizedAudioPaths = [];
+    for (let svi = 0; svi < sectionVideos.length; svi++) {
+      const sv = sectionVideos[svi];
+      const videoDur = await getMediaDuration(sv.videoPath);
+      const normalizedPath = path.join(tempDir, `audio_normalized_${svi}.wav`);
+
+      if (sv.isPause) {
+        // Generate exact-length silence matching pause video
+        await new Promise((resolve, reject) => {
+          const args = ['-y', '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo', '-t', String(videoDur), '-c:a', 'pcm_s16le', normalizedPath];
+          const proc = spawn('ffmpeg', args);
+          proc.on('close', code => code === 0 ? resolve() : reject(new Error('Silence gen failed')));
+          proc.on('error', reject);
+        });
+      } else {
+        // Pad or trim TTS audio to match video duration exactly
+        await new Promise((resolve, reject) => {
+          const args = ['-y', '-i', sv.audioPath, '-af', `apad,atrim=0:${videoDur}`, '-c:a', 'pcm_s16le', '-ar', '44100', '-ac', '2', normalizedPath];
+          const proc = spawn('ffmpeg', args);
+          proc.on('close', code => code === 0 ? resolve() : reject(new Error('Audio normalize failed')));
+          proc.on('error', reject);
+        });
+      }
+      normalizedAudioPaths.push(normalizedPath);
+    }
+
+    // Use concat filter (more reliable than concat demuxer for WAV)
     const audioMasterPath = path.join(tempDir, 'audio_master.wav');
-    await concatenarAudiosBroll(sectionVideos.map(s => s.audioPath), audioMasterPath);
+    await new Promise((resolve, reject) => {
+      const inputs = normalizedAudioPaths.flatMap(p => ['-i', p]);
+      const filterParts = normalizedAudioPaths.map((_, i) => `[${i}:a]`).join('');
+      const filterComplex = `${filterParts}concat=n=${normalizedAudioPaths.length}:v=0:a=1[out]`;
+      const args = ['-y', ...inputs, '-filter_complex', filterComplex, '-map', '[out]', '-c:a', 'pcm_s16le', '-ar', '44100', '-ac', '2', audioMasterPath];
+      const proc = spawn('ffmpeg', args);
+      let stderr = '';
+      proc.stderr.on('data', d => stderr += d.toString());
+      proc.on('close', code => code === 0 ? resolve() : reject(new Error(`Audio concat failed: ${stderr.slice(-300)}`)));
+      proc.on('error', reject);
+    });
+
+    // Debug: verify sync
+    const dbgVisualDur = await getMediaDuration(visualMasterPath);
+    const dbgAudioDur = await getMediaDuration(audioMasterPath);
+    console.log(`🎬 Visual master: ${dbgVisualDur.toFixed(2)}s | Audio master: ${dbgAudioDur.toFixed(2)}s | Diff: ${(dbgAudioDur - dbgVisualDur).toFixed(2)}s`);
 
     // === END SCREEN: append to visual master and prepare its audio ===
     let finalVisualPath = visualMasterPath;
@@ -16254,12 +16622,55 @@ async function renderFromPreview(preview, projectPath, projectName, sessionId, c
 
     let finalAudioPath = audioMasterPath;
 
+    // Calculate pause time ranges for music swell
+    const pauseRanges = [];
+    {
+      let accTime = 0;
+      for (const sv of sectionVideos) {
+        const svDur = await getMediaDuration(sv.videoPath);
+        if (sv.isPause) {
+          pauseRanges.push({ start: accTime, end: accTime + svDur });
+        }
+        accTime += svDur;
+      }
+    }
+
     if (bgMusicPath && fs.existsSync(bgMusicPath)) {
       // Get duration of TTS audio (main content) for music loop
       if (!mainContentDuration) mainContentDuration = await getMediaDuration(audioMasterPath);
 
       const mixedAudioPath = path.join(tempDir, 'audio_mixed.wav');
       const volStr = bgMusicVolume.toFixed(2);
+      const swellVol = 0.70;
+      const rampDur = 2; // seconds for fade in/out ramp
+
+      // Build dynamic volume expression for music swell during pauses
+      // Ramp up over 2s at start of pause, hold at 70%, ramp down over 2s at end
+      let musicVolExpr;
+      if (pauseRanges.length > 0) {
+        const volParts = [];
+        for (const r of pauseRanges) {
+          const dur = r.end - r.start;
+          const rampIn = Math.min(rampDur, dur / 2);
+          const rampOut = Math.min(rampDur, dur / 2);
+          const rampInEnd = r.start + rampIn;
+          const rampOutStart = r.end - rampOut;
+          // Ramp in: lerp from volStr to swellVol
+          volParts.push(`between(t,${r.start.toFixed(2)},${rampInEnd.toFixed(2)})*(${volStr}+(${swellVol}-${volStr})*(t-${r.start.toFixed(2)})/${rampIn.toFixed(2)})`);
+          // Hold at swell vol
+          if (rampInEnd < rampOutStart) {
+            volParts.push(`between(t,${rampInEnd.toFixed(2)},${rampOutStart.toFixed(2)})*${swellVol.toFixed(2)}`);
+          }
+          // Ramp out: lerp from swellVol to volStr
+          volParts.push(`between(t,${rampOutStart.toFixed(2)},${r.end.toFixed(2)})*(${swellVol}-(${swellVol}-${volStr})*(t-${rampOutStart.toFixed(2)})/${rampOut.toFixed(2)})`);
+        }
+        // Default volume when NOT in any pause range
+        const notInPause = pauseRanges.map(r => `between(t,${r.start.toFixed(2)},${r.end.toFixed(2)})`).join('+');
+        volParts.push(`(1-min(1,${notInPause}))*${volStr}`);
+        musicVolExpr = `volume='${volParts.join('+')}':eval=frame`;
+      } else {
+        musicVolExpr = `volume=${volStr}`;
+      }
 
       if (endScreenAudioPath) {
         // Mix: [TTS + looped music for main duration] then [end screen audio only]
@@ -16269,7 +16680,7 @@ async function renderFromPreview(preview, projectPath, projectName, sessionId, c
           const args = ['-y',
             '-i', audioMasterPath,
             '-stream_loop', '-1', '-i', bgMusicPath,
-            '-filter_complex', `[1:a]volume=${volStr},atrim=0:${mainContentDuration}[music];[0:a]apad[padded];[padded][music]amix=inputs=2:duration=longest:dropout_transition=2,atrim=0:${mainContentDuration}[out]`,
+            '-filter_complex', `[1:a]${musicVolExpr},atrim=0:${mainContentDuration}[music];[0:a]apad[padded];[padded][music]amix=inputs=2:duration=longest:dropout_transition=2,atrim=0:${mainContentDuration}[out]`,
             '-map', '[out]', '-c:a', 'pcm_s16le', '-ar', '44100', '-ac', '2', mainMixedPath];
           const proc = spawn('ffmpeg', args);
           let stderr = '';
@@ -16287,7 +16698,7 @@ async function renderFromPreview(preview, projectPath, projectName, sessionId, c
           const args = ['-y',
             '-i', audioMasterPath,
             '-stream_loop', '-1', '-i', bgMusicPath,
-            '-filter_complex', `[1:a]volume=${volStr},atrim=0:${totalDuration}[music];[0:a][music]amix=inputs=2:duration=first:dropout_transition=2[out]`,
+            '-filter_complex', `[1:a]${musicVolExpr},atrim=0:${totalDuration}[music];[0:a][music]amix=inputs=2:duration=first:dropout_transition=2[out]`,
             '-map', '[out]', '-c:a', 'pcm_s16le', '-ar', '44100', '-ac', '2', mixedAudioPath];
           const proc = spawn('ffmpeg', args);
           let stderr = '';
@@ -16393,14 +16804,24 @@ app.get('/api/broll-clip-preview/:folderName/:sectionIndex/:clipIndex', async (r
       return res.sendFile(previewFile);
     }
 
-    // Generate quick preview: 480p, ultrafast, low quality
+    // Determine if vertical mode from preview config
+    const cfgRes = preview.config?.resolution || '1920:1080';
+    const [cfgW, cfgH] = cfgRes.split(':').map(Number);
+    const isVerticalPreview = cfgH > cfgW;
+
+    // Generate quick preview: low-res, ultrafast, low quality
     if (!fs.existsSync(clip.sourcePath)) return res.status(404).send('Source video not found');
+
+    // Vertical: scale to cover 360x640 then crop. Horizontal: scale 640:-2
+    const previewVf = isVerticalPreview
+      ? 'scale=360:640:force_original_aspect_ratio=increase,crop=360:640'
+      : 'scale=640:-2';
 
     await new Promise((resolve, reject) => {
       const args = [
         '-y', '-ss', String(clip.cutFrom || 0), '-t', String(clip.duration),
         '-i', clip.sourcePath,
-        '-vf', 'scale=640:-2',
+        '-vf', previewVf,
         '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '30',
         '-c:a', 'aac', '-b:a', '64k', '-ac', '1',
         '-r', '24', '-pix_fmt', 'yuv420p',
@@ -16891,6 +17312,13 @@ function crearClipDesdeVideo(videoPath, cutFrom, duration, outputPath, cfg = {})
   const [w, h] = (cfg.resolution || '1920:1080').split(':');
   const crf = String(cfg.crf || 23);
   const preset = cfg.preset || 'fast';
+  const isVertical = parseInt(h) > parseInt(w);
+
+  // Vertical (Shorts): scale up to cover frame, then center-crop (zoom effect)
+  // Horizontal (Normal): scale down to fit, then pad with black bars
+  const vf = isVertical
+    ? `scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h}`
+    : `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:black`;
 
   return new Promise((resolve, reject) => {
     const args = [
@@ -16898,7 +17326,7 @@ function crearClipDesdeVideo(videoPath, cutFrom, duration, outputPath, cfg = {})
       '-ss', String(cutFrom),
       '-t', String(duration),
       '-i', videoPath,
-      '-vf', `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:black`,
+      '-vf', vf,
       '-c:v', 'libx264',
       '-preset', preset,
       '-crf', crf,
@@ -16929,6 +17357,7 @@ function crearClipDesdeImagen(imagePath, duration, outputPath, cfg = {}, zoomEff
   const [w, h] = (cfg.resolution || '1920:1080').split(':');
   const crf = String(cfg.crf || 23);
   const preset = cfg.preset || 'fast';
+  const isVertical = parseInt(h) > parseInt(w);
 
   // Ken Burns smooth zoom-in effect (1.0→1.2 over clip duration)
   let vf;
@@ -16945,7 +17374,10 @@ function crearClipDesdeImagen(imagePath, duration, outputPath, cfg = {}, zoomEff
       'format=yuv420p'
     ].join(',');
   } else {
-    vf = `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:black`;
+    // Vertical (Shorts): scale up to cover, center-crop. Horizontal: scale down, pad black bars.
+    vf = isVertical
+      ? `scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h}`
+      : `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:black`;
   }
 
   return new Promise((resolve, reject) => {
@@ -19039,7 +19471,7 @@ app.post('/api/generate-folder-name', async (req, res) => {
   }
 
   try {
-    const { model: aiModel } = await getGoogleAI('gemini-3.5-flash', { context: 'folder-name', forcePrimary: true });
+    const { model: aiModel } = await getGoogleAI('gemini-3.5-flash', { context: 'folder-name' });
 
     const prompt = `Tu tarea es inventar un TÍTULO CORTO y CREATIVO para un proyecto de video basado en el tema descrito abajo.
 
@@ -19141,7 +19573,7 @@ app.post('/api/broll/analyze', async (req, res) => {
       return res.status(400).json({ error: 'No se encontraron guiones en las secciones. Genera los guiones primero.' });
     }
 
-    const { model: aiModel } = await getGoogleAI('gemini-3.5-flash', { context: 'broll', forcePrimary: true });
+    const { model: aiModel } = await getGoogleAI('gemini-3.5-flash', { context: 'broll' });
 
     // Generar términos para cada sección basados en su guion individual
     const terms = [];
@@ -19187,7 +19619,9 @@ ${sec.text.slice(0, 3000)}`;
 
 // Buscar videos en YouTube con yt-dlp
 app.post('/api/broll/search', async (req, res) => {
-  const { terms, maxResults = 3, maxDuration = 20, excludeShorts = true, maxImages = 0, folderName, validations = 1 } = req.body;
+  const { terms, maxResults = 3, maxDuration = 20, excludeShorts, mode = 'normal', maxImages = 0, folderName, validations = 1 } = req.body;
+  // Support legacy 'excludeShorts' param or new 'mode' param
+  const effectiveMode = mode || (excludeShorts === false ? 'shorts' : 'normal');
 
   if (!terms || !Array.isArray(terms)) {
     return res.status(400).json({ error: 'terms es requerido (array)' });
@@ -19206,7 +19640,7 @@ app.post('/api/broll/search', async (req, res) => {
       for (const term of group.terms) {
         try {
           if (maxResults > 0) {
-            const found = await brollSearchAndValidate(term, group.section, maxResults, maxDuration, excludeShorts, seenUrls, spawn);
+            const found = await brollSearchAndValidate(term, group.section, maxResults, maxDuration, effectiveMode, seenUrls, spawn);
             sectionResults.videos.push({ term, results: found });
             allCandidates.push(...found);
           }
@@ -19575,14 +20009,15 @@ function brollDownloadImages(task, spawn) {
 }
 
 // Búsqueda YouTube con validación LLM (1 sola validación por sección)
-async function brollSearchAndValidate(term, sectionName, maxResults, maxDuration, excludeShorts, seenUrls, spawn) {
+async function brollSearchAndValidate(term, sectionName, maxResults, maxDuration, mode, seenUrls, spawn) {
   const fetchCount = (maxResults + 2) * 3;
 
   const videos = await brollYtSearch(term, fetchCount, spawn);
 
   const candidates = videos.filter(v => {
     if (seenUrls.has(v.url)) return false;
-    if (excludeShorts && v.durationSec <= 60) return false;
+    // Normal mode: exclude shorts (≤60s). Shorts mode: no duration filter (download everything)
+    if (mode === 'normal' && v.durationSec <= 60) return false;
     return v.durationSec <= maxDuration * 60;
   });
 
@@ -19650,7 +20085,7 @@ function brollYtSearch(query, maxResults, spawn) {
 
 async function brollValidateRelevance(videos, searchTerm, sectionName) {
   try {
-    const { model: aiModel } = await getGoogleAI('gemini-3.5-flash', { context: 'broll-validate', forcePrimary: true });
+    const { model: aiModel } = await getGoogleAI('gemini-3.5-flash', { context: 'broll-validate' });
 
     const titles = videos.map((v, i) => `${i}. "${v.title}" (${v.channel})`).join('\n');
 
@@ -21210,7 +21645,7 @@ if __name__ == "__main__":
                             
                             // Si falla la API principal con 503 y estabamos usando flash 3, intentar fallback a 2.5
                             if (isPrimaryOverloaded && selectedModel === GEMINI_TEXT_MODEL) {
-                                console.warn(`⚠️ Gemini 3 Flash saturado incluso en API PRINCIPAL (503). Intentando fallback a Gemini 2.5 Flash...`);
+                                console.warn(`⚠️ Modelo principal saturado incluso en API PRINCIPAL (503). Intentando fallback a Gemini 3.5 Flash...`);
                                 const { model: fallbackModel } = await getGoogleAI("gemini-3.5-flash", { context: 'llm', forcePrimary: true });
                                 result = await fallbackModel.generateContent(prompt);
                             } else {

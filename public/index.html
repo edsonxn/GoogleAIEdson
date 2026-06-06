@@ -182,25 +182,25 @@
 
   <!-- Modal para crear nuevo estilo -->
   <div id="styleModal" class="style-modal">
-    <div class="style-modal-content">
-      <div class="style-modal-header">
-        <h3><i class="fas fa-palette"></i> Crear Nuevo Estilo de Guión</h3>
+    <div class="style-modal-content edit-style-modal-content">
+      <div class="style-modal-header edit-style-header">
+        <h3><i class="fas fa-plus-circle"></i> Nuevo Estilo</h3>
         <button id="closeStyleModal" class="close-modal-btn">
           <i class="fas fa-times"></i>
         </button>
       </div>
       <div class="style-modal-body">
-        <div class="form-group">
-          <label for="styleName">Nombre del Estilo:</label>
-          <input type="text" id="styleName" placeholder="Ej: Épico, Misterioso, Humorístico, etc." maxlength="30">
+        <div class="form-group form-group-compact">
+          <label for="styleName"><i class="fas fa-tag"></i> Nombre</label>
+          <input type="text" id="styleName" placeholder="Ej: Épico, Misterioso, Humorístico..." maxlength="30">
         </div>
-        <div class="form-group">
-          <label for="styleDescription">Descripción del Estilo:</label>
-          <textarea id="styleDescription" rows="4" placeholder="Describe cómo debe ser el tono y estilo del guión. Ej: Tono épico y dramático con referencias heroicas, voz profunda y solemne..."></textarea>
+        <div class="form-group form-group-compact">
+          <label for="styleDescription"><i class="fas fa-info-circle"></i> Descripción breve</label>
+          <textarea id="styleDescription" rows="2" placeholder="Breve descripción del estilo..."></textarea>
         </div>
-        <div class="form-group">
-          <label for="styleInstructions">Instrucciones Detalladas para la IA:</label>
-          <textarea id="styleInstructions" rows="6" placeholder="Instrucciones específicas para la IA sobre cómo generar este estilo. Ej: Usa un lenguaje formal, incluye metáforas épicas, evita groserías, incluye referencias a la mitología..."></textarea>
+        <div class="form-group form-group-expanded">
+          <label for="styleInstructions"><i class="fas fa-robot"></i> Instrucciones para la IA</label>
+          <textarea id="styleInstructions" rows="14" placeholder="Instrucciones detalladas sobre cómo debe escribir la IA con este estilo..."></textarea>
         </div>
       </div>
       <div class="style-modal-footer">
@@ -210,7 +210,7 @@
         </button>
         <button id="saveStyleBtn" class="save-btn">
           <i class="fas fa-save"></i>
-          Guardar Estilo
+          Guardar
         </button>
       </div>
     </div>
@@ -218,9 +218,9 @@
 
   <!-- Modal para gestionar estilos -->
   <div id="manageStylesModal" class="style-modal">
-    <div class="style-modal-content manage-styles-content">
-      <div class="style-modal-header">
-        <h3><i class="fas fa-cog"></i> Gestionar Estilos Personalizados</h3>
+    <div class="style-modal-content edit-style-modal-content manage-styles-content">
+      <div class="style-modal-header edit-style-header">
+        <h3><i class="fas fa-layer-group"></i> Estilos</h3>
         <button id="closeManageStylesModal" class="close-modal-btn">
           <i class="fas fa-times"></i>
         </button>
@@ -252,25 +252,25 @@
 
   <!-- Modal para editar estilo -->
   <div id="editStyleModal" class="style-modal">
-    <div class="style-modal-content">
-      <div class="style-modal-header">
-        <h3><i class="fas fa-edit"></i> Editar Estilo de Guión</h3>
+    <div class="style-modal-content edit-style-modal-content">
+      <div class="style-modal-header edit-style-header">
+        <h3><i class="fas fa-palette"></i> Editar Estilo</h3>
         <button id="closeEditStyleModal" class="close-modal-btn">
           <i class="fas fa-times"></i>
         </button>
       </div>
       <div class="style-modal-body">
-        <div class="form-group">
-          <label for="editStyleName">Nombre del Estilo:</label>
-          <input type="text" id="editStyleName" placeholder="Ej: Épico, Misterioso, Humorístico, etc." maxlength="30">
+        <div class="form-group form-group-compact">
+          <label for="editStyleName"><i class="fas fa-tag"></i> Nombre</label>
+          <input type="text" id="editStyleName" placeholder="Ej: Épico, Misterioso, Humorístico..." maxlength="30">
         </div>
-        <div class="form-group">
-          <label for="editStyleDescription">Descripción del Estilo:</label>
-          <textarea id="editStyleDescription" rows="4" placeholder="Describe cómo debe ser el tono y estilo del guión..."></textarea>
+        <div class="form-group form-group-compact">
+          <label for="editStyleDescription"><i class="fas fa-info-circle"></i> Descripción breve</label>
+          <textarea id="editStyleDescription" rows="2" placeholder="Breve descripción del estilo..."></textarea>
         </div>
-        <div class="form-group">
-          <label for="editStyleInstructions">Instrucciones Detalladas para la IA:</label>
-          <textarea id="editStyleInstructions" rows="6" placeholder="Instrucciones específicas para la IA sobre cómo generar este estilo..."></textarea>
+        <div class="form-group form-group-expanded">
+          <label for="editStyleInstructions"><i class="fas fa-robot"></i> Instrucciones para la IA</label>
+          <textarea id="editStyleInstructions" rows="14" placeholder="Instrucciones detalladas sobre cómo debe escribir la IA con este estilo..."></textarea>
         </div>
       </div>
       <div class="style-modal-footer">
@@ -280,7 +280,7 @@
         </button>
         <button id="saveEditStyleBtn" class="save-btn">
           <i class="fas fa-save"></i>
-          Guardar Cambios
+          Guardar
         </button>
       </div>
     </div>
@@ -533,13 +533,8 @@
               <i class="fas fa-brain"></i> Modelo LLM:
             </label>
             <select id="llmModelSelect" class="field-select">
+              <option value="gemini-3.5-flash" selected>Gemini 3.5 Flash</option>
               <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview</option>
-              <option value="gemini-3-flash-preview" selected>Gemini 3 Flash Preview</option>
-              <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
-              <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
-              <option value="gpt-5">GPT-5</option>
-              <option value="gpt-5-mini">GPT-5 Mini</option>
-              <option value="gpt-5-nano">GPT-5 Nano</option>
             </select>
           </div>
         </div>
@@ -742,13 +737,18 @@
             </select>
           </div>
 
-          <div class="checkbox-group">
-            <label class="checkbox-label">
-              <input type="checkbox" id="brollExcludeShorts" class="checkbox-input" checked>
-              <span class="checkbox-custom"></span>
-              <i class="fas fa-ban"></i>
-              Excluir Shorts
+          <div class="field-group">
+            <label class="field-label">
+              <i class="fas fa-film"></i> Formato
             </label>
+            <div class="broll-mode-toggle">
+              <button type="button" id="brollModeNormal" class="broll-mode-btn active" onclick="setBrollMode('normal')">
+                <i class="fas fa-desktop"></i> Videos
+              </button>
+              <button type="button" id="brollModeShorts" class="broll-mode-btn" onclick="setBrollMode('shorts')">
+                <i class="fas fa-mobile-alt"></i> Shorts
+              </button>
+            </div>
           </div>
 
           <div class="field-group">

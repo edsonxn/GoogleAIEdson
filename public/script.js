@@ -11,7 +11,7 @@ const IMAGE_MODEL_DEFAULT = 'gemini3';
 const IMAGE_MODEL_LABELS = {
   gemini2: 'Gemini 2.0 Flash',
   gemini25: 'Gemini 2.5 Flash',
-  gemini3: 'Gemini 3 Flash Preview (Nuevo)'
+  gemini3: 'Gemini 3.5 Flash'
 };
 
 function normalizeImageModel(model) {
@@ -28,6 +28,7 @@ function normalizeImageModel(model) {
   if (
     value === 'gemini3' ||
     value === 'gemini-3' ||
+    value === 'gemini-3.5-flash' ||
     value === 'gemini-3-flash-preview' ||
     value === 'gemini-3-flash-preview-image'
   ) {
@@ -2949,7 +2950,7 @@ async function runAutoGeneration() {
           return fetch('/api/broll/search', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ terms: analyzeData.terms, maxResults: _brollMaxVids, maxDuration: parseInt(document.getElementById('brollMaxDuration')?.value) || 20, excludeShorts: document.getElementById('brollExcludeShorts')?.checked ?? true, maxImages: _brollMaxImgs })
+            body: JSON.stringify({ terms: analyzeData.terms, maxResults: _brollMaxVids, maxDuration: parseInt(document.getElementById('brollMaxDuration')?.value) || 20, mode: document.getElementById('brollModeShorts')?.classList.contains('active') ? 'shorts' : 'normal', maxImages: _brollMaxImgs })
           });
         }
       }).then(r => r?.json()).then(searchData => {
@@ -6507,14 +6508,6 @@ function setupStyleModalEvents() {
     closeModal();
   });
   
-  // Cerrar modal al hacer clic fuera
-  styleModal.addEventListener('click', (e) => {
-    if (e.target === styleModal) {
-      console.log('ÃƒÂ°Ã…Â¸Ã¢â‚¬ÂÃ‹Å“ Click fuera del modal');
-      closeModal();
-    }
-  });
-  
   // Guardar nuevo estilo
   saveBtn.addEventListener('click', function(e) {
     e.preventDefault();
@@ -6687,16 +6680,7 @@ function setupManageStylesEvents() {
     closeModal();
   });
   
-  // Cerrar modal al hacer clic fuera
-  manageModal.addEventListener('click', (e) => {
-    if (e.target === manageModal) {
-      console.log('ÃƒÂ°Ã…Â¸Ã¢â‚¬ÂÃ‹Å“ Click fuera del modal de gestionar');
-      closeModal();
-    }
-  });
-  
-  console.log('âœ… Eventos del modal de gestionar configurados correctamente');
-}
+  }
 
 // Configurar eventos del modal de ediciÃ³n de estilos
 function setupEditStyleEvents() {
@@ -6709,12 +6693,6 @@ function setupEditStyleEvents() {
   cancelEditBtn.addEventListener('click', closeEditStyleModal);
   saveEditBtn.addEventListener('click', saveEditedStyle);
   
-  // Cerrar modal al hacer clic fuera
-  editModal.addEventListener('click', (e) => {
-    if (e.target === editModal) {
-      closeEditStyleModal();
-    }
-  });
 }
 
 // Abrir modal de gestiÃ³n de estilos
@@ -6755,8 +6733,7 @@ function renderStylesList() {
       <div class="style-item-header">
         <div class="style-item-info">
           <div class="style-item-name">${escapeHtml(style.name)}</div>
-          <div class="style-item-description">${escapeHtml(style.description || 'Sin descripciÃ³n')}</div>
-          <div class="style-item-instructions">"${escapeHtml(style.instructions)}"</div>
+          <div class="style-item-description">${escapeHtml(style.description || 'Sin descripción')}</div>
         </div>
         <div class="style-item-actions">
           <button class="edit-style-btn" onclick="editStyle('${style.id}')">
@@ -17014,7 +16991,7 @@ if (downloadProjectZipBtn) {
     const maxVideos = parseInt(document.getElementById('brollMaxVideos').value) || 0;
     const maxImages = parseInt(document.getElementById('brollMaxImages').value) || 0;
     const maxDuration = parseInt(document.getElementById('brollMaxDuration').value) || 20;
-    const excludeShorts = document.getElementById('brollExcludeShorts').checked;
+    const brollMode = document.getElementById('brollModeShorts')?.classList.contains('active') ? 'shorts' : 'normal';
     const validations = parseInt(document.getElementById('brollValidations')?.value) ?? 1;
 
     if (maxVideos === 0 && maxImages === 0) {
@@ -17048,7 +17025,7 @@ if (downloadProjectZipBtn) {
       const searchRes = await fetch('/api/broll/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ terms, maxResults: maxVideos, maxDuration, excludeShorts, maxImages, folderName: projectFolder, validations })
+        body: JSON.stringify({ terms, maxResults: maxVideos, maxDuration, mode: brollMode, maxImages, folderName: projectFolder, validations })
       });
       const searchData = await searchRes.json();
       if (!searchRes.ok) throw new Error(searchData.error);
@@ -17351,7 +17328,7 @@ if (downloadProjectZipBtn) {
           (summary.failed > 0 ? ` (${summary.failed} fallidos)` : ' âœ“');
         setBrollStatus(msg, summary.failed > 0);
 
-        // Retry button for failed downloads â€” prominent, above the list
+        // Retry button for failed downloads - prominent, above the list
         if (failedVideos.length > 0) {
           const retryContainer = document.createElement('div');
           retryContainer.style.cssText = 'margin: 12px 0; display: flex; gap: 10px; align-items: center;';
@@ -17407,7 +17384,7 @@ if (downloadProjectZipBtn) {
               }, 1500);
             } catch (err) {
               retryBtn.disabled = false;
-              retryBtn.innerHTML = `<i class="fas fa-exclamation-triangle"></i> <span>Error: ${err.message} â€” Click para reintentar</span>`;
+              retryBtn.innerHTML = `<i class="fas fa-exclamation-triangle"></i> <span>Error: ${err.message} - Click para reintentar</span>`;
             }
           };
 
@@ -17416,7 +17393,7 @@ if (downloadProjectZipBtn) {
           brollDownloadProgress.insertBefore(retryContainer, brollDownloadList);
         }
       } else if (!searchData) {
-        // No search results and no download status with details â€” just show plan info
+        // No search results and no download status with details - just show plan info
         if (statusData.plan) {
           setBrollStatus(`B-Roll: ${statusData.plan.totalVideos} videos planificados`);
         }
@@ -17455,7 +17432,7 @@ if (downloadProjectZipBtn) {
         confirmBrollRender();
         return;
       }
-      // Direct render (old flow â€” generates new random sequence)
+      // Direct render (old flow - generates new random sequence)
       isGeneratingVideo = true;
       btn.disabled = true;
       btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Generando Video...</span>';
@@ -17564,13 +17541,14 @@ let _tlBgMusicUrl = null;    // Object URL for preview
 let _tlBgMusicAudio = null;  // Audio element for music preview playback
 
 function getVideoConfig() {
+  const isShortsMode = document.getElementById('brollModeShorts')?.classList.contains('active');
   return {
     maxImagesPerSection: parseInt(document.getElementById('videoMaxImagesPerSection')?.value) || 0,
     imageDuration: parseInt(document.getElementById('videoImageDuration')?.value) || 5,
     minClipDuration: parseInt(document.getElementById('videoMinClipDuration')?.value) || 4,
     maxClipDuration: parseInt(document.getElementById('videoMaxClipDuration')?.value) || 10,
     minResolution: parseInt(document.getElementById('videoMinResolution')?.value) || 0,
-    resolution: document.getElementById('videoOutputResolution')?.value || '1920:1080',
+    resolution: isShortsMode ? '1080:1920' : (document.getElementById('videoOutputResolution')?.value || '1920:1080'),
     crf: parseInt(document.getElementById('videoCRF')?.value) || 23,
     preset: document.getElementById('videoPreset')?.value || 'slow'
   };
@@ -17597,6 +17575,19 @@ function buildFlatClipList(sections) {
         audioOffset: offset
       });
       offset += sec.clips[ci].duration;
+    }
+    // Add pause clips after section (if any)
+    if (sec.pauseClips && sec.pauseClips.length > 0) {
+      for (let pi = 0; pi < sec.pauseClips.length; pi++) {
+        flat.push({
+          sectionIndex: si,
+          clipIndex: pi,
+          secNum: sec.secNum,
+          clip: sec.pauseClips[pi],
+          audioOffset: 0,
+          isPause: true
+        });
+      }
     }
   }
   return flat;
@@ -17674,7 +17665,7 @@ async function loadExistingBrollTimeline(folderName) {
       }
     }
 
-    // No existing preview â€” try generating one (project may have broll from Telegram)
+    // No existing preview - try generating one (project may have broll from Telegram)
     res = await fetch('/api/generate-broll-preview', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -17692,7 +17683,7 @@ async function loadExistingBrollTimeline(folderName) {
     showBrollTimelinePanel();
     console.log(`ðŸŽ¬ Timeline de B-Roll generada automÃ¡ticamente (${data.sections.length} secciones)`);
   } catch (e) {
-    // Silent fail â€” no timeline to show
+    // Silent fail - no timeline to show
     console.log('Timeline B-Roll no disponible:', e.message);
   }
 }
@@ -17702,7 +17693,26 @@ function showBrollTimelinePanel() {
   if (panel) {
     panel.style.display = 'flex';
     panel.classList.add('active');
+    const isShortsMode = document.getElementById('brollModeShorts')?.classList.contains('active');
+    panel.classList.toggle('shorts-mode', isShortsMode);
     setTimeout(() => panel.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
+  }
+}
+
+function setBrollMode(mode) {
+  const normalBtn = document.getElementById('brollModeNormal');
+  const shortsBtn = document.getElementById('brollModeShorts');
+  if (mode === 'shorts') {
+    shortsBtn.classList.add('active');
+    normalBtn.classList.remove('active');
+  } else {
+    normalBtn.classList.add('active');
+    shortsBtn.classList.remove('active');
+  }
+  // Update timeline panel class if visible
+  const panel = document.getElementById('brollTimelinePanel');
+  if (panel && panel.style.display !== 'none') {
+    panel.classList.toggle('shorts-mode', mode === 'shorts');
   }
 }
 
@@ -17770,7 +17780,17 @@ function renderBrollTimeline() {
         <button class="tl-clip-regen-cross-btn" onclick="event.stopPropagation(); regenerateBrollClipCross(${si}, ${ci}, this)" title="Regenerar clip (otras secciones)">
           <i class="fas fa-random"></i>
         </button>
-        <button class="tl-clip-replace-img-btn" onclick="event.stopPropagation(); replaceBrollClipWithImage(${si}, ${ci}, this)" title="Imagen aleatoria de la seccion"><i class="fas fa-image"></i></button>
+        <button class="tl-clip-replace-img-btn" onclick="event.stopPropagation(); replaceBrollClipWithImage(${si}, ${ci}, this)" title="Forzar cambio por imagen">
+          <i class="fas fa-image"></i>
+        </button>
+        ${clip.type === 'video' ? `
+        <button class="tl-clip-shift-btn tl-clip-shift-back-btn" onclick="event.stopPropagation(); window.shiftBrollClip(${si}, ${ci}, -5, this)" title="Atrasar 5s">
+          <i class="fas fa-undo"></i>
+        </button>
+        <button class="tl-clip-shift-btn tl-clip-shift-fw-btn" onclick="event.stopPropagation(); window.shiftBrollClip(${si}, ${ci}, 5, this)" title="Adelantar 5s">
+          <i class="fas fa-redo"></i>
+        </button>
+        ` : ''}
         ${thumbEl}
         <div class="tl-clip-info">
           <div class="tl-clip-duration"><i class="fas fa-clock"></i> ${clip.duration.toFixed(1)}s</div>
@@ -17778,6 +17798,69 @@ function renderBrollTimeline() {
         </div>
       </div>`;
       flatIdx++;
+    }
+
+    // Render pause clips after section clips (if any)
+    if (sec.pauseClips && sec.pauseClips.length > 0) {
+      for (let pi = 0; pi < sec.pauseClips.length; pi++) {
+        const pclip = sec.pauseClips[pi];
+        const pWidth = Math.max(100, Math.round(pclip.duration * 20));
+        const pThumbSrc = pclip.thumbnail
+          ? `/api/broll-thumbnail/${_brollPreviewFolderName}/${pclip.thumbnail}?t=${Date.now()}`
+          : '';
+        const pThumbEl = pclip.thumbnail
+          ? `<img class="tl-clip-thumb" src="${pThumbSrc}" alt="pause" loading="lazy">`
+          : `<div class="tl-clip-thumb-placeholder"><i class="fas fa-music"></i></div>`;
+
+        const isVideo = pclip.type === 'video';
+        html += `<div class="tl-clip tl-clip-pause" data-flat="${flatIdx}" data-section="${si}" data-pauseclip="${pi}" style="width: ${pWidth}px;" onclick="selectBrollClip(${flatIdx})">
+          <span class="tl-clip-type-badge pause"><i class="fas fa-music"></i> ${isVideo ? 'VID' : 'IMG'}</span>
+          <button class="tl-clip-regen-btn" onclick="event.stopPropagation(); regeneratePauseClip(${si}, ${pi}, this)" title="Regenerar clip pausa">
+            <i class="fas fa-sync-alt"></i>
+          </button>
+          <button class="tl-clip-regen-cross-btn" onclick="event.stopPropagation(); regeneratePauseClipCross(${si}, ${pi}, this)" title="Regenerar (otras secciones)">
+            <i class="fas fa-random"></i>
+          </button>
+          <button class="tl-clip-replace-img-btn" onclick="event.stopPropagation(); replacePauseClipWithImage(${si}, ${pi}, this)" title="Cambiar por imagen">
+            <i class="fas fa-image"></i>
+          </button>
+          ${isVideo ? `
+          <button class="tl-clip-shift-btn tl-clip-shift-back-btn" onclick="event.stopPropagation(); window.shiftPauseClip(${si}, ${pi}, -5, this)" title="Atrasar 5s">
+            <i class="fas fa-backward"></i>
+          </button>
+          <button class="tl-clip-shift-btn tl-clip-shift-fw-btn" onclick="event.stopPropagation(); window.shiftPauseClip(${si}, ${pi}, 5, this)" title="Adelantar 5s">
+            <i class="fas fa-forward"></i>
+          </button>
+          ` : ''}
+          ${pThumbEl}
+          <div class="tl-clip-info">
+            <div class="tl-clip-duration"><i class="fas fa-clock"></i> ${pclip.duration.toFixed(1)}s</div>
+            <div class="tl-clip-source" title="${pclip.sourceFile || 'Pausa'}">${pclip.sourceFile || 'Pausa'}</div>
+          </div>
+        </div>`;
+        flatIdx++;
+      }
+    }
+
+    // Pause control between sections (not after the last one)
+    if (si < _brollPreviewSections.length - 1) {
+      const pauseVal = Math.round(sec.pauseAfter || 0);
+      html += `<div class="tl-pause-divider">
+        <div class="tl-pause-divider-line"></div>
+        <div class="tl-pause-control">
+          <button class="tl-pause-btn tl-pause-btn-minus" onclick="adjustBrollPause(${si}, -3)" title="Quitar clip de pausa (3s)">
+            <i class="fas fa-minus"></i>
+          </button>
+          <div class="tl-pause-value-wrap">
+            <span class="tl-pause-value">${pauseVal}</span>
+            <span class="tl-pause-unit">PAUSA</span>
+          </div>
+          <button class="tl-pause-btn tl-pause-btn-plus" onclick="adjustBrollPause(${si}, 3)" title="Agregar clip de pausa (3s)">
+            <i class="fas fa-plus"></i>
+          </button>
+        </div>
+        <div class="tl-pause-divider-line"></div>
+      </div>`;
     }
   }
 
@@ -17790,6 +17873,168 @@ function renderBrollTimeline() {
   if (placeholder) placeholder.style.display = 'flex';
   if (video) video.removeAttribute('src');
   if (image) image.style.display = 'none';
+}
+
+async function adjustBrollPause(sectionIndex, delta) {
+  if (!_brollPreviewId || !_brollPreviewFolderName) return;
+  const sec = _brollPreviewSections[sectionIndex];
+  if (!sec) return;
+  if (!sec.pauseClips) sec.pauseClips = [];
+
+  if (delta > 0) {
+    // Add one 3-second pause clip
+    try {
+      const res = await fetch('/api/broll-section-pause', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ previewId: _brollPreviewId, folderName: _brollPreviewFolderName, sectionIndex, action: 'add' })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Error agregando clip de pausa');
+      sec.pauseClips = data.pauseClips;
+      sec.pauseAfter = data.pauseAfter;
+    } catch (err) {
+      showNotification(`Error: ${err.message}`, 'error');
+      return;
+    }
+  } else {
+    // Remove last pause clip
+    if (sec.pauseClips.length === 0) return;
+    try {
+      const res = await fetch('/api/broll-section-pause', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ previewId: _brollPreviewId, folderName: _brollPreviewFolderName, sectionIndex, action: 'remove' })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Error removiendo clip de pausa');
+      sec.pauseClips = data.pauseClips;
+      sec.pauseAfter = data.pauseAfter;
+    } catch (err) {
+      showNotification(`Error: ${err.message}`, 'error');
+      return;
+    }
+  }
+
+  _brollFlatClips = buildFlatClipList(_brollPreviewSections);
+  renderBrollTimeline();
+}
+
+// Pause clip control functions — pass isPause:true to reuse existing endpoints
+async function regeneratePauseClip(sectionIndex, clipIndex, btnEl) {
+  if (!_brollPreviewId || !_brollPreviewFolderName) return;
+  const video = document.getElementById('tlPreviewVideo');
+  const audio = document.getElementById('tlPreviewAudio');
+  if (video) video.pause();
+  if (audio) audio.pause();
+  if (_brollImageTimer) { clearTimeout(_brollImageTimer); _brollImageTimer = null; }
+  btnEl.classList.add('spinning');
+  const flatIdx = _brollFlatClips.findIndex(f => f.sectionIndex === sectionIndex && f.clipIndex === clipIndex && f.isPause);
+  try {
+    const response = await fetch('/api/regenerate-broll-clip', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ previewId: _brollPreviewId, folderName: _brollPreviewFolderName, sectionIndex, clipIndex, isPause: true })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Error regenerando clip de pausa');
+    _brollPreviewSections[sectionIndex].pauseClips[clipIndex] = data.clip;
+    _brollFlatClips = buildFlatClipList(_brollPreviewSections);
+    renderBrollTimeline();
+    if (flatIdx !== -1) selectBrollClip(flatIdx);
+  } catch (error) {
+    showNotification(`Error: ${error.message}`, 'error');
+  } finally {
+    btnEl.classList.remove('spinning');
+  }
+}
+
+async function regeneratePauseClipCross(sectionIndex, clipIndex, btnEl) {
+  if (!_brollPreviewId || !_brollPreviewFolderName) return;
+  const video = document.getElementById('tlPreviewVideo');
+  const audio = document.getElementById('tlPreviewAudio');
+  if (video) video.pause();
+  if (audio) audio.pause();
+  if (_brollImageTimer) { clearTimeout(_brollImageTimer); _brollImageTimer = null; }
+  btnEl.classList.add('spinning');
+  const flatIdx = _brollFlatClips.findIndex(f => f.sectionIndex === sectionIndex && f.clipIndex === clipIndex && f.isPause);
+  try {
+    const response = await fetch('/api/regenerate-broll-clip-cross', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ previewId: _brollPreviewId, folderName: _brollPreviewFolderName, sectionIndex, clipIndex, isPause: true })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Error regenerando clip cross');
+    _brollPreviewSections[sectionIndex].pauseClips[clipIndex] = data.clip;
+    _brollFlatClips = buildFlatClipList(_brollPreviewSections);
+    renderBrollTimeline();
+    if (flatIdx !== -1) selectBrollClip(flatIdx);
+  } catch (error) {
+    showNotification(`Error: ${error.message}`, 'error');
+  } finally {
+    btnEl.classList.remove('spinning');
+  }
+}
+
+window.shiftPauseClip = async function(sectionIndex, clipIndex, shiftSeconds, btnEl) {
+  if (!_brollPreviewId || !_brollPreviewFolderName) return;
+  const oldIcon = btnEl.innerHTML;
+  btnEl.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+  btnEl.classList.add('spinning');
+  btnEl.disabled = true;
+  try {
+    const res = await fetch('/api/shift-broll-clip', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ previewId: _brollPreviewId, folderName: _brollPreviewFolderName, sectionIndex, clipIndex, shiftSeconds, isPause: true })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Error desplazando clip');
+    if (data.atLimit) {
+      showNotification('No se puede mover más el clip en esa dirección', 'warning');
+    } else {
+      const flatIdx = _brollFlatClips.findIndex(f => f.sectionIndex === sectionIndex && f.clipIndex === clipIndex && f.isPause);
+      _brollPreviewSections[sectionIndex].pauseClips[clipIndex] = data.clip;
+      _brollFlatClips = buildFlatClipList(_brollPreviewSections);
+      renderBrollTimeline();
+      if (flatIdx !== -1) selectBrollClip(flatIdx);
+    }
+  } catch (error) {
+    showNotification(`Error: ${error.message}`, 'error');
+  } finally {
+    btnEl.innerHTML = oldIcon;
+    btnEl.classList.remove('spinning');
+    btnEl.disabled = false;
+  }
+};
+
+async function replacePauseClipWithImage(sectionIndex, clipIndex, btnEl) {
+  if (!_brollPreviewId || !_brollPreviewFolderName) return;
+  const video = document.getElementById('tlPreviewVideo');
+  const audio = document.getElementById('tlPreviewAudio');
+  if (video) video.pause();
+  if (audio) audio.pause();
+  if (_brollImageTimer) { clearTimeout(_brollImageTimer); _brollImageTimer = null; }
+  btnEl.classList.add('spinning');
+  const flatIdx = _brollFlatClips.findIndex(f => f.sectionIndex === sectionIndex && f.clipIndex === clipIndex && f.isPause);
+  try {
+    const response = await fetch('/api/replace-broll-clip-with-image', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ previewId: _brollPreviewId, folderName: _brollPreviewFolderName, sectionIndex, clipIndex, isPause: true })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Error reemplazando clip');
+    _brollPreviewSections[sectionIndex].pauseClips[clipIndex] = data.clip;
+    _brollFlatClips = buildFlatClipList(_brollPreviewSections);
+    renderBrollTimeline();
+    if (flatIdx !== -1) selectBrollClip(flatIdx);
+  } catch (error) {
+    showNotification(`Error: ${error.message}`, 'error');
+  } finally {
+    btnEl.classList.remove('spinning');
+  }
 }
 
 function selectBrollClip(flatIdx) {
@@ -17807,11 +18052,6 @@ function selectBrollClip(flatIdx) {
     startMusicPreview();
   }
 
-  // Start background music on first clip selection
-  if (_tlBgMusicAudio && _tlBgMusicUrl && _tlBgMusicAudio.paused) {
-    startMusicPreview();
-  }
-
   const item = _brollFlatClips[flatIdx];
   if (!item) return;
   playBrollClipPreview(item);
@@ -17820,10 +18060,11 @@ function selectBrollClip(flatIdx) {
 function advanceToNextClip() {
   const next = _brollCurrentFlatIdx + 1;
   if (next < _brollFlatClips.length) {
-    // Check if same section â€” if so, mark auto-advancing (audio stays untouched)
+    // Check if same section - if so, mark auto-advancing (audio stays untouched)
     const cur = _brollFlatClips[_brollCurrentFlatIdx];
     const nxt = _brollFlatClips[next];
-    _brollIsAutoAdvancing = (cur && nxt && cur.secNum === nxt.secNum);
+    // Auto-advance only within same section (pause clips handle their own TTS muting)
+    _brollIsAutoAdvancing = cur && nxt && cur.secNum === nxt.secNum;
     selectBrollClip(next);
     _brollIsAutoAdvancing = false;
   } else {
@@ -17844,7 +18085,10 @@ function preloadNextClip(currentFlatIdx) {
   // Load into the standby video element
   const standby = document.querySelector('.tl-vid-standby');
   if (!standby) return;
-  const url = `/api/broll-clip-preview/${_brollPreviewFolderName}/${nextItem.sectionIndex}/${nextItem.clipIndex}?t=${Date.now()}`;
+  const urlBase = nextItem.isPause
+    ? `/api/broll-pause-preview/${_brollPreviewFolderName}/${nextItem.sectionIndex}/${nextItem.clipIndex}`
+    : `/api/broll-clip-preview/${_brollPreviewFolderName}/${nextItem.sectionIndex}/${nextItem.clipIndex}`;
+  const url = `${urlBase}?t=${Date.now()}`;
   if (standby.dataset.preloadUrl === url) return; // already preloading this one
   standby.dataset.preloadUrl = url;
   standby.src = url;
@@ -17901,19 +18145,23 @@ function bindVideoHandlers(video, audio, audioOffset, loading, isContinuous) {
     preloadNextClip(_brollCurrentFlatIdx);
   };
   video.onended = () => { advanceToNextClip(); };
-  video.onpause = () => { if (!isContinuous && audio) audio.pause(); };
+  video.onpause = () => {
+    if (audio) audio.pause();
+    if (_tlBgMusicAudio) _tlBgMusicAudio.pause();
+  };
   video.onplay = () => {
     if (audio) {
       if (!isContinuous) audio.currentTime = audioOffset + video.currentTime;
       audio.play().catch(() => {});
     }
+    if (_tlBgMusicAudio && _tlBgMusicUrl) _tlBgMusicAudio.play().catch(() => {});
   };
   video.onerror = () => { if (loading) loading.classList.remove('active'); };
 }
 
 function playBrollClipPreview(item) {
   if (!_brollPreviewFolderName) return;
-  const { sectionIndex, clipIndex, secNum, clip, audioOffset } = item;
+  const { sectionIndex, clipIndex, secNum, clip, audioOffset, isPause } = item;
 
   const image = document.getElementById('tlPreviewImage');
   const loading = document.getElementById('tlPreviewLoading');
@@ -17924,20 +18172,44 @@ function playBrollClipPreview(item) {
   const sameSectionAutoAdvance = _brollIsAutoAdvancing;
 
   if (placeholder) placeholder.style.display = 'none';
-  if (title) title.textContent = `SecciÃ³n ${secNum} â€” Clip ${clipIndex + 1}: ${clip.sourceFile}`;
-  if (meta) {
-    const parts = [
-      clip.type === 'video' ? 'Video' : 'Imagen',
-      `${clip.duration.toFixed(1)}s`,
-      clip.type === 'video' ? `Corte desde ${formatSeconds(clip.cutFrom)}` : null,
-      `TTS offset: ${formatSeconds(audioOffset)}`
-    ].filter(Boolean);
-    meta.textContent = parts.join('  Â·  ');
+
+  if (isPause) {
+    if (title) title.textContent = `Sección ${secNum} - Pausa (solo música)`;
+    if (meta) meta.textContent = `${clip.duration.toFixed(1)}s  ·  Sin narración`;
+  } else {
+    if (title) title.textContent = `Sección ${secNum} - Clip ${clipIndex + 1}: ${clip.sourceFile}`;
+    if (meta) {
+      const parts = [
+        clip.type === 'video' ? 'Video' : 'Imagen',
+        `${clip.duration.toFixed(1)}s`,
+        clip.type === 'video' ? `Corte desde ${formatSeconds(clip.cutFrom)}` : null,
+        `TTS offset: ${formatSeconds(audioOffset)}`
+      ].filter(Boolean);
+      meta.textContent = parts.join('  ·  ');
+    }
+  }
+
+  // Pause clips: mute TTS, swell background music
+  if (isPause) {
+    if (audio) { audio.pause(); audio.currentTime = 0; }
+    // Swell music to 70% of max
+    if (_tlBgMusicAudio && _tlBgMusicUrl) {
+      const baseVol = (parseInt(document.getElementById('tlMusicVolume')?.value) || 20) / 100;
+      const targetVol = Math.min(0.7, baseVol * 3.5);
+      _swellMusicTo(_tlBgMusicAudio, targetVol, 800);
+      if (_tlBgMusicAudio.paused) _tlBgMusicAudio.play().catch(() => {});
+    }
+  } else {
+    // Restore music to normal volume when not a pause
+    if (_tlBgMusicAudio && _tlBgMusicUrl) {
+      const baseVol = (parseInt(document.getElementById('tlMusicVolume')?.value) || 20) / 100;
+      _swellMusicTo(_tlBgMusicAudio, baseVol, 800);
+    }
   }
 
   // Audio: only seek/reload on section change or manual click. Let it run continuously within a section.
   const isContinuous = sameSectionAutoAdvance;
-  if (!isContinuous) {
+  if (!isPause && !isContinuous) {
     if (audio) {
       const audioSrc = `/api/broll-section-audio/${_brollPreviewFolderName}/${secNum}`;
       if (audio.dataset.currentSec !== String(secNum)) {
@@ -17950,13 +18222,18 @@ function playBrollClipPreview(item) {
 
   if (_brollImageTimer) { clearTimeout(_brollImageTimer); _brollImageTimer = null; }
 
+  // Build preview URL: regular clips vs pause clips use different paths
+  const previewUrlBase = isPause
+    ? `/api/broll-pause-preview/${_brollPreviewFolderName}/${sectionIndex}/${clipIndex}`
+    : `/api/broll-clip-preview/${_brollPreviewFolderName}/${sectionIndex}/${clipIndex}`;
+
   if (clip.type === 'image') {
     const activeVid = getActiveVideo();
     if (activeVid) { clearVideoHandlers(activeVid); activeVid.pause(); }
     image.style.display = 'block';
-    image.src = `/api/broll-clip-preview/${_brollPreviewFolderName}/${sectionIndex}/${clipIndex}?t=${Date.now()}`;
+    image.src = `${previewUrlBase}?t=${Date.now()}`;
     if (loading) loading.classList.remove('active');
-    if (audio) audio.play().catch(() => {});
+    if (!isPause && audio) audio.play().catch(() => {});
     _brollImageTimer = setTimeout(() => { _brollImageTimer = null; advanceToNextClip(); }, clip.duration * 1000);
     preloadNextClip(_brollCurrentFlatIdx);
   } else {
@@ -17968,20 +18245,19 @@ function playBrollClipPreview(item) {
     if (!video) return;
 
     // Bind fresh handlers on the current active video
-    bindVideoHandlers(video, audio, audioOffset, loading, isContinuous);
+    bindVideoHandlers(video, isPause ? null : audio, audioOffset, loading, isContinuous);
 
     if (swapped) {
       if (loading) loading.classList.remove('active');
       video.play().catch(() => {});
-      if (audio) {
+      if (!isPause && audio) {
         if (!isContinuous) audio.currentTime = audioOffset;
         audio.play().catch(() => {});
       }
       preloadNextClip(_brollCurrentFlatIdx);
     } else {
       if (loading) loading.classList.add('active');
-      const previewUrl = `/api/broll-clip-preview/${_brollPreviewFolderName}/${sectionIndex}/${clipIndex}?t=${Date.now()}`;
-      video.src = previewUrl;
+      video.src = `${previewUrlBase}?t=${Date.now()}`;
       video.load();
     }
   }
@@ -18111,6 +18387,48 @@ async function regenerateBrollClipCross(sectionIndex, clipIndex, btnEl) {
     btnEl.classList.remove('spinning');
   }
 }
+
+window.shiftBrollClip = async function(sectionIndex, clipIndex, shiftSeconds, btnEl) {
+  if (!_brollPreviewId || !_brollPreviewFolderName) return;
+  const oldIcon = btnEl.innerHTML;
+  btnEl.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+  btnEl.classList.add('spinning');
+  btnEl.disabled = true;
+
+  try {
+    const res = await fetch('/api/shift-broll-clip', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        previewId: _brollPreviewId,
+        folderName: _brollPreviewFolderName,
+        sectionIndex,
+        clipIndex,
+        shiftSeconds
+      })
+    });
+    
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Error desplazando clip');
+
+    if (data.atLimit) {
+      showNotification('No se puede mover más el clip en esa dirección', 'warning');
+    } else {
+      const flatIdx = _brollFlatClips.findIndex(f => f.sectionIndex === sectionIndex && f.clipIndex === clipIndex);
+      _brollPreviewSections[sectionIndex].clips[clipIndex] = data.clip;
+      _brollFlatClips = buildFlatClipList(_brollPreviewSections);
+      renderBrollTimeline();
+      if (flatIdx !== -1) selectBrollClip(flatIdx);
+      showNotification(`Clip ajustado ${shiftSeconds > 0 ? '+5s' : '-5s'}`, 'success');
+    }
+  } catch (error) {
+    showNotification(`Error: ${error.message}`, 'error');
+  } finally {
+    btnEl.innerHTML = oldIcon;
+    btnEl.classList.remove('spinning');
+    btnEl.disabled = false;
+  }
+};
 
 async function replaceBrollClipWithImage(sectionIndex, clipIndex, btnEl) {
   if (!_brollPreviewId || !_brollPreviewFolderName) return;
@@ -18415,6 +18733,21 @@ function startMusicPreview() {
 
 function stopMusicPreview() {
   if (_tlBgMusicAudio) _tlBgMusicAudio.pause();
+}
+
+let _swellAnimFrame = null;
+function _swellMusicTo(audioEl, targetVol, durationMs) {
+  if (_swellAnimFrame) cancelAnimationFrame(_swellAnimFrame);
+  const startVol = audioEl.volume;
+  const startTime = performance.now();
+  function step(now) {
+    const elapsed = now - startTime;
+    const t = Math.min(1, elapsed / durationMs);
+    audioEl.volume = startVol + (targetVol - startVol) * t;
+    if (t < 1) _swellAnimFrame = requestAnimationFrame(step);
+    else _swellAnimFrame = null;
+  }
+  _swellAnimFrame = requestAnimationFrame(step);
 }
 
 function playEndScreenPreview() {

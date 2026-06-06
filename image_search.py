@@ -1,4 +1,4 @@
-"""Download images using DuckDuckGo search (ddgs).
+﻿"""Download images using DuckDuckGo search (ddgs).
 Usage: echo JSON | python image_search.py
 Input JSON via stdin: {"query": "...", "max_num": 5, "output_dir": "..."}
 """
@@ -20,7 +20,7 @@ def main():
     before = set(f for f in os.listdir(output_dir) if os.path.splitext(f)[1].lower() in img_exts)
 
     # Search for images using DuckDuckGo
-    from duckduckgo_search import DDGS
+    from ddgs import DDGS
 
     try:
         results = DDGS().images(
