@@ -16279,19 +16279,41 @@ app.post('/api/regenerate-broll-clip-cross', async (req, res) => {
     if (!allSections || allSections.length === 0) return res.status(400).json({ error: 'No hay secciones con material' });
 
     // Build pool from ALL sections except current source
+    // Always prioritize videos over images (even if current clip is an image)
     let pool = [];
+    let newClipType = clip.type; // May change from 'image' to 'video'
+
+    // First: try to get VIDEOS from other sections
     for (const sec of allSections) {
-      if (sec.secNum === section.secNum) continue; // Exclude current section
-      const files = clip.type === 'video' ? sec.videoFiles : sec.imageFiles;
-      pool.push(...files);
+      if (sec.secNum === section.secNum) continue;
+      pool.push(...sec.videoFiles);
     }
 
-    // If cross-section pool is empty, fall back to including current section too
+    // If no videos from other sections, try videos from current section too
     if (pool.length === 0) {
       for (const sec of allSections) {
-        const files = clip.type === 'video' ? sec.videoFiles : sec.imageFiles;
-        pool.push(...files);
+        pool.push(...sec.videoFiles);
       }
+    }
+
+    // If still no videos anywhere, fall back to images
+    if (pool.length === 0) {
+      for (const sec of allSections) {
+        if (sec.secNum === section.secNum) continue;
+        pool.push(...sec.imageFiles);
+      }
+      if (pool.length === 0) {
+        for (const sec of allSections) {
+          pool.push(...sec.imageFiles);
+        }
+      }
+    }
+
+    // Determine the actual type based on what we found
+    if (pool.length > 0) {
+      const videoExts = ['.mp4', '.webm', '.mkv', '.avi', '.mov'];
+      const firstExt = path.extname(pool[0]).toLowerCase();
+      newClipType = videoExts.includes(firstExt) ? 'video' : 'image';
     }
 
     if (pool.length === 0) return res.status(400).json({ error: 'No hay material alternativo en otras secciones' });
@@ -16304,7 +16326,7 @@ app.post('/api/regenerate-broll-clip-cross', async (req, res) => {
       : pool[Math.floor(Math.random() * pool.length)];
 
     let newCutFrom = 0;
-    if (clip.type === 'video') {
+    if (newClipType === 'video') {
       let videoDuration;
       try { videoDuration = await getAudioDuration(newSourcePath); } catch { videoDuration = 30; }
       const skipMargin = 20;
@@ -16325,7 +16347,7 @@ app.post('/api/regenerate-broll-clip-cross', async (req, res) => {
     const thumbPath = path.join(thumbsDir, thumbName);
 
     let thumbOk = false;
-    if (clip.type === 'video') {
+    if (newClipType === 'video') {
       thumbOk = await generateVideoThumbnail(newSourcePath, newCutFrom, thumbPath);
     } else {
       thumbOk = await generateImageThumbnail(newSourcePath, thumbPath);
@@ -16334,6 +16356,7 @@ app.post('/api/regenerate-broll-clip-cross', async (req, res) => {
     clip.sourcePath = newSourcePath;
     clip.sourceFile = path.basename(newSourcePath);
     clip.cutFrom = newCutFrom;
+    clip.type = newClipType; // Update type in case it changed (e.g. image → video)
     clip.thumbnail = thumbOk ? thumbName : null;
 
     const cachedPreview = path.join(thumbsDir, `${isPause ? 'pause_' : 'preview_'}sec${section.secNum}_clip${clipIndex}.mp4`);

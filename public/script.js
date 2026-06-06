@@ -18355,22 +18355,11 @@ async function regenerateBrollClipCross(sectionIndex, clipIndex, btnEl) {
     _brollPreviewSections[sectionIndex].clips[clipIndex] = data.clip;
     _brollFlatClips = buildFlatClipList(_brollPreviewSections);
 
+    // If the clip type changed (e.g. image → video), do a full timeline re-render
+    renderBrollTimeline();
+
     const clipEl = document.querySelector(`.tl-clip[data-section="${sectionIndex}"][data-clip="${clipIndex}"]`);
     if (clipEl) {
-      const thumbImg = clipEl.querySelector('.tl-clip-thumb');
-      const placeholder = clipEl.querySelector('.tl-clip-thumb-placeholder');
-      if (data.clip.thumbnail) {
-        const newSrc = `/api/broll-thumbnail/${_brollPreviewFolderName}/${data.clip.thumbnail}?t=${Date.now()}`;
-        if (thumbImg) { thumbImg.src = newSrc; }
-        else if (placeholder) {
-          const img = document.createElement('img');
-          img.className = 'tl-clip-thumb'; img.src = newSrc; img.alt = 'clip';
-          placeholder.replaceWith(img);
-        }
-      }
-      const sourceEl = clipEl.querySelector('.tl-clip-source');
-      if (sourceEl) { sourceEl.textContent = data.clip.sourceFile; sourceEl.title = data.clip.sourceFile; }
-
       // Flash orange for cross-section
       clipEl.style.transition = 'none';
       clipEl.style.borderColor = '#f59e0b';
