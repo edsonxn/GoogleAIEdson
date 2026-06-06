@@ -18402,11 +18402,19 @@ function advanceToNextClip() {
     if (!sameSection && !cur?.isPause) {
       const audio = document.getElementById('tlPreviewAudio');
       if (audio && !audio.paused && audio.currentTime < audio.duration - 0.3) {
+        // Keep last clip's video frame visible while audio finishes
+        // Loop the video or freeze last frame
+        const activeVid = getActiveVideo();
+        if (activeVid && activeVid.ended) {
+          // Replay last second to keep visual alive while audio finishes
+          activeVid.currentTime = Math.max(0, activeVid.duration - 1);
+          activeVid.play().catch(() => {});
+        }
         // Audio still playing — wait for it to end before advancing
         const onAudioEnd = () => {
           audio.removeEventListener('ended', onAudioEnd);
           audio.removeEventListener('pause', onAudioEnd);
-          _brollIsAutoAdvancing = false;
+          _brollIsAutoAdvancing = true;
           selectBrollClip(next);
           _brollIsAutoAdvancing = false;
         };
@@ -18416,8 +18424,9 @@ function advanceToNextClip() {
       }
     }
 
-    // Auto-advance only within same section (pause clips handle their own TTS muting)
-    _brollIsAutoAdvancing = sameSection;
+    // Set auto-advancing flag for ALL transitions (not just same section)
+    // This prevents video.onpause from killing the audio during clip swap
+    _brollIsAutoAdvancing = true;
     selectBrollClip(next);
     _brollIsAutoAdvancing = false;
   } else {
@@ -18499,8 +18508,11 @@ function bindVideoHandlers(video, audio, audioOffset, loading, isContinuous) {
   };
   video.onended = () => { advanceToNextClip(); };
   video.onpause = () => {
-    if (audio) audio.pause();
-    if (_tlBgMusicAudio) _tlBgMusicAudio.pause();
+    // Only pause audio if user manually paused (not during auto-advance/swap)
+    if (!_brollIsAutoAdvancing) {
+      if (audio) audio.pause();
+      if (_tlBgMusicAudio) _tlBgMusicAudio.pause();
+    }
   };
   video.onplay = () => {
     if (audio) {

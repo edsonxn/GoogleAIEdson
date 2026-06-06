@@ -16885,13 +16885,19 @@ async function renderFromPreview(preview, projectPath, projectName, sessionId, c
           proc.on('error', reject);
         });
       } else {
-        // Pad or trim TTS audio to match video duration exactly
+        // Pad or trim TTS audio to match video duration
+        // If TTS audio is longer than video, use audio duration (don't cut TTS)
+        const audioDur = await getMediaDuration(sv.audioPath);
+        const targetDur = Math.max(videoDur, audioDur);
         await new Promise((resolve, reject) => {
-          const args = ['-y', '-i', sv.audioPath, '-af', `apad,atrim=0:${videoDur}`, '-c:a', 'pcm_s16le', '-ar', '44100', '-ac', '2', normalizedPath];
+          const args = ['-y', '-i', sv.audioPath, '-af', `apad,atrim=0:${targetDur}`, '-c:a', 'pcm_s16le', '-ar', '44100', '-ac', '2', normalizedPath];
           const proc = spawn('ffmpeg', args);
           proc.on('close', code => code === 0 ? resolve() : reject(new Error('Audio normalize failed')));
           proc.on('error', reject);
         });
+        if (audioDur > videoDur + 0.5) {
+          console.log(`⚠️ Sec ${sv.numero}: TTS audio (${audioDur.toFixed(2)}s) longer than video (${videoDur.toFixed(2)}s) by ${(audioDur - videoDur).toFixed(2)}s — preserving full audio`);
+        }
       }
       normalizedAudioPaths.push(normalizedPath);
     }
