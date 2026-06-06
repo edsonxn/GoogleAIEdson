@@ -14014,7 +14014,20 @@ app.post('/generate-youtube-metadata', async (req, res) => {
 
   const { model } = await getGoogleAI("gemini-3.5-flash", { context: 'llm' });
     
-    const response = await model.generateContent([{ text: prompt }]);
+    let response;
+    try {
+      response = await model.generateContent([{ text: prompt }]);
+    } catch (genErr) {
+      const isRateLimit = genErr.message.includes('429') || (genErr.status === 429) || genErr.message.includes('Too Many Requests') || genErr.message.includes('Quota exceeded');
+      const isOverloaded = genErr.message.includes('503') || (genErr.status === 503) || genErr.message.includes('overloaded');
+      if (isRateLimit || isOverloaded) {
+        console.warn(`⚠️ API gratuita saturada en metadata. Reintentando con API principal...`);
+        const { model: primaryModel } = await getGoogleAI("gemini-3.5-flash", { context: 'llm', forcePrimary: true });
+        response = await primaryModel.generateContent([{ text: prompt }]);
+      } else {
+        throw genErr;
+      }
+    }
     const responseText = response.response.text();
 
     // Validar que los prompts de miniatura no estén incompletos
@@ -16054,6 +16067,73 @@ app.post('/api/shift-broll-clip', async (req, res) => {
     res.json({ success: true, clip, atLimit });
   } catch (err) {
     console.error('Error shifting clip:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/broll-continue-clip — Copy source from one clip to another, continuing where the first left off
+app.post('/api/broll-continue-clip', async (req, res) => {
+  try {
+    const { previewId, folderName, fromSectionIndex, fromClipIndex, toSectionIndex, toClipIndex } = req.body;
+
+    let preview = brollPreviewData.get(previewId);
+    if (!preview) {
+      const projectPath = resolveProjectPath(folderName);
+      if (!projectPath) return res.status(404).json({ error: 'Proyecto no encontrado' });
+      const previewJsonPath = path.join(projectPath, 'broll_preview.json');
+      if (!fs.existsSync(previewJsonPath)) return res.status(404).json({ error: 'Preview no encontrado' });
+      preview = JSON.parse(fs.readFileSync(previewJsonPath, 'utf8'));
+      brollPreviewData.set(preview.previewId, preview);
+    }
+
+    const fromSection = preview.sections[fromSectionIndex];
+    const toSection = preview.sections[toSectionIndex];
+    if (!fromSection || !toSection) return res.status(400).json({ error: 'Seccion no encontrada' });
+
+    const fromClip = fromSection.clips[fromClipIndex];
+    const toClip = toSection.clips[toClipIndex];
+    if (!fromClip || !toClip) return res.status(400).json({ error: 'Clip no encontrado' });
+    if (fromClip.type !== 'video') return res.status(400).json({ error: 'Solo se puede continuar desde clips de video' });
+
+    // Calculate where the source clip ended
+    const continueCutFrom = fromClip.cutFrom + fromClip.duration;
+
+    // Get source video duration to validate
+    let videoDuration;
+    try { videoDuration = await getMediaDuration(fromClip.sourcePath); } catch { videoDuration = 120; }
+
+    // If the continuation point exceeds the video, wrap to end
+    let newCutFrom = continueCutFrom;
+    if (newCutFrom + toClip.duration > videoDuration) {
+      newCutFrom = Math.max(0, videoDuration - toClip.duration);
+    }
+
+    // Update target clip
+    toClip.sourcePath = fromClip.sourcePath;
+    toClip.sourceFile = fromClip.sourceFile;
+    toClip.type = 'video';
+    toClip.cutFrom = newCutFrom;
+
+    // Generate new thumbnail
+    const thumbsDir = path.join(preview.projectPath, 'broll_thumbs');
+    const thumbName = `sec${toSection.secNum}_clip${toClipIndex}.jpg`;
+    const thumbPath = path.join(thumbsDir, thumbName);
+    const thumbOk = await generateVideoThumbnail(toClip.sourcePath, newCutFrom, thumbPath);
+    toClip.thumbnail = thumbOk ? thumbName : null;
+
+    // Clear cached preview video
+    const cachedPreview = path.join(thumbsDir, `preview_sec${toSection.secNum}_clip${toClipIndex}.mp4`);
+    try { if (fs.existsSync(cachedPreview)) fs.unlinkSync(cachedPreview); } catch {}
+
+    // Save
+    const previewJsonPath = path.join(preview.projectPath, 'broll_preview.json');
+    fs.writeFileSync(previewJsonPath, JSON.stringify(preview, null, 2), 'utf8');
+
+    console.log(`🔗 Clip continuation: sec${fromSection.secNum}[${fromClipIndex}] -> sec${toSection.secNum}[${toClipIndex}] | ${fromClip.sourceFile} @${newCutFrom.toFixed(1)}s`);
+    res.json({ success: true, clip: toClip });
+
+  } catch (err) {
+    console.error('Error continue-clip:', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -19600,6 +19680,9 @@ app.post('/api/broll/analyze', async (req, res) => {
 
     // Generar términos para cada sección basados en su guion individual
     const terms = [];
+    let currentModel = aiModel;
+    let switchedToPrimary = false;
+
     for (const sec of sectionScripts) {
       const prompt = `Eres un asistente experto en buscar videos en YouTube para producción de video (B-roll).
 Tu tarea es extraer términos de búsqueda ÓPTIMOS para YouTube basados en el siguiente guion de UNA sección de video.
@@ -19620,7 +19703,7 @@ GUION DE LA SECCIÓN ${sec.numero}:
 ${sec.text.slice(0, 3000)}`;
 
       try {
-        const result = await aiModel.generateContent(prompt);
+        const result = await currentModel.generateContent(prompt);
         const response = result.response.text();
         const jsonMatch = response.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
@@ -19628,7 +19711,30 @@ ${sec.text.slice(0, 3000)}`;
           terms.push({ ...parsed, sectionNumber: sec.numero });
         }
       } catch (err) {
-        console.error(`⚠️ Error analizando sección ${sec.numero}:`, err.message);
+        const isRateLimit = err.message.includes('429') || (err.status === 429) || err.message.includes('Too Many Requests') || err.message.includes('Quota exceeded');
+        const isOverloaded = err.message.includes('503') || (err.status === 503) || err.message.includes('overloaded');
+
+        if ((isRateLimit || isOverloaded) && !switchedToPrimary) {
+          console.warn(`⚠️ API gratuita saturada en B-Roll analyze sección ${sec.numero}. Cambiando a API principal...`);
+          try {
+            const { model: primaryModel } = await getGoogleAI('gemini-3.5-flash', { context: 'broll', forcePrimary: true });
+            currentModel = primaryModel;
+            switchedToPrimary = true;
+            // Reintentar esta sección con la API principal
+            const retryResult = await currentModel.generateContent(prompt);
+            const retryResponse = retryResult.response.text();
+            const retryMatch = retryResponse.match(/\{[\s\S]*\}/);
+            if (retryMatch) {
+              const parsed = JSON.parse(retryMatch[0]);
+              terms.push({ ...parsed, sectionNumber: sec.numero });
+              continue;
+            }
+          } catch (primaryErr) {
+            console.error(`⚠️ API principal también falló en sección ${sec.numero}:`, primaryErr.message);
+          }
+        } else {
+          console.error(`⚠️ Error analizando sección ${sec.numero}:`, err.message);
+        }
         terms.push({ section: `Sección ${sec.numero}`, terms: [], sectionNumber: sec.numero });
       }
     }
@@ -19841,6 +19947,189 @@ app.get('/api/broll/status/:folderName', (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// POST /api/broll/verify — Verify all sections have B-Roll and re-download for missing ones
+app.post('/api/broll/verify', async (req, res) => {
+  const { folderName, totalSections, maxVideos = 3, maxImages = 0, resolution = '720p' } = req.body;
+  if (!folderName) return res.status(400).json({ error: 'folderName es requerido' });
+
+  const projectPath = resolveProjectPath(folderName);
+  if (!projectPath) return res.status(404).json({ error: 'Proyecto no encontrado' });
+
+  const videoExts = ['.mp4', '.webm', '.mkv', '.avi', '.mov'];
+  const imageExts = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp'];
+  const sections = parseInt(totalSections) || 8;
+
+  const missingSections = [];
+
+  for (let i = 1; i <= sections; i++) {
+    const brollDir = path.join(projectPath, `seccion_${i}`, 'broll');
+    let hasVideos = false;
+    let hasImages = false;
+
+    if (fs.existsSync(brollDir)) {
+      const files = fs.readdirSync(brollDir);
+      hasVideos = files.some(f => {
+        const lower = f.toLowerCase();
+        if (lower.includes('.temp.') || lower.includes('.part')) return false;
+        if (/\.f\d+\.(mp4|webm|m4a|mkv)$/.test(lower)) return false;
+        if (!videoExts.includes(path.extname(lower))) return false;
+        try { return fs.statSync(path.join(brollDir, f)).size > 10000; } catch { return false; }
+      });
+      hasImages = files.some(f => imageExts.includes(path.extname(f).toLowerCase()));
+    }
+
+    // If configured to have videos but doesn't, or doesn't have images when expected
+    const needsVideos = maxVideos > 0 && !hasVideos;
+    const needsImages = maxImages > 0 && !hasImages;
+
+    if (needsVideos || needsImages) {
+      missingSections.push({ secNum: i, needsVideos, needsImages });
+    }
+  }
+
+  if (missingSections.length === 0) {
+    console.log(`✅ [B-Roll Verify] Todas las ${sections} secciones tienen material B-Roll`);
+    return res.json({ allGood: true, missingSections: [] });
+  }
+
+  console.log(`⚠️ [B-Roll Verify] ${missingSections.length} secciones sin B-Roll: ${missingSections.map(s => s.secNum).join(', ')}`);
+
+  // Load saved search results to get terms for missing sections
+  const searchResultsPath = path.join(projectPath, 'broll_search_results.json');
+  let savedSearchResults = null;
+  if (fs.existsSync(searchResultsPath)) {
+    try { savedSearchResults = JSON.parse(fs.readFileSync(searchResultsPath, 'utf8')); } catch {}
+  }
+
+  // Read scripts for missing sections to generate search terms
+  const { spawn } = await import('child_process');
+  const seenUrls = new Set();
+  const downloadSections = [];
+
+  for (const missing of missingSections) {
+    const secNum = missing.secNum;
+    let terms = [];
+
+    // Try to get terms from saved search results first
+    if (savedSearchResults?.results) {
+      const savedSec = savedSearchResults.results.find(r => r.sectionNumber === secNum);
+      if (savedSec) {
+        // Collect terms from the saved search result
+        for (const vg of (savedSec.videos || [])) {
+          if (vg.term) terms.push(vg.term);
+        }
+        if (savedSec.imageTerms) terms.push(...savedSec.imageTerms);
+      }
+    }
+
+    // If no saved terms, read the script and generate new ones with AI
+    if (terms.length === 0) {
+      const scriptPath = path.join(projectPath, `seccion_${secNum}`, `guion_seccion_${secNum}.txt`);
+      if (fs.existsSync(scriptPath)) {
+        const scriptText = fs.readFileSync(scriptPath, 'utf8').slice(0, 3000);
+        const prompt = `Extrae 3 términos de búsqueda cortos para YouTube B-roll de este guion. Devuelve SOLO un JSON: {"terms": ["term1", "term2", "term3"]}. Usa nombres propios en inglés. Guion:\n${scriptText}`;
+        try {
+          const { model: aiModel } = await getGoogleAI('gemini-3.5-flash', { context: 'broll' });
+          const result = await aiModel.generateContent(prompt);
+          const jsonMatch = result.response.text().match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            const parsed = JSON.parse(jsonMatch[0]);
+            terms = parsed.terms || [];
+          }
+        } catch (err) {
+          const isRateLimit = err.message.includes('429') || (err.status === 429) || err.message.includes('Too Many Requests') || err.message.includes('Quota exceeded') || err.message.includes('503') || err.message.includes('overloaded');
+          if (isRateLimit) {
+            console.warn(`⚠️ [B-Roll Verify] API gratuita saturada para sección ${secNum}. Reintentando con API principal...`);
+            try {
+              const { model: primaryModel } = await getGoogleAI('gemini-3.5-flash', { context: 'broll', forcePrimary: true });
+              const retryResult = await primaryModel.generateContent(prompt);
+              const retryMatch = retryResult.response.text().match(/\{[\s\S]*\}/);
+              if (retryMatch) {
+                const parsed = JSON.parse(retryMatch[0]);
+                terms = parsed.terms || [];
+              }
+            } catch (primaryErr) {
+              console.warn(`⚠️ [B-Roll Verify] API principal también falló para sección ${secNum}:`, primaryErr.message);
+            }
+          } else {
+            console.warn(`⚠️ [B-Roll Verify] No se pudieron generar términos para sección ${secNum}:`, err.message);
+          }
+        }
+      }
+    }
+
+    if (terms.length === 0) {
+      console.warn(`⚠️ [B-Roll Verify] Sin términos para sección ${secNum}, saltando`);
+      continue;
+    }
+
+    // Search YouTube for this section
+    const sectionDir = path.join(projectPath, `seccion_${secNum}`, 'broll');
+    if (!fs.existsSync(sectionDir)) fs.mkdirSync(sectionDir, { recursive: true });
+
+    const urls = [];
+    const imageTermsForSection = [];
+
+    if (missing.needsVideos) {
+      for (const term of terms) {
+        try {
+          const found = await brollSearchAndValidate(term, `Sección ${secNum}`, maxVideos, 20, 'normal', seenUrls, spawn);
+          urls.push(...found.map(v => v.url).filter(Boolean));
+        } catch (err) {
+          console.warn(`⚠️ [B-Roll Verify] Error buscando "${term}":`, err.message);
+        }
+      }
+    }
+
+    if (missing.needsImages) {
+      imageTermsForSection.push(...terms);
+    }
+
+    if (urls.length > 0 || imageTermsForSection.length > 0) {
+      downloadSections.push({ secNum, sectionDir, urls, imageTerms: imageTermsForSection });
+    }
+  }
+
+  if (downloadSections.length === 0) {
+    console.warn(`⚠️ [B-Roll Verify] No se encontró material nuevo para descargar`);
+    return res.json({ allGood: false, missingSections: missingSections.map(s => s.secNum), repairStarted: false });
+  }
+
+  // Start download job for missing sections only
+  const jobId = 'repair_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  const videos = [];
+  const imageTasks = [];
+
+  for (const ds of downloadSections) {
+    for (const url of ds.urls) {
+      videos.push({
+        url, outputDir: ds.sectionDir, section: `Sección ${ds.secNum}`,
+        title: '', status: 'pending', percent: 0, speed: '', size: '', error: ''
+      });
+    }
+    for (const term of ds.imageTerms) {
+      imageTasks.push({
+        term, maxImages, outputDir: ds.sectionDir, section: `Sección ${ds.secNum}`,
+        status: 'pending', downloaded: 0, error: ''
+      });
+    }
+  }
+
+  brollDownloadProgress.set(jobId, { videos, imageTasks, done: false, folder: projectPath });
+  brollDownloadAll(jobId, resolution);
+
+  console.log(`🔧 [B-Roll Verify] Reparando ${downloadSections.length} secciones (${videos.length} videos, ${imageTasks.length} img tasks) — Job: ${jobId}`);
+
+  res.json({
+    allGood: false,
+    missingSections: missingSections.map(s => s.secNum),
+    repairStarted: true,
+    jobId,
+    totalVideos: videos.length,
+    totalImageTasks: imageTasks.length
+  });
 });
 
 // ─── Helpers B-Roll ───

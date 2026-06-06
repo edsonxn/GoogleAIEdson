@@ -1295,6 +1295,8 @@ function updateImageCapsules(projectKey, sectionIndex, completedImages, totalIma
 // B-ROLL DOWNLOAD PROGRESS
 // =====================================
 let _brollPollingInterval = null;
+let _brollDonePromiseResolve = null;
+let _brollDonePromise = null;
 
 function initBrollProgressUI(projectKey, totalVideos, totalImages) {
   const totalItems = totalVideos + totalImages;
@@ -1430,6 +1432,7 @@ function startBrollPolling(projectKey, jobId) {
       if (!resp.ok) {
         clearInterval(_brollPollingInterval);
         _brollPollingInterval = null;
+        if (_brollDonePromiseResolve) { _brollDonePromiseResolve(); _brollDonePromiseResolve = null; }
         return;
       }
       const data = await resp.json();
@@ -1438,6 +1441,8 @@ function startBrollPolling(projectKey, jobId) {
       if (data.done) {
         clearInterval(_brollPollingInterval);
         _brollPollingInterval = null;
+        console.log('🎬 B-Roll: Descarga completada');
+        if (_brollDonePromiseResolve) { _brollDonePromiseResolve(); _brollDonePromiseResolve = null; }
       }
     } catch (e) {
       console.warn('B-Roll polling error:', e.message);
@@ -2939,7 +2944,9 @@ async function runAutoGeneration() {
       const _brollNumSections = parseInt(document.getElementById('sectionsNumber')?.value) || 8;
       const _brollFolder = folderName;
       const _brollProjectKey = primaryProject.folderName;
-      // Fire and forget - no await
+      // Create promise that will resolve when B-Roll download finishes
+      _brollDonePromise = new Promise((resolve) => { _brollDonePromiseResolve = resolve; });
+      // Fire and forget - no await (awaited later before completion screen)
       fetch('/api/broll/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -2969,12 +2976,14 @@ async function runAutoGeneration() {
               startBrollPolling(_brollProjectKey, dlData.jobId);
             } else {
               console.warn('⚠️ B-Roll download no devolvio jobId:', dlData);
+              if (_brollDonePromiseResolve) { _brollDonePromiseResolve(); _brollDonePromiseResolve = null; }
             }
-          }).catch(e => console.warn('⚠️ B-Roll download fetch error:', e.message));
+          }).catch(e => { console.warn('⚠️ B-Roll download fetch error:', e.message); if (_brollDonePromiseResolve) { _brollDonePromiseResolve(); _brollDonePromiseResolve = null; } });
         } else {
           console.warn('⚠️ B-Roll search no devolvio results. Keys:', searchData ? Object.keys(searchData) : 'null');
+          if (_brollDonePromiseResolve) { _brollDonePromiseResolve(); _brollDonePromiseResolve = null; }
         }
-      }).catch(e => console.warn('⚠️ B-Roll chain error:', e.message));
+      }).catch(e => { console.warn('⚠️ B-Roll chain error:', e.message); if (_brollDonePromiseResolve) { _brollDonePromiseResolve(); _brollDonePromiseResolve = null; } });
     }
     const projectData = phase1Data.data;
   const resolvedImageModel = normalizeImageModel(projectData?.imageModel || selectedImageModel);
@@ -3654,6 +3663,67 @@ async function runAutoGeneration() {
     console.log('ðŸŽ‰'.repeat(50));
     
     // ðŸ“Š COMPLETAR BARRA DE PROGRESO (solo para proyectos Ãºnicos)
+    // ===============================================================
+    // FASE FINAL B-ROLL: ESPERAR DESCARGA Y VERIFICAR SECCIONES
+    // ===============================================================
+    if (_brollMaxVids > 0 || _brollMaxImgs > 0) {
+      if (_brollDonePromise) {
+        console.log('Esperando a que la descarga de B-Roll termine...');
+        await _brollDonePromise;
+        _brollDonePromise = null;
+        console.log('Descarga inicial de B-Roll completada');
+      }
+
+      console.log('Verificando B-Roll de cada seccion...');
+      try {
+        const verifyResp = await fetch('/api/broll/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            folderName,
+            totalSections,
+            maxVideos: _brollMaxVids,
+            maxImages: _brollMaxImgs,
+            resolution: document.getElementById('brollResolution')?.value || '720p'
+          })
+        });
+        const verifyData = await verifyResp.json();
+
+        if (verifyData.allGood) {
+          console.log('Todas las secciones tienen B-Roll completo');
+        } else if (verifyData.repairStarted && verifyData.jobId) {
+          console.log('Reparando B-Roll para secciones: ' + verifyData.missingSections.join(', '));
+
+          const _brollRepairKey = primaryProject?.folderName || folderName;
+          initBrollProgressUI(_brollRepairKey, verifyData.totalVideos || 0, verifyData.totalImageTasks || 0);
+
+          await new Promise((resolve) => {
+            const repairPoll = setInterval(async () => {
+              try {
+                const statusResp = await fetch('/api/broll/download/status/' + verifyData.jobId);
+                if (!statusResp.ok) { clearInterval(repairPoll); resolve(); return; }
+                const statusData = await statusResp.json();
+                updateBrollProgress(_brollRepairKey, statusData.videos || [], statusData.imageTasks || [], statusData.done);
+                if (statusData.done) {
+                  clearInterval(repairPoll);
+                  console.log('Reparacion de B-Roll completada');
+                  resolve();
+                }
+              } catch (e) {
+                console.warn('Error polling reparacion B-Roll:', e.message);
+                clearInterval(repairPoll);
+                resolve();
+              }
+            }, 2000);
+          });
+        } else if (!verifyData.allGood) {
+          console.warn('Secciones sin B-Roll: ' + (verifyData.missingSections || []).join(', '));
+        }
+      } catch (verifyErr) {
+        console.warn('Error verificando B-Roll:', verifyErr.message);
+      }
+    }
+
     const hasMultipleProjects = projectProgressContainers.size > 1;
     if (!hasMultipleProjects) {
       completeProgressBar('Â¡GeneraciÃ³n automÃ¡tica completada exitosamente!');
@@ -17866,6 +17936,89 @@ function renderBrollTimeline() {
 
   container.innerHTML = html;
 
+  // ─── Drag & Drop: continue a clip into another ───
+  container.querySelectorAll('.tl-clip:not(.tl-clip-pause)').forEach(clipEl => {
+    clipEl.draggable = true;
+
+    clipEl.addEventListener('dragstart', (e) => {
+      const si = clipEl.dataset.section;
+      const ci = clipEl.dataset.clip;
+      if (si == null || ci == null) return;
+      e.dataTransfer.setData('text/plain', JSON.stringify({ sectionIndex: parseInt(si), clipIndex: parseInt(ci) }));
+      e.dataTransfer.effectAllowed = 'copy';
+      clipEl.classList.add('tl-clip-dragging');
+    });
+
+    clipEl.addEventListener('dragend', () => {
+      clipEl.classList.remove('tl-clip-dragging');
+      container.querySelectorAll('.tl-clip-dragover').forEach(el => el.classList.remove('tl-clip-dragover'));
+    });
+
+    clipEl.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+      clipEl.classList.add('tl-clip-dragover');
+    });
+
+    clipEl.addEventListener('dragleave', () => {
+      clipEl.classList.remove('tl-clip-dragover');
+    });
+
+    clipEl.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      clipEl.classList.remove('tl-clip-dragover');
+      let from;
+      try { from = JSON.parse(e.dataTransfer.getData('text/plain')); } catch { return; }
+      const toSI = parseInt(clipEl.dataset.section);
+      const toCI = parseInt(clipEl.dataset.clip);
+      if (isNaN(toSI) || isNaN(toCI)) return;
+      // Don't drop on itself
+      if (from.sectionIndex === toSI && from.clipIndex === toCI) return;
+
+      // Show loading on target
+      clipEl.style.opacity = '0.5';
+      try {
+        const resp = await fetch('/api/broll-continue-clip', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            previewId: _brollPreviewId,
+            folderName: _brollPreviewFolderName,
+            fromSectionIndex: from.sectionIndex,
+            fromClipIndex: from.clipIndex,
+            toSectionIndex: toSI,
+            toClipIndex: toCI
+          })
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || 'Error');
+
+        _brollPreviewSections[toSI].clips[toCI] = data.clip;
+        _brollFlatClips = buildFlatClipList(_brollPreviewSections);
+        renderBrollTimeline();
+
+        // Flash green on the target clip after re-render
+        const newClipEl = container.querySelector(`.tl-clip[data-section="${toSI}"][data-clip="${toCI}"]`);
+        if (newClipEl) {
+          newClipEl.style.transition = 'none';
+          newClipEl.style.borderColor = '#22c55e';
+          newClipEl.style.boxShadow = '0 0 12px rgba(34,197,94,0.5)';
+          setTimeout(() => { newClipEl.style.transition = 'all 0.3s'; newClipEl.style.borderColor = ''; newClipEl.style.boxShadow = ''; }, 800);
+        }
+
+        // Auto-play the updated clip in the preview
+        const flatIdx = _brollFlatClips.findIndex(f => f.sectionIndex === toSI && f.clipIndex === toCI && !f.isPause);
+        if (flatIdx !== -1) selectBrollClip(flatIdx);
+
+        showNotification('Clip continuado exitosamente', 'success');
+      } catch (err) {
+        showNotification('Error: ' + err.message, 'error');
+      } finally {
+        clipEl.style.opacity = '';
+      }
+    });
+  });
+
   // Reset player to placeholder state
   const placeholder = document.getElementById('tlPreviewPlaceholder');
   const video = document.getElementById('tlPreviewVideo');
@@ -18060,11 +18213,30 @@ function selectBrollClip(flatIdx) {
 function advanceToNextClip() {
   const next = _brollCurrentFlatIdx + 1;
   if (next < _brollFlatClips.length) {
-    // Check if same section - if so, mark auto-advancing (audio stays untouched)
     const cur = _brollFlatClips[_brollCurrentFlatIdx];
     const nxt = _brollFlatClips[next];
+    const sameSection = cur && nxt && cur.secNum === nxt.secNum;
+
+    // If switching sections AND TTS audio is still playing, wait for it to finish
+    if (!sameSection && !cur?.isPause) {
+      const audio = document.getElementById('tlPreviewAudio');
+      if (audio && !audio.paused && audio.currentTime < audio.duration - 0.3) {
+        // Audio still playing — wait for it to end before advancing
+        const onAudioEnd = () => {
+          audio.removeEventListener('ended', onAudioEnd);
+          audio.removeEventListener('pause', onAudioEnd);
+          _brollIsAutoAdvancing = false;
+          selectBrollClip(next);
+          _brollIsAutoAdvancing = false;
+        };
+        audio.addEventListener('ended', onAudioEnd);
+        audio.addEventListener('pause', onAudioEnd);
+        return; // Don't advance yet
+      }
+    }
+
     // Auto-advance only within same section (pause clips handle their own TTS muting)
-    _brollIsAutoAdvancing = cur && nxt && cur.secNum === nxt.secNum;
+    _brollIsAutoAdvancing = sameSection;
     selectBrollClip(next);
     _brollIsAutoAdvancing = false;
   } else {
