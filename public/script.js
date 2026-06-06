@@ -17972,6 +17972,40 @@ function renderBrollTimeline() {
       const toSI = parseInt(clipEl.dataset.section);
       const toCI = parseInt(clipEl.dataset.clip);
       if (isNaN(toSI) || isNaN(toCI)) return;
+
+      // ── Pool clip drop (from grid panel) ──
+      if (from.pool) {
+        clipEl.style.opacity = '0.5';
+        try {
+          const resp = await fetch('/api/broll-apply-pool-clip', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              folderName: _brollPreviewFolderName,
+              sourceSecNum: from.secNum,
+              sourceFile: from.sourceFile,
+              cutAt: from.cutAt || 0,
+              targetSectionIndex: toSI,
+              targetClipIndex: toCI,
+              isPause: false
+            })
+          });
+          const data = await resp.json();
+          if (!resp.ok) throw new Error(data.error || 'Error');
+          _brollPreviewSections[toSI].clips[toCI] = data.clip;
+          _brollFlatClips = buildFlatClipList(_brollPreviewSections);
+          _skipPoolReload = true;
+          renderBrollTimeline();
+          const flatIdx = _brollFlatClips.findIndex(f => f.sectionIndex === toSI && f.clipIndex === toCI && !f.isPause);
+          if (flatIdx !== -1) selectBrollClip(flatIdx);
+          showNotification('Clip aplicado desde pool', 'success');
+        } catch (err) {
+          showNotification('Error: ' + err.message, 'error');
+        } finally { clipEl.style.opacity = ''; }
+        return;
+      }
+
+      // ── Continue-clip drop (from another timeline clip) ──
       // Don't drop on itself
       if (from.sectionIndex === toSI && from.clipIndex === toCI) return;
 
@@ -18026,6 +18060,146 @@ function renderBrollTimeline() {
   if (placeholder) placeholder.style.display = 'flex';
   if (video) video.removeAttribute('src');
   if (image) image.style.display = 'none';
+
+  // Load pool grids only on first render (not on clip updates)
+  if (!_skipPoolReload && !document.querySelector('.tl-grid-clip')) {
+    loadPoolGrids();
+  }
+  _skipPoolReload = false;
+}
+
+// ═══ Pool Grid System (Side Panels) ═══
+let _poolCurrentSection = 0; // Track which section the left panel shows
+let _skipPoolReload = false; // Skip grid reload on timeline re-render
+
+// ═══ Resizable Panel Dividers ═══
+(function initPanelResizers() {
+  let activeResizer = null, startX = 0, startWidth = 0, targetPanel = null;
+
+  function onMouseDown(e) {
+    e.preventDefault();
+    activeResizer = e.target;
+    activeResizer.classList.add('active');
+    startX = e.clientX;
+    const isLeft = activeResizer.id === 'tlResizerLeft';
+    targetPanel = document.getElementById(isLeft ? 'tlPoolPanelLeft' : 'tlPoolPanelRight');
+    if (!targetPanel) return;
+    startWidth = targetPanel.getBoundingClientRect().width;
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }
+
+  function onMouseMove(e) {
+    if (!targetPanel) return;
+    const isLeft = activeResizer.id === 'tlResizerLeft';
+    const delta = e.clientX - startX;
+    const newWidth = isLeft ? startWidth + delta : startWidth - delta;
+    const clamped = Math.max(140, Math.min(500, newWidth));
+    targetPanel.style.width = clamped + 'px';
+  }
+
+  function onMouseUp() {
+    if (activeResizer) activeResizer.classList.remove('active');
+    activeResizer = null;
+    targetPanel = null;
+    document.removeEventListener('mousemove', onMouseMove);
+    document.removeEventListener('mouseup', onMouseUp);
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  }
+
+  // Attach after DOM ready
+  document.addEventListener('DOMContentLoaded', () => {
+    const rl = document.getElementById('tlResizerLeft');
+    const rr = document.getElementById('tlResizerRight');
+    if (rl) rl.addEventListener('mousedown', onMouseDown);
+    if (rr) rr.addEventListener('mousedown', onMouseDown);
+  });
+})();
+
+function loadPoolGrids() {
+  if (!_brollPreviewFolderName || !_brollPreviewSections || _brollPreviewSections.length === 0) return;
+  // Determine current section from selected clip
+  if (_brollCurrentFlatIdx >= 0 && _brollFlatClips[_brollCurrentFlatIdx]) {
+    _poolCurrentSection = _brollFlatClips[_brollCurrentFlatIdx].sectionIndex;
+  } else {
+    _poolCurrentSection = 0;
+  }
+  refreshPoolGrid('section');
+  refreshPoolGrid('all');
+}
+
+async function refreshPoolGrid(mode) {
+  if (!_brollPreviewFolderName) return;
+  const isSection = mode === 'section';
+  const gridEl = document.getElementById(isSection ? 'tlPoolGridSection' : 'tlPoolGridAll');
+  const regenBtn = gridEl?.closest('.tl-side-panel')?.querySelector('.tl-side-panel-regen');
+  if (!gridEl) return;
+
+  // Update left panel title with current section number
+  if (isSection) {
+    const titleEl = gridEl.closest('.tl-side-panel')?.querySelector('.tl-side-panel-title');
+    if (titleEl && _brollPreviewSections[_poolCurrentSection]) {
+      titleEl.innerHTML = `<i class="fas fa-th"></i> Clips Sec ${_brollPreviewSections[_poolCurrentSection].secNum}`;
+    }
+  }
+
+  gridEl.innerHTML = '<div class="tl-clip-grid-loading"><i class="fas fa-spinner fa-spin"></i> Cargando...</div>';
+  if (regenBtn) regenBtn.classList.add('spinning');
+
+  try {
+    const params = new URLSearchParams({ limit: '6', videoOnly: '1' });
+    if (isSection) params.set('section', _poolCurrentSection.toString());
+    const resp = await fetch(`/api/broll-pool/${encodeURIComponent(_brollPreviewFolderName)}?${params}`);
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Error');
+
+    if (!data.clips || data.clips.length === 0) {
+      gridEl.innerHTML = '<div class="tl-clip-grid-empty">No hay clips disponibles</div>';
+      return;
+    }
+
+    gridEl.innerHTML = '';
+    for (const pc of data.clips) {
+      const div = document.createElement('div');
+      div.className = 'tl-grid-clip' + (pc.isUsed ? ' is-used' : '');
+      div.draggable = true;
+      div.title = `${pc.sourceFile} (Sec ${pc.secNum})`;
+
+      const thumbUrl = pc.thumbnail
+        ? `/api/broll-thumbnail/${encodeURIComponent(_brollPreviewFolderName)}/${pc.thumbnail}?t=${Date.now()}`
+        : '';
+      div.innerHTML = `
+        ${thumbUrl ? `<img src="${thumbUrl}" alt="${pc.sourceFile}" loading="lazy">` : '<div class="tl-grid-clip-placeholder"><i class="fas fa-image"></i></div>'}
+        <span class="tl-grid-clip-badge ${pc.type}">${pc.type === 'video' ? 'VID' : 'IMG'}</span>
+        <span class="tl-grid-clip-sec">S${pc.secNum}</span>
+      `;
+
+      // Drag start: set pool data
+      div.addEventListener('dragstart', (e) => {
+        e.dataTransfer.setData('text/plain', JSON.stringify({
+          pool: true,
+          secNum: pc.secNum,
+          sourceFile: pc.sourceFile,
+          type: pc.type,
+          cutAt: pc.cutAt || 0
+        }));
+        e.dataTransfer.effectAllowed = 'copy';
+        div.classList.add('dragging');
+      });
+      div.addEventListener('dragend', () => {
+        div.classList.remove('dragging');
+      });
+
+      gridEl.appendChild(div);
+    }
+  } catch (err) {
+    gridEl.innerHTML = `<div class="tl-clip-grid-empty">Error: ${err.message}</div>`;
+  } finally {
+    if (regenBtn) regenBtn.classList.remove('spinning');
+  }
 }
 
 async function adjustBrollPause(sectionIndex, delta) {
@@ -18207,6 +18381,13 @@ function selectBrollClip(flatIdx) {
 
   const item = _brollFlatClips[flatIdx];
   if (!item) return;
+
+  // Update left panel if section changed
+  if (item.sectionIndex !== _poolCurrentSection) {
+    _poolCurrentSection = item.sectionIndex;
+    refreshPoolGrid('section');
+  }
+
   playBrollClipPreview(item);
 }
 
@@ -18703,7 +18884,7 @@ async function confirmBrollRender() {
     // Upload end screen clip and background music if present
     let endScreenPath = null;
     let bgMusicPath = null;
-    const musicVolume = parseInt(document.getElementById('tlMusicVolume')?.value) || 20;
+    const musicVolume = parseInt(document.getElementById('tlMusicVolume')?.value) || 13;
 
     if (_tlEndScreenFile || _tlBgMusicFile) {
       const formData = new FormData();
@@ -18848,7 +19029,7 @@ function handleMusicDrop(e) {
     _tlBgMusicAudio.loop = true;
   }
   _tlBgMusicAudio.src = _tlBgMusicUrl;
-  _tlBgMusicAudio.volume = (parseInt(document.getElementById('tlMusicVolume')?.value) || 20) / 100;
+  _tlBgMusicAudio.volume = (parseInt(document.getElementById('tlMusicVolume')?.value) || 13) / 100;
 }
 
 function removeBackgroundMusic() {

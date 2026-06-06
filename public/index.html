@@ -1015,24 +1015,57 @@
               </button>
             </div>
           </div>
-          <div class="tl-player-area">
-            <div class="tl-player-info">
-              <div id="tlPreviewTitle" class="tl-player-title">Selecciona un clip</div>
-              <div id="tlPreviewMeta" class="tl-player-meta"></div>
-            </div>
-            <div class="tl-player-video-wrap">
-              <video id="tlPreviewVideo" class="tl-vid-active" controls muted></video>
-              <video id="tlPreviewVideoNext" class="tl-vid-standby" muted preload="auto"></video>
-              <img id="tlPreviewImage" style="display: none;">
-              <div id="tlPreviewPlaceholder" class="tl-player-placeholder">
-                <i class="fas fa-hand-pointer"></i>
-                <span>Haz click en un clip para previsualizarlo</span>
+          <div class="tl-main-layout">
+            <!-- Left Panel: Current Section Clips Grid -->
+            <div class="tl-side-panel tl-side-panel-left" id="tlPoolPanelLeft">
+              <div class="tl-side-panel-header">
+                <span class="tl-side-panel-title"><i class="fas fa-th"></i> Clips de esta secci&oacute;n</span>
+                <button class="tl-side-panel-regen" onclick="refreshPoolGrid('section')" title="Cargar nuevos clips aleatorios">
+                  <i class="fas fa-sync-alt"></i>
+                </button>
               </div>
-              <div id="tlPreviewLoading" class="tl-player-loading">
-                <i class="fas fa-spinner fa-spin"></i>
+              <div class="tl-clip-grid" id="tlPoolGridSection"></div>
+            </div>
+
+            <!-- Resizer Left -->
+            <div class="tl-resizer" id="tlResizerLeft"></div>
+
+            <!-- Center: Player -->
+            <div class="tl-center-column">
+              <div class="tl-player-area">
+                <div class="tl-player-info">
+                  <div id="tlPreviewTitle" class="tl-player-title">Selecciona un clip</div>
+                  <div id="tlPreviewMeta" class="tl-player-meta"></div>
+                </div>
+                <div class="tl-player-video-wrap">
+                  <video id="tlPreviewVideo" class="tl-vid-active" controls muted></video>
+                  <video id="tlPreviewVideoNext" class="tl-vid-standby" muted preload="auto"></video>
+                  <img id="tlPreviewImage" style="display: none;">
+                  <div id="tlPreviewPlaceholder" class="tl-player-placeholder">
+                    <i class="fas fa-hand-pointer"></i>
+                    <span>Haz click en un clip para previsualizarlo</span>
+                  </div>
+                  <div id="tlPreviewLoading" class="tl-player-loading">
+                    <i class="fas fa-spinner fa-spin"></i>
+                  </div>
+                </div>
+                <audio id="tlPreviewAudio" preload="none"></audio>
               </div>
             </div>
-            <audio id="tlPreviewAudio" preload="none"></audio>
+
+            <!-- Resizer Right -->
+            <div class="tl-resizer" id="tlResizerRight"></div>
+
+            <!-- Right Panel: All Sections Clips Grid -->
+            <div class="tl-side-panel tl-side-panel-right" id="tlPoolPanelRight">
+              <div class="tl-side-panel-header">
+                <span class="tl-side-panel-title"><i class="fas fa-globe"></i> Todas las secciones</span>
+                <button class="tl-side-panel-regen" onclick="refreshPoolGrid('all')" title="Cargar nuevos clips aleatorios">
+                  <i class="fas fa-sync-alt"></i>
+                </button>
+              </div>
+              <div class="tl-clip-grid" id="tlPoolGridAll"></div>
+            </div>
           </div>
           <div class="tl-timeline-area">
             <div id="brollTimelineContainer" class="tl-flat-timeline"></div>
@@ -1061,8 +1094,8 @@
             </div>
             <div class="tl-music-volume">
               <i class="fas fa-volume-down"></i>
-              <input type="range" id="tlMusicVolume" min="0" max="100" value="20" oninput="updateMusicVolume(this.value)">
-              <span id="tlMusicVolumeLabel">20%</span>
+              <input type="range" id="tlMusicVolume" min="0" max="100" value="13" oninput="updateMusicVolume(this.value)">
+              <span id="tlMusicVolumeLabel">13%</span>
             </div>
           </div>
         </div>

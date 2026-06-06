@@ -15780,6 +15780,244 @@ app.post('/api/generate-broll-preview', async (req, res) => {
   }
 });
 
+// GET /api/broll-pool/:folderName — Returns available broll clips per section for the clip grid panels
+app.get('/api/broll-pool/:folderName', async (req, res) => {
+  try {
+    const { folderName } = req.params;
+    const sectionFilter = req.query.section != null ? parseInt(req.query.section) : null; // null = all sections
+    const limit = parseInt(req.query.limit) || 6;
+    const videoOnly = req.query.videoOnly === '1';
+
+    const projectPath = resolveProjectPath(folderName);
+    if (!projectPath) return res.status(404).json({ error: 'Proyecto no encontrado' });
+
+    const previewJsonPath = path.join(projectPath, 'broll_preview.json');
+    let preview;
+    try {
+      preview = JSON.parse(fs.readFileSync(previewJsonPath, 'utf8'));
+    } catch {
+      return res.status(404).json({ error: 'Preview no encontrado' });
+    }
+
+    const videoExts = ['.mp4', '.webm', '.mkv', '.avi', '.mov'];
+    const imageExts = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp'];
+    const thumbsDir = path.join(projectPath, 'broll_thumbs');
+    if (!fs.existsSync(thumbsDir)) fs.mkdirSync(thumbsDir, { recursive: true });
+
+    // Collect used source files from the current timeline to de-prioritize them
+    const usedSources = new Set();
+    for (const sec of preview.sections) {
+      for (const c of sec.clips) usedSources.add(c.sourcePath);
+      if (sec.pauseClips) for (const c of sec.pauseClips) usedSources.add(c.sourcePath);
+    }
+
+    const poolClips = [];
+    // For section mode: scan target section first, then all others to fill up
+    let sectionsToScan;
+    if (sectionFilter != null) {
+      const targetSec = preview.sections[sectionFilter];
+      const others = preview.sections.filter((s, i) => i !== sectionFilter);
+      sectionsToScan = targetSec ? [targetSec, ...others] : preview.sections;
+    } else {
+      sectionsToScan = preview.sections;
+    }
+
+    for (const sec of sectionsToScan) {
+      const secNum = sec.secNum;
+      const brollPath = (() => {
+        const newPath = path.join(projectPath, `seccion_${secNum}`, 'broll');
+        if (fs.existsSync(newPath)) return newPath;
+        const legacyDir = path.join(projectPath, 'broll');
+        if (fs.existsSync(legacyDir)) {
+          const match = fs.readdirSync(legacyDir).find(f => {
+            const num = parseInt(f.split(' - ')[0]);
+            return num === secNum && fs.statSync(path.join(legacyDir, f)).isDirectory();
+          });
+          if (match) return path.join(legacyDir, match);
+        }
+        return null;
+      })();
+      if (!brollPath) continue;
+
+      const files = fs.readdirSync(brollPath);
+      const vids = files.filter(f => {
+        const lower = f.toLowerCase();
+        if (lower.includes('.temp.') || lower.includes('.part')) return false;
+        if (/\.f\d+\.(mp4|webm|m4a|mkv)$/.test(lower)) return false;
+        if (!videoExts.includes(path.extname(lower))) return false;
+        try { return fs.statSync(path.join(brollPath, f)).size > 10000; } catch { return false; }
+      });
+      const imgs = files.filter(f => imageExts.includes(path.extname(f).toLowerCase()));
+
+      // Combine: videos first, then images (or video-only)
+      const allFiles = [
+        ...vids.map(f => ({ file: f, type: 'video' })),
+        ...(videoOnly ? [] : imgs.map(f => ({ file: f, type: 'image' })))
+      ];
+
+      for (const item of allFiles) {
+        const fullPath = path.join(brollPath, item.file);
+        const isUsed = usedSources.has(fullPath);
+        poolClips.push({
+          secNum,
+          sectionIndex: preview.sections.indexOf(sec),
+          type: item.type,
+          sourceFile: item.file,
+          sourcePath: fullPath,
+          isUsed,
+        });
+      }
+    }
+
+    // Shuffle all clips (no priority — same clip can appear with different random cut points)
+    for (let i = poolClips.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [poolClips[i], poolClips[j]] = [poolClips[j], poolClips[i]]; }
+    // If fewer clips than limit, duplicate with different entries to fill
+    while (poolClips.length < limit && poolClips.length > 0) {
+      const clone = { ...poolClips[Math.floor(Math.random() * poolClips.length)] };
+      poolClips.push(clone);
+    }
+    const result = poolClips.slice(0, limit);
+
+    // Generate thumbnails with random cut points for each pool clip
+    for (const pc of result) {
+      let cutAt = 0;
+      if (pc.type === 'video') {
+        let dur = 30;
+        try { dur = await getAudioDuration(pc.sourcePath); } catch {}
+        // Random cut point for variety
+        const safeStart = Math.min(10, dur * 0.15);
+        const safeEnd = Math.max(dur - 10, dur * 0.85);
+        cutAt = safeStart + Math.random() * (safeEnd - safeStart);
+        pc.cutAt = cutAt;
+      }
+      const cutSuffix = pc.type === 'video' ? `_${Math.floor(cutAt)}` : '';
+      const thumbName = `pool_${pc.secNum}_${pc.sourceFile.replace(/[^a-zA-Z0-9._-]/g, '_')}${cutSuffix}.jpg`;
+      const thumbPath = path.join(thumbsDir, thumbName);
+      // Always regenerate thumbnail for video (random cut point)
+      try {
+        if (pc.type === 'video') {
+          await generateVideoThumbnail(pc.sourcePath, cutAt, thumbPath);
+        } else {
+          if (!fs.existsSync(thumbPath)) await generateImageThumbnail(pc.sourcePath, thumbPath);
+        }
+      } catch {}
+      pc.thumbnail = thumbName;
+      // Remove full path from response (security)
+      delete pc.sourcePath;
+    }
+
+    res.json({ success: true, clips: result, total: poolClips.length });
+  } catch (error) {
+    console.error('Error broll-pool:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/broll-apply-pool-clip — Apply a pool clip to a timeline position
+app.post('/api/broll-apply-pool-clip', async (req, res) => {
+  try {
+    const { folderName, sourceSecNum, sourceFile, cutAt, targetSectionIndex, targetClipIndex, isPause } = req.body;
+
+    const projectPath = resolveProjectPath(folderName);
+    if (!projectPath) return res.status(404).json({ error: 'Proyecto no encontrado' });
+
+    const previewJsonPath = path.join(projectPath, 'broll_preview.json');
+    let preview;
+    try {
+      preview = JSON.parse(fs.readFileSync(previewJsonPath, 'utf8'));
+    } catch {
+      return res.status(404).json({ error: 'Preview no encontrado' });
+    }
+    // Also set in memory
+    brollPreviewData.set(preview.previewId, preview);
+
+    const targetSection = preview.sections[targetSectionIndex];
+    if (!targetSection) return res.status(400).json({ error: 'Sección destino no encontrada' });
+    const clipArray = isPause ? (targetSection.pauseClips || []) : targetSection.clips;
+    const targetClip = clipArray[targetClipIndex];
+    if (!targetClip) return res.status(400).json({ error: 'Clip destino no encontrado' });
+
+    // Find the source file on disk
+    const sourceSec = preview.sections.find(s => s.secNum === sourceSecNum);
+    if (!sourceSec) return res.status(400).json({ error: 'Sección fuente no encontrada' });
+    const secNum = sourceSec.secNum;
+    const brollPath = (() => {
+      const newPath = path.join(projectPath, `seccion_${secNum}`, 'broll');
+      if (fs.existsSync(newPath)) return newPath;
+      const legacyDir = path.join(projectPath, 'broll');
+      if (fs.existsSync(legacyDir)) {
+        const match = fs.readdirSync(legacyDir).find(f => {
+          const num = parseInt(f.split(' - ')[0]);
+          return num === secNum && fs.statSync(path.join(legacyDir, f)).isDirectory();
+        });
+        if (match) return path.join(legacyDir, match);
+      }
+      return null;
+    })();
+    if (!brollPath) return res.status(400).json({ error: 'Carpeta broll no encontrada' });
+
+    const fullSourcePath = path.join(brollPath, sourceFile);
+    if (!fs.existsSync(fullSourcePath)) return res.status(404).json({ error: 'Archivo fuente no encontrado' });
+
+    const videoExts = ['.mp4', '.webm', '.mkv', '.avi', '.mov'];
+    const isVideo = videoExts.includes(path.extname(sourceFile).toLowerCase());
+
+    // Use provided cut point from pool, or calculate random one
+    let newCutFrom = 0;
+    if (isVideo) {
+      if (cutAt != null && cutAt > 0) {
+        newCutFrom = cutAt;
+      } else {
+        let videoDuration;
+        try { videoDuration = await getAudioDuration(fullSourcePath); } catch { videoDuration = 30; }
+        const skipMargin = 20;
+        const safeStart = Math.min(skipMargin, videoDuration * 0.3);
+        const safeEnd = Math.max(videoDuration - skipMargin, videoDuration * 0.7);
+        const usableRange = safeEnd - targetClip.duration - safeStart;
+        if (usableRange > 0) {
+          newCutFrom = safeStart + Math.random() * usableRange;
+        } else {
+          newCutFrom = Math.random() * Math.max(0, videoDuration - targetClip.duration);
+        }
+      }
+    }
+
+    // Generate thumbnail
+    const thumbsDir = path.join(projectPath, 'broll_thumbs');
+    const thumbPrefix = isPause ? 'pause_' : '';
+    const thumbName = `${thumbPrefix}sec${targetSection.secNum}_clip${targetClipIndex}.jpg`;
+    const thumbPath = path.join(thumbsDir, thumbName);
+
+    let thumbOk = false;
+    if (isVideo) {
+      thumbOk = await generateVideoThumbnail(fullSourcePath, newCutFrom, thumbPath);
+    } else {
+      thumbOk = await generateImageThumbnail(fullSourcePath, thumbPath);
+    }
+
+    // Update clip data
+    targetClip.type = isVideo ? 'video' : 'image';
+    targetClip.sourcePath = fullSourcePath;
+    targetClip.sourceFile = sourceFile;
+    targetClip.cutFrom = newCutFrom;
+    targetClip.thumbnail = thumbOk ? thumbName : null;
+    targetClip.zoomEffect = isVideo ? undefined : true;
+
+    // Delete cached preview
+    const cachedPreview = path.join(thumbsDir, `${isPause ? 'pause_' : 'preview_'}sec${targetSection.secNum}_clip${targetClipIndex}.mp4`);
+    try { if (fs.existsSync(cachedPreview)) fs.unlinkSync(cachedPreview); } catch {}
+
+    // Save
+    fs.writeFileSync(previewJsonPath, JSON.stringify(preview, null, 2), 'utf8');
+
+    console.log(`🎬 Pool clip aplicado: ${sourceFile} → sec${targetSection.secNum} clip${targetClipIndex}`);
+    res.json({ success: true, clip: targetClip });
+  } catch (error) {
+    console.error('Error broll-apply-pool-clip:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // GET /api/broll-thumbnail/:folderName/:filename
 app.get('/api/broll-thumbnail/:folderName/:filename', (req, res) => {
   const { folderName, filename } = req.params;
@@ -16496,7 +16734,7 @@ app.post('/api/broll-upload-assets', multer({ dest: path.join(process.cwd(), 'te
 // POST /api/render-broll-video — Render from confirmed preview sequence
 app.post('/api/render-broll-video', async (req, res) => {
   try {
-    const { previewId, folderName, videoConfig = {}, endScreenPath = null, bgMusicPath = null, bgMusicVolume = 0.2 } = req.body;
+    const { previewId, folderName, videoConfig = {}, endScreenPath = null, bgMusicPath = null, bgMusicVolume = 0.13 } = req.body;
     if (!folderName) return res.status(400).json({ error: 'Nombre de carpeta requerido' });
 
     const projectPath = resolveProjectPath(folderName);
@@ -16536,7 +16774,7 @@ app.post('/api/render-broll-video', async (req, res) => {
 });
 
 async function renderFromPreview(preview, projectPath, projectName, sessionId, cfg, extras = {}) {
-  const { endScreenPath = null, bgMusicPath = null, bgMusicVolume = 0.2 } = extras;
+  const { endScreenPath = null, bgMusicPath = null, bgMusicVolume = 0.13 } = extras;
   const tempDir = path.join(process.cwd(), 'temp', `broll_render_${Date.now()}`);
   if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 
