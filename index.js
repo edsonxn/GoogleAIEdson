@@ -1892,21 +1892,33 @@ async function generateUniversalContent(model, promptOrHistory, systemInstructio
       if (isOllama) {
         // Usar Ollama local
         const ollamaModelName = model.startsWith('ollama:') ? model.replace('ollama:', '') : (OLLAMA_DEFAULT_MODEL || 'gemma3:4b');
-        let promptText = '';
+        let result;
         if (Array.isArray(promptOrHistory)) {
-          // Convertir historial de conversación a texto plano para Ollama
-          promptText = promptOrHistory.map(h => {
-            const role = h.role === 'model' ? 'assistant' : h.role;
-            return `${role}: ${h.parts[0].text}`;
-          }).join('\n\n');
+          // Multi-turn: usar /api/chat — limitar historial para no reventar contexto
+          // Solo enviar el último par de mensajes (contexto previo + prompt actual)
+          const trimmedHistory = promptOrHistory.length > 4
+            ? promptOrHistory.slice(-4)
+            : promptOrHistory;
+          const messages = trimmedHistory.map(h => ({
+            role: h.role === 'model' ? 'assistant' : h.role,
+            content: h.parts[0].text,
+          }));
+          if (systemInstruction) {
+            messages.unshift({ role: 'system', content: systemInstruction });
+          }
+          console.log(`🏠 Ollama chat: ${messages.length} mensajes (de ${promptOrHistory.length} original)`);
+          result = await ollamaClient.chat(messages, {
+            model: ollamaModelName,
+            temperature: 0.7,
+          });
         } else {
-          promptText = promptOrHistory;
+          // Single prompt: usar /api/generate
+          result = await ollamaClient.generateText(promptOrHistory, {
+            model: ollamaModelName,
+            system: systemInstruction || undefined,
+            temperature: 0.7,
+          });
         }
-        const result = await ollamaClient.generateText(promptText, {
-          model: ollamaModelName,
-          system: systemInstruction || undefined,
-          temperature: 0.7,
-        });
         console.log(`✅ Contenido generado con Ollama (${ollamaModelName}) - ${result.tokensPerSecond?.toFixed(1) || '?'} tok/s`);
         return result.text;
 

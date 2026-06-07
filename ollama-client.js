@@ -66,6 +66,7 @@ class OllamaClient {
             options: {
                 temperature,
                 num_predict: maxTokens,
+                num_ctx: 32768,
             },
         };
 
@@ -89,14 +90,14 @@ class OllamaClient {
         return {
             text: data.response || '',
             model: data.model,
-            totalDuration: data.total_duration ? (data.total_duration / 1e9).toFixed(2) : null, // nanoseconds → seconds
+            totalDuration: data.total_duration ? data.total_duration / 1e9 : null,
             tokensPerSecond: data.eval_count && data.eval_duration
-                ? (data.eval_count / (data.eval_duration / 1e9)).toFixed(1)
+                ? data.eval_count / (data.eval_duration / 1e9)
                 : null,
         };
     }
 
-    /**
+    /** 
      * Chat-style completion (multi-turn)
      * @param {Array<{role: string, content: string}>} messages
      * @param {object} options
@@ -119,6 +120,7 @@ class OllamaClient {
                 options: {
                     temperature,
                     num_predict: maxTokens,
+                    num_ctx: 32768,
                 },
             }),
         });
@@ -133,9 +135,9 @@ class OllamaClient {
         return {
             text: data.message?.content || '',
             model: data.model,
-            totalDuration: data.total_duration ? (data.total_duration / 1e9).toFixed(2) : null,
+            totalDuration: data.total_duration ? data.total_duration / 1e9 : null,
             tokensPerSecond: data.eval_count && data.eval_duration
-                ? (data.eval_count / (data.eval_duration / 1e9)).toFixed(1)
+                ? data.eval_count / (data.eval_duration / 1e9)
                 : null,
         };
     }
