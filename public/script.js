@@ -11857,7 +11857,7 @@ function updateProjectButtons(project) {
     // Actualizar visibility del botÃ³n de regenerar audios
     const regenerateAudioBtn = document.getElementById('regenerateApplioAudiosBtn');
     if (regenerateAudioBtn) {
-      regenerateAudioBtn.style.display = 'inline-flex';
+      regenerateAudioBtn.style.display = 'flex';
       console.log('ðŸŽ¤ BotÃ³n de regenerar audios mostrado para proyecto cargado');
     }
     
@@ -11887,20 +11887,20 @@ function updateProjectButtons(project) {
     // Actualizar visibility del botÃ³n de descargar zip (mostrar siempre que haya proyecto cargado)
     const downloadZipBtn = document.getElementById('downloadProjectZipBtn');
     if (downloadZipBtn) {
-      downloadZipBtn.style.display = 'inline-flex';
+      downloadZipBtn.style.display = 'flex';
       console.log('ðŸ“¦ BotÃ³n de descargar proyecto (ZIP) mostrado para proyecto cargado');
     }
 
     // Mostrar botÃ³n de Descargar Contenido (B-Roll)
     const brollQuickBtn = document.getElementById('brollQuickBtn');
     if (brollQuickBtn) {
-      brollQuickBtn.style.display = 'inline-flex';
+      brollQuickBtn.style.display = 'flex';
     }
 
     // Mostrar botÃ³n de Generar Video con B-Roll
     const generateBrollVideoBtn = document.getElementById('generateBrollVideoBtn');
     if (generateBrollVideoBtn) {
-      generateBrollVideoBtn.style.display = 'inline-flex';
+      generateBrollVideoBtn.style.display = 'flex';
     }
 
     // Actualizar visibility del panel de traducciÃ³n
@@ -14193,7 +14193,7 @@ function showVideoGenerationButton() {
   
   // Mostrar el botÃ³n si Applio estÃ¡ activado O si hay un proyecto cargado (para permitir generar audios faltantes)
   if (regenerateAudioBtn && ((applioCheckbox && applioCheckbox.checked) || window.currentProject)) {
-    regenerateAudioBtn.style.display = 'inline-flex';
+    regenerateAudioBtn.style.display = 'flex';
     console.log('ðŸŽ¤ BotÃ³n de generar audios faltantes mostrado');
   } else {
     if (regenerateAudioBtn) {

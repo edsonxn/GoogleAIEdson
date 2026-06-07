@@ -880,7 +880,7 @@
           <span>Generar</span>
         </button>
 
-        <button id="generateAudioBtn" class="btn btn-audio" style="display: none;">
+        <button id="generateAudioBtn" class="btn btn-audio" style="display: none !important; visibility: hidden;">
           <i class="fas fa-microphone"></i>
           <span>Generar Audio</span>
         </button>
@@ -958,30 +958,32 @@
     <!-- Botón de Generación de Video Manual -->
     <div id="videoGenerationContainer" style="display: none;" class="video-generation-section">
       <div class="video-generation-wrapper">
-        <button id="regenerateApplioAudiosBtn" class="regenerate-audio-btn" style="display: none;">
-          <i class="fas fa-microphone-alt"></i>
-          <span>Generar Audios Faltantes</span>
-        </button>
+        <div class="action-tiles-row">
+          <button id="regenerateApplioAudiosBtn" class="action-tile" style="display: none;">
+            <i class="fas fa-microphone-alt"></i>
+            <span>Audios Faltantes</span>
+          </button>
 
-        <button id="generateYouTubeMetadataBtn" class="generate-youtube-metadata-btn" style="display: none;">
-          <i class="fas fa-youtube"></i>
-          <span>Generar Metadatos</span>
-        </button>
+          <button id="generateYouTubeMetadataBtn" class="action-tile" style="display: none;">
+            <i class="fab fa-youtube"></i>
+            <span>Metadatos</span>
+          </button>
 
-        <button id="downloadProjectZipBtn" class="download-project-zip-btn" style="display: none;">
-          <i class="fas fa-file-archive"></i>
-          <span>Descargar Proyecto (ZIP)</span>
-        </button>
+          <button id="downloadProjectZipBtn" class="action-tile" style="display: none;">
+            <i class="fas fa-file-archive"></i>
+            <span>Descargar ZIP</span>
+          </button>
 
-        <button id="brollQuickBtn" class="download-project-zip-btn" style="display: none; background: linear-gradient(135deg, #6366f1, #8b5cf6);">
-          <i class="fas fa-film"></i>
-          <span>Descargar Contenido (B-Roll)</span>
-        </button>
+          <button id="brollQuickBtn" class="action-tile" style="display: none;">
+            <i class="fas fa-film"></i>
+            <span>Contenido B-Roll</span>
+          </button>
 
-        <button id="generateBrollVideoBtn" class="download-project-zip-btn" style="display: none; background: linear-gradient(135deg, #0891b2, #06b6d4);">
-          <i class="fas fa-clapperboard"></i>
-          <span>Generar Video con B-Roll</span>
-        </button>
+          <button id="generateBrollVideoBtn" class="action-tile" style="display: none;">
+            <i class="fas fa-clapperboard"></i>
+            <span>Video B-Roll</span>
+          </button>
+        </div>
 
         <div id="brollVideoProgressContainer" style="display: none; margin-top: 10px; padding: 12px; background: rgba(0,0,0,0.3); border-radius: 8px; border: 1px solid #4a5568;">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
