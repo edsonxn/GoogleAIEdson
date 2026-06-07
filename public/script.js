@@ -18572,12 +18572,13 @@ function playBrollClipPreview(item) {
     }
   }
 
-  // Audio: only seek/reload on section change or manual click. Let it run continuously within a section.
-  const isContinuous = sameSectionAutoAdvance;
+  // Audio: always reload on section change, let it run continuously within a section.
+  const isSameSection = audio && audio.dataset.currentSec === String(secNum);
+  const isContinuous = sameSectionAutoAdvance && isSameSection;
   if (!isPause && !isContinuous) {
     if (audio) {
       const audioSrc = `/api/broll-section-audio/${_brollPreviewFolderName}/${secNum}`;
-      if (audio.dataset.currentSec !== String(secNum)) {
+      if (!isSameSection) {
         audio.src = audioSrc;
         audio.dataset.currentSec = String(secNum);
       }

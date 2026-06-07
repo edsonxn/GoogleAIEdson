@@ -15812,12 +15812,11 @@ app.get('/api/broll-pool/:folderName', async (req, res) => {
     }
 
     const poolClips = [];
-    // For section mode: scan target section first, then all others to fill up
+    // For section mode: ONLY scan the target section (not others)
     let sectionsToScan;
     if (sectionFilter != null) {
       const targetSec = preview.sections[sectionFilter];
-      const others = preview.sections.filter((s, i) => i !== sectionFilter);
-      sectionsToScan = targetSec ? [targetSec, ...others] : preview.sections;
+      sectionsToScan = targetSec ? [targetSec] : [];
     } else {
       sectionsToScan = preview.sections;
     }
