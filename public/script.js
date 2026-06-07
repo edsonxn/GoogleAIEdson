@@ -9044,19 +9044,18 @@ async function generateYouTubeMetadata() {
 
 // FunciÃ³n para mostrar los resultados de metadata de YouTube
 function showYouTubeMetadataResults(metadata, topic) {
-  console.log("ðŸ“º Mostrando resultados de metadata de YouTube");
+  console.log("Mostrando resultados de metadata de YouTube");
 
   const metadataContainer = document.createElement('div');
   metadataContainer.className = 'youtube-metadata-container';
   
-  // Procesar el texto de metadata para separar secciones
   const sections = parseMetadata(metadata);
   
   metadataContainer.innerHTML = `
     <div class="youtube-metadata-panel collapsed">
       <div class="youtube-metadata-header" onclick="toggleMainMetadataPanel(this)">
         <h3>
-          <i class="fas fa-youtube"></i> Metadata para YouTube
+          <i class="fab fa-youtube" style="color:#ff4444"></i> Metadata para YouTube
           <span class="metadata-topic-inline">- ${topic}</span>
         </h3>
         <i class="fas fa-chevron-right main-toggle-icon"></i>
@@ -9065,113 +9064,97 @@ function showYouTubeMetadataResults(metadata, topic) {
       <div class="youtube-metadata-content">
         <div class="metadata-section collapsible">
           <div class="section-header" onclick="toggleMetadataSection(this)">
-            <h3><i class="fas fa-fire"></i> TÃ­tulos Clickbait</h3>
+            <h3><i class="fas fa-fire"></i> Titulos Clickbait</h3>
             <i class="fas fa-chevron-down toggle-icon"></i>
           </div>
-        <div class="section-content">
-          <div class="titles-list">
-            ${sections.titles.map(title => `
-              <div class="title-item">
-                <span class="title-text">${title}</span>
-                <button class="copy-btn" onclick="copyToClipboard('${title.replace(/'/g, "\\'")}')">
-                  <i class="fas fa-copy"></i>
-                </button>
-              </div>
-            `).join('')}
+          <div class="section-content">
+            <div class="titles-list">
+              ${sections.titles.map((title, idx) => `
+                <div class="title-item" id="titleItem${idx}">
+                  <span class="title-text">${title}</span>
+                  <div class="title-actions">
+                    <button class="title-translate-btn" onclick="event.stopPropagation(); translateTitle(${idx}, this)" title="Traducir a 5 idiomas">
+                      <i class="fas fa-globe"></i>
+                    </button>
+                    <button class="copy-btn" onclick="copyToClipboard('${title.replace(/'/g, "\\'")}')">
+                      <i class="fas fa-copy"></i>
+                    </button>
+                  </div>
+                  <div class="title-translations" id="titleTranslations${idx}" style="display:none"></div>
+                </div>
+              `).join('')}
+            </div>
           </div>
         </div>
-      </div>
-      
-      <div class="metadata-section collapsible">
-        <div class="section-header" onclick="toggleMetadataSection(this)">
-          <h3><i class="fas fa-file-text"></i> DescripciÃ³n SEO</h3>
-          <i class="fas fa-chevron-down toggle-icon"></i>
-        </div>
-        <div class="section-content">
-          <div class="description-container">
-            <textarea class="description-text" readonly>${sections.description}</textarea>
-            <button class="copy-btn-large" onclick="copyToClipboard(\`${sections.description.replace(/`/g, '\\`').replace(/\$/g, '\\$')}\`)">
-              <i class="fas fa-copy"></i> Copiar DescripciÃ³n
-            </button>
+        
+        <div class="metadata-section collapsible">
+          <div class="section-header" onclick="toggleMetadataSection(this)">
+            <h3><i class="fas fa-align-left"></i> Descripcion SEO</h3>
+            <i class="fas fa-chevron-down toggle-icon"></i>
           </div>
-      </div>
-    </div>
-    
-    <div class="metadata-section collapsible">
-      <div class="section-header" onclick="toggleMetadataSection(this)">
-        <h3><i class="fas fa-tags"></i> Etiquetas (25)</h3>
-        <i class="fas fa-chevron-down toggle-icon"></i>
-      </div>
-      <div class="section-content">
-        <div class="tags-container">
-          <div class="tags-display">
-            ${sections.tags.map(tag => `<span class="tag-item">${tag}</span>`).join('')}
-          </div>
-          <button class="copy-btn-large" onclick="copyToClipboard('${sections.tagsString.replace(/'/g, "\\'")}')">
-            <i class="fas fa-copy"></i> Copiar Etiquetas
-          </button>
-        </div>
-      </div>
-    </div>
-    
-    <div class="metadata-section collapsible">
-      <div class="section-header" onclick="toggleMetadataSection(this)">
-        <h3><i class="fas fa-image"></i> Prompts para Miniaturas (5)</h3>
-        <i class="fas fa-chevron-down toggle-icon"></i>
-      </div>
-      <div class="section-content">
-        <div class="thumbnails-container">
-          <p class="thumbnails-description">
-            <i class="fas fa-info-circle"></i> 
-            Usa estos prompts para generar miniaturas llamativas en herramientas de IA como DALL-E, Midjourney o Stable Diffusion
-          </p>
-          <div class="thumbnails-list">
-            ${sections.thumbnailPrompts.map((prompt, index) => `
-              <div class="thumbnail-item">
-                <div class="thumbnail-number">${index + 1}</div>
-                <div class="thumbnail-content">
-                  <span class="thumbnail-text">${prompt}</span>
-                  <button class="copy-btn" onclick="copyToClipboard('${prompt.replace(/'/g, "\\'")}')">
-                    <i class="fas fa-copy"></i>
+          <div class="section-content">
+            <div class="description-container">
+              <textarea class="description-text" readonly>${sections.description}</textarea>
+              <div class="desc-actions-row">
+                <div class="desc-left-btns">
+                  <button class="copy-btn-large" onclick="copyToClipboard(document.querySelector('.description-text').value)">
+                    <i class="fas fa-copy"></i> Copiar
+                  </button>
+                  <button class="copy-btn-large desc-translate-main" id="btnTranslateDesc" onclick="translateDescriptionAll(this)">
+                    <i class="fas fa-globe"></i> Traducir
                   </button>
                 </div>
+                <div class="desc-translate-btns">
+                  <button class="desc-lang-btn desc-lang-pending" data-lang="en" onclick="copyDescTranslation('en')" title="No traducido aun">EN</button>
+                  <button class="desc-lang-btn desc-lang-pending" data-lang="fr" onclick="copyDescTranslation('fr')" title="No traducido aun">FR</button>
+                  <button class="desc-lang-btn desc-lang-pending" data-lang="de" onclick="copyDescTranslation('de')" title="No traducido aun">DE</button>
+                  <button class="desc-lang-btn desc-lang-pending" data-lang="ko" onclick="copyDescTranslation('ko')" title="No traducido aun">KO</button>
+                  <button class="desc-lang-btn desc-lang-pending" data-lang="ru" onclick="copyDescTranslation('ru')" title="No traducido aun">RU</button>
+                </div>
               </div>
-            `).join('')}
+              <div id="descTranslationResult" style="display:none"></div>
+            </div>
           </div>
-          <button class="copy-btn-large" onclick="copyAllThumbnailPrompts(${JSON.stringify(sections.thumbnailPrompts).replace(/"/g, '&quot;')})">
-            <i class="fas fa-copy"></i> Copiar Todos los Prompts
+        </div>
+        
+        <div class="metadata-section collapsible">
+          <div class="section-header" onclick="toggleMetadataSection(this)">
+            <h3><i class="fas fa-tags"></i> Etiquetas (${sections.tags.length})</h3>
+            <i class="fas fa-chevron-down toggle-icon"></i>
+          </div>
+          <div class="section-content">
+            <div class="tags-container">
+              <div class="tags-display">
+                ${sections.tags.map(tag => `<span class="tag-item">${tag}</span>`).join('')}
+              </div>
+              <button class="copy-btn-large" onclick="copyToClipboard('${sections.tagsString.replace(/'/g, "\\'")}')">
+                <i class="fas fa-copy"></i> Copiar Etiquetas
+              </button>
+            </div>
+          </div>
+        </div>
+        
+        <div class="metadata-actions">
+          <button class="btn btn-primary" onclick="downloadYouTubeMetadata('${topic}', \`${metadata.replace(/`/g, '\\`').replace(/\$/g, '\\$')}\`)">
+            <i class="fas fa-download"></i> Descargar
           </button>
         </div>
       </div>
-    </div>
-    
-    <div class="metadata-actions">
-      <button class="btn btn-primary" onclick="downloadYouTubeMetadata('${topic}', \`${metadata.replace(/`/g, '\\`').replace(/\$/g, '\\$')}\`)">
-        <i class="fas fa-download"></i> Descargar Metadata
-      </button>
-    </div>
     </div>
   `;
   
   output.appendChild(metadataContainer);
   
-  // Ajustar altura del textarea de descripciÃ³n al contenido
   const descriptionTextarea = metadataContainer.querySelector('.description-text');
   if (descriptionTextarea) {
-    // FunciÃ³n para ajustar altura automÃ¡ticamente
-    function adjustTextareaHeight(textarea) {
-      textarea.style.height = 'auto';
-      textarea.style.height = (textarea.scrollHeight + 10) + 'px';
-    }
-    
-    // Ajustar inmediatamente
-    setTimeout(() => adjustTextareaHeight(descriptionTextarea), 50);
+    setTimeout(() => {
+      descriptionTextarea.style.height = 'auto';
+      descriptionTextarea.style.height = (descriptionTextarea.scrollHeight + 10) + 'px';
+    }, 50);
   }
   
-  // Inicializar secciones como colapsadas excepto la primera
   initializeCollapsedSections();
   
-  // Inicializar panel principal como colapsado por defecto
   const mainPanel = output.querySelector('.youtube-metadata-panel');
   if (mainPanel) {
     mainPanel.classList.add('collapsed');
@@ -9182,18 +9165,130 @@ function showYouTubeMetadataResults(metadata, topic) {
     }
   }
   
-  // ðŸŽ¬ MOSTRAR BOTÃ“N DE GENERACIÃ“N DE VIDEO DESPUÃ‰S DE METADATOS
-  // Solo mostrar si no se ha habilitado la generaciÃ³n automÃ¡tica
   if (!shouldGenerateVideoAutomatically()) {
     showVideoGenerationButton();
   }
   
-  // Scroll suave hacia el nuevo contenido
   setTimeout(() => {
     metadataContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, 100);
 }
 
+async function translateTitle(titleIdx, btnEl) {
+  const titleItem = document.getElementById('titleItem' + titleIdx);
+  const translationsDiv = document.getElementById('titleTranslations' + titleIdx);
+  if (!titleItem || !translationsDiv) return;
+
+  const titleText = titleItem.querySelector('.title-text')?.textContent?.trim();
+  if (!titleText) return;
+
+  if (translationsDiv.dataset.loaded === 'true') {
+    translationsDiv.style.display = translationsDiv.style.display === 'none' ? 'flex' : 'none';
+    return;
+  }
+
+  btnEl.disabled = true;
+  btnEl.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+
+  try {
+    const resp = await fetch('/api/translate-title', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: titleText })
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Error');
+
+    translationsDiv.innerHTML = data.translations.map(t => `
+      <div class="translation-row">
+        <span class="translation-flag">${t.flag}</span>
+        <span class="translation-text">${t.text}</span>
+        <button class="copy-btn-sm" onclick="event.stopPropagation(); copyToClipboard('${t.text.replace(/'/g, "\\'")}')" title="Copiar"><i class="fas fa-copy"></i></button>
+      </div>
+    `).join('');
+    translationsDiv.dataset.loaded = 'true';
+    translationsDiv.style.display = 'flex';
+  } catch (err) {
+    translationsDiv.innerHTML = '<div class="translation-row" style="color:#ef4444">Error: ' + err.message + '</div>';
+    translationsDiv.style.display = 'flex';
+  } finally {
+    btnEl.disabled = false;
+    btnEl.innerHTML = '<i class="fas fa-globe"></i>';
+  }
+}
+
+// Store translated descriptions globally
+let _descTranslations = {};
+
+async function translateDescriptionAll(btnEl) {
+  const descTextarea = document.querySelector('.description-text');
+  const resultDiv = document.getElementById('descTranslationResult');
+  if (!descTextarea || !resultDiv) return;
+
+  const description = descTextarea.value.trim();
+  if (!description) return;
+
+  // If already translated, toggle visibility
+  if (Object.keys(_descTranslations).length > 0) {
+    resultDiv.style.display = resultDiv.style.display === 'none' ? 'block' : 'none';
+    return;
+  }
+
+  btnEl.disabled = true;
+  btnEl.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Traduciendo...';
+
+  try {
+    const resp = await fetch('/api/translate-description', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ description })
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Error');
+
+    // Store translations
+    _descTranslations = {};
+    data.translations.forEach(t => { _descTranslations[t.code] = t.text; });
+
+    // Update language buttons to ready state
+    document.querySelectorAll('.desc-lang-btn').forEach(btn => {
+      const lang = btn.dataset.lang;
+      if (_descTranslations[lang]) {
+        btn.classList.remove('desc-lang-pending');
+        btn.classList.add('desc-lang-ready');
+        btn.title = 'Click para copiar';
+      }
+    });
+
+    // Show compact preview
+    const previews = data.translations.map(t => {
+      const preview = t.text.substring(0, 120) + (t.text.length > 120 ? '...' : '');
+      return `<div class="desc-translation-box">
+        <div class="desc-translation-header">
+          <span class="desc-translation-lang">${t.flag} ${t.code.toUpperCase()}</span>
+          <button class="copy-btn-sm" onclick="event.stopPropagation(); copyToClipboard(_descTranslations['${t.code}'])" title="Copiar"><i class="fas fa-copy"></i></button>
+        </div>
+        <div class="desc-translation-preview">${preview}</div>
+      </div>`;
+    }).join('');
+    resultDiv.innerHTML = previews;
+    resultDiv.style.display = 'block';
+  } catch (err) {
+    resultDiv.innerHTML = `<div class="desc-translation-box" style="border-color:rgba(239,68,68,0.3)"><span style="color:#ef4444">Error: ${err.message}</span></div>`;
+    resultDiv.style.display = 'block';
+  } finally {
+    btnEl.disabled = false;
+    btnEl.innerHTML = '<i class="fas fa-globe"></i> Traducir';
+  }
+}
+
+function copyDescTranslation(langCode) {
+  if (!_descTranslations[langCode]) {
+    showNotification('Primero traduce la descripcion con el boton Traducir', 'warning');
+    return;
+  }
+  copyToClipboard(_descTranslations[langCode]);
+}
 // FunciÃ³n para parsear la metadata y extraer secciones
 function parseMetadata(metadata) {
   const lines = metadata.split('\n');

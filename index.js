@@ -14182,6 +14182,148 @@ Generado automáticamente por el sistema de creación de contenido
   }
 });
 
+// POST /api/translate-title — Translate a single title to multiple languages
+app.post('/api/translate-title', async (req, res) => {
+  try {
+    const { title } = req.body;
+    if (!title) return res.status(400).json({ error: 'Título requerido' });
+
+    const languages = [
+      { code: 'en', name: 'English', flag: '🇺🇸' },
+      { code: 'fr', name: 'French', flag: '🇫🇷' },
+      { code: 'de', name: 'German', flag: '🇩🇪' },
+      { code: 'ko', name: 'Korean', flag: '🇰🇷' },
+      { code: 'ru', name: 'Russian', flag: '🇷🇺' }
+    ];
+
+    const prompt = `Translate the following YouTube video title to these languages: English, French, German, Korean, Russian.
+Keep the clickbait style, energy and capitalized emphasis words. Do NOT add quotes around the translations.
+Output ONLY the translations in this exact format (one per line):
+EN: [translation]
+FR: [translation]
+DE: [translation]
+KO: [translation]
+RU: [translation]
+
+Title to translate: "${title}"`;
+
+    let response;
+    try {
+      const { model } = await getGoogleAI("gemini-3.5-flash", { context: 'llm' });
+      response = await model.generateContent([{ text: prompt }]);
+    } catch (genErr) {
+      const isRateLimit = genErr.message?.includes('429') || genErr.status === 429 || genErr.message?.includes('Too Many Requests') || genErr.message?.includes('Quota exceeded');
+      const isOverloaded = genErr.message?.includes('503') || genErr.status === 503 || genErr.message?.includes('overloaded');
+      if (isRateLimit || isOverloaded) {
+        console.warn('⚠️ API gratuita saturada en translate-title. Reintentando con API principal...');
+        const { model: primaryModel } = await getGoogleAI("gemini-3.5-flash", { context: 'llm', forcePrimary: true });
+        response = await primaryModel.generateContent([{ text: prompt }]);
+      } else {
+        throw genErr;
+      }
+    }
+
+    const text = response.response.text();
+    const translations = [];
+    for (const lang of languages) {
+      const regex = new RegExp(`${lang.code.toUpperCase()}:\\s*(.+)`, 'i');
+      const match = text.match(regex);
+      translations.push({
+        code: lang.code,
+        name: lang.name,
+        flag: lang.flag,
+        text: match ? match[1].trim() : ''
+      });
+    }
+
+    res.json({ success: true, translations });
+  } catch (error) {
+    console.error('Error traduciendo titulo:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/translate-description — Translate a YouTube description to all 5 languages
+app.post('/api/translate-description', async (req, res) => {
+  try {
+    const { description } = req.body;
+    if (!description) return res.status(400).json({ error: 'Descripcion requerida' });
+
+    const langs = [
+      { code: 'en', name: 'English', flag: '🇺🇸' },
+      { code: 'fr', name: 'French', flag: '🇫🇷' },
+      { code: 'de', name: 'German', flag: '🇩🇪' },
+      { code: 'ko', name: 'Korean', flag: '🇰🇷' },
+      { code: 'ru', name: 'Russian', flag: '🇷🇺' }
+    ];
+
+    const prompt = `Translate the following YouTube video description into these 5 languages: English, French, German, Korean, Russian.
+Keep the same formatting, emojis, timestamps, and call-to-action style for each translation.
+Output the translations in this EXACT format (one per language, separated by the language tag):
+
+[EN]
+(English translation here)
+
+[FR]
+(French translation here)
+
+[DE]
+(German translation here)
+
+[KO]
+(Korean translation here)
+
+[RU]
+(Russian translation here)
+
+Description to translate:
+${description}`;
+
+    let response;
+    try {
+      const { model } = await getGoogleAI("gemini-3.5-flash", { context: 'llm' });
+      response = await model.generateContent([{ text: prompt }]);
+    } catch (genErr) {
+      const isRateLimit = genErr.message?.includes('429') || genErr.status === 429 || genErr.message?.includes('Too Many Requests') || genErr.message?.includes('Quota exceeded');
+      const isOverloaded = genErr.message?.includes('503') || genErr.status === 503 || genErr.message?.includes('overloaded');
+      if (isRateLimit || isOverloaded) {
+        console.warn('API gratuita saturada en translate-description. Reintentando con API principal...');
+        const { model: primaryModel } = await getGoogleAI("gemini-3.5-flash", { context: 'llm', forcePrimary: true });
+        response = await primaryModel.generateContent([{ text: prompt }]);
+      } else {
+        throw genErr;
+      }
+    }
+
+    const fullText = response.response.text();
+    const translations = [];
+    for (const lang of langs) {
+      const tag = `[${lang.code.toUpperCase()}]`;
+      const idx = fullText.indexOf(tag);
+      if (idx === -1) continue;
+      const afterTag = fullText.substring(idx + tag.length);
+      // Find the next tag or end of text
+      let endIdx = afterTag.length;
+      for (const otherLang of langs) {
+        const otherTag = `[${otherLang.code.toUpperCase()}]`;
+        const otherIdx = afterTag.indexOf(otherTag);
+        if (otherIdx > 0 && otherIdx < endIdx) endIdx = otherIdx;
+      }
+      translations.push({
+        code: lang.code,
+        name: lang.name,
+        flag: lang.flag,
+        text: afterTag.substring(0, endIdx).trim()
+      });
+    }
+
+    res.json({ success: true, translations });
+  } catch (error) {
+    console.error('Error traduciendo descripcion:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ================================
 // RUTAS PARA SISTEMA DE PROYECTOS
 // ================================
