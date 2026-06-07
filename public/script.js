@@ -10888,6 +10888,9 @@ async function loadProject(folderName) {
 
       // Auto-cargar timeline de B-Roll si existe preview previo
       loadExistingBrollTimeline(window.currentProject.folderName);
+
+      // Check for existing rendered B-Roll videos and show translate panel
+      checkAndShowTranslatePanel(window.currentProject.folderName);
       
     } else {
       showNotification('ÃƒÂ¢Ã‚ÂÃ…â€™ Error cargando el proyecto', 'error');
@@ -19044,6 +19047,9 @@ async function confirmBrollRender() {
           showNotification('Video con B-Roll generado!', 'success');
           if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-clapperboard"></i><span>Generar Video con B-Roll</span>'; }
           isGeneratingVideo = false;
+
+          // Show translation panel
+          showBrollTranslatePanel(p.outputFile, _brollPreviewFolderName, p.bgMusicFile, p.bgMusicVolume);
         } else if (p.status === 'error') {
           clearInterval(pollInterval);
           throw new Error(p.error || 'Error durante el renderizado');
@@ -19057,6 +19063,260 @@ async function confirmBrollRender() {
     if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-clapperboard"></i><span>Generar Video con B-Roll</span>'; }
     isGeneratingVideo = false;
     if (progressContainer) progressContainer.style.display = 'none';
+  }
+}
+
+// ===== TRANSLATE BROLL VIDEO =====
+
+let _brollTranslateData = { videoFile: null, folderName: null, bgMusicFile: null, bgMusicVolume: 0.13 };
+
+async function checkAndShowTranslatePanel(folderName) {
+  try {
+    const resp = await fetch(`/api/projects/${folderName}/rendered-videos`);
+    const data = await resp.json();
+    if (!data.success || !data.videos || data.videos.length === 0) return;
+
+    // Use the latest rendered video
+    const latestVideo = data.videos[data.videos.length - 1];
+    // Read the current music volume from slider if available
+    const musicSlider = document.getElementById('bgMusicVolume');
+    const vol = musicSlider ? parseInt(musicSlider.value) / 100 : 0.13;
+    showBrollTranslatePanel(latestVideo, folderName, data.bgMusicFile, vol);
+  } catch (e) { /* ignore */ }
+}
+
+function showBrollTranslatePanel(videoFile, folderName, bgMusicFile, bgMusicVolume) {
+  _brollTranslateData = { videoFile, folderName, bgMusicFile, bgMusicVolume: bgMusicVolume || 0.13 };
+  const panel = document.getElementById('brollTranslatePanel');
+  if (panel) {
+    panel.style.display = 'block';
+    loadTranslateApplioVoices().then(() => restoreBrollTranslatePrefs());
+  }
+}
+
+function onTranslateTtsChange() {
+  const provider = document.querySelector('input[name="brollTtsProvider"]:checked')?.value || 'applio';
+  const applioDiv = document.getElementById('translateApplioVoiceDiv');
+  const googleDiv = document.getElementById('translateGoogleVoiceDiv');
+  const cloudDiv = document.getElementById('translateCloudVoiceDiv');
+  if (applioDiv) applioDiv.style.display = provider === 'applio' ? '' : 'none';
+  if (googleDiv) googleDiv.style.display = (provider === 'google' || provider === 'google_pro') ? '' : 'none';
+  if (cloudDiv) cloudDiv.style.display = (provider === 'google_cloud' || provider === 'google_wavenet') ? '' : 'none';
+}
+
+async function loadTranslateApplioVoices() {
+  try {
+    const resp = await fetch('/api/applio-voices');
+    const data = await resp.json();
+    const sel = document.getElementById('translateApplioVoice');
+    if (!sel || !data.voices) return;
+    sel.innerHTML = '';
+    data.voices.forEach(voice => {
+      const opt = document.createElement('option');
+      opt.value = voice.path || voice;
+      opt.textContent = voice.displayName || voice;
+      sel.appendChild(opt);
+    });
+  } catch (e) { console.error('Error loading Applio voices:', e); }
+}
+
+function saveBrollTranslatePrefs() {
+  try {
+    const prefs = {
+      ttsProvider: document.querySelector('input[name="brollTtsProvider"]:checked')?.value,
+      translationModel: document.querySelector('input[name="brollTranslationModel"]:checked')?.value,
+      transcriptionMethod: document.querySelector('input[name="brollTranscription"]:checked')?.value,
+      applioVoice: document.getElementById('translateApplioVoice')?.value,
+      applioGender: document.querySelector('input[name="brollApplioGender"]:checked')?.value,
+      googleVoice: document.getElementById('translateGoogleVoice')?.value,
+      cloudVoice: document.querySelector('input[name="brollCloudVoice"]:checked')?.value,
+      groupSize: document.getElementById('brollGroupSize')?.value,
+      podcastStyle: document.getElementById('brollPodcastStyle')?.checked,
+      keepTemp: document.getElementById('brollKeepTemp')?.checked,
+      endScreenSeconds: document.getElementById('brollEndScreenSeconds')?.value,
+      languages: Array.from(document.querySelectorAll('#translateLangChecks input[type="checkbox"]')).map(cb => ({ value: cb.value, checked: cb.checked })),
+    };
+    localStorage.setItem('brollTranslatePrefs', JSON.stringify(prefs));
+  } catch (e) {}
+}
+
+function restoreBrollTranslatePrefs() {
+  try {
+    const prefs = JSON.parse(localStorage.getItem('brollTranslatePrefs'));
+    if (!prefs) return;
+
+    // TTS Provider
+    if (prefs.ttsProvider) {
+      const r = document.querySelector(`input[name="brollTtsProvider"][value="${prefs.ttsProvider}"]`);
+      if (r) { r.checked = true; onTranslateTtsChange(); }
+    }
+    // Translation Model
+    if (prefs.translationModel) {
+      const r = document.querySelector(`input[name="brollTranslationModel"][value="${prefs.translationModel}"]`);
+      if (r) r.checked = true;
+    }
+    // Transcription Method
+    if (prefs.transcriptionMethod) {
+      const r = document.querySelector(`input[name="brollTranscription"][value="${prefs.transcriptionMethod}"]`);
+      if (r) r.checked = true;
+    }
+    // Applio Voice
+    if (prefs.applioVoice) {
+      const sel = document.getElementById('translateApplioVoice');
+      if (sel) {
+        const match = Array.from(sel.options).find(o => o.value === prefs.applioVoice);
+        if (match) match.selected = true;
+      }
+    }
+    // Applio Gender
+    if (prefs.applioGender) {
+      const r = document.querySelector(`input[name="brollApplioGender"][value="${prefs.applioGender}"]`);
+      if (r) r.checked = true;
+    }
+    // Google Voice
+    if (prefs.googleVoice) {
+      const sel = document.getElementById('translateGoogleVoice');
+      if (sel) sel.value = prefs.googleVoice;
+    }
+    // Cloud Voice
+    if (prefs.cloudVoice) {
+      const r = document.querySelector(`input[name="brollCloudVoice"][value="${prefs.cloudVoice}"]`);
+      if (r) r.checked = true;
+    }
+    // Group Size
+    if (prefs.groupSize) {
+      const slider = document.getElementById('brollGroupSize');
+      const label = document.getElementById('brollGroupSizeVal');
+      if (slider) { slider.value = prefs.groupSize; if (label) label.textContent = prefs.groupSize; }
+    }
+    // Checkboxes
+    if (prefs.podcastStyle !== undefined) {
+      const el = document.getElementById('brollPodcastStyle');
+      if (el) el.checked = prefs.podcastStyle;
+    }
+    if (prefs.keepTemp !== undefined) {
+      const el = document.getElementById('brollKeepTemp');
+      if (el) el.checked = prefs.keepTemp;
+    }
+    // End Screen
+    if (prefs.endScreenSeconds !== undefined) {
+      const el = document.getElementById('brollEndScreenSeconds');
+      if (el) el.value = prefs.endScreenSeconds;
+    }
+    // Languages
+    if (prefs.languages && Array.isArray(prefs.languages)) {
+      prefs.languages.forEach(lang => {
+        const cb = document.querySelector(`#translateLangChecks input[value="${lang.value}"]`);
+        if (cb) cb.checked = lang.checked;
+      });
+    }
+  } catch (e) { console.error('Error restoring translate prefs:', e); }
+}
+
+async function startBrollTranslation() {
+  const { videoFile, folderName, bgMusicFile, bgMusicVolume } = _brollTranslateData;
+  if (!videoFile || !folderName) {
+    showNotification('No hay video renderizado para traducir', 'error');
+    return;
+  }
+
+  // Get selected languages
+  const langChecks = document.querySelectorAll('#translateLangChecks input[type="checkbox"]:checked');
+  const targetLanguages = Array.from(langChecks).map(cb => cb.value);
+  if (targetLanguages.length === 0) {
+    showNotification('Selecciona al menos un idioma', 'warning');
+    return;
+  }
+
+  const ttsProvider = document.querySelector('input[name="brollTtsProvider"]:checked')?.value || 'applio';
+  const googleVoice = document.getElementById('translateGoogleVoice')?.value || 'Kore';
+  const applioVoice = document.getElementById('translateApplioVoice')?.value || 'logs\\VOCES\\RemyOriginal.pth';
+  const cloudVoice = document.querySelector('input[name="brollCloudVoice"]:checked')?.value || 'male';
+  const translationModel = document.querySelector('input[name="brollTranslationModel"]:checked')?.value || 'gemini-3.5-flash';
+  const transcriptionMethod = document.querySelector('input[name="brollTranscription"]:checked')?.value || 'whisper';
+  const groupSize = document.getElementById('brollGroupSize')?.value || '3';
+  const podcastStyle = document.getElementById('brollPodcastStyle')?.checked || false;
+  const keepTemp = document.getElementById('brollKeepTemp')?.checked || false;
+  const endScreenSeconds = parseInt(document.getElementById('brollEndScreenSeconds')?.value) || 0;
+  const applioGender = document.querySelector('input[name="brollApplioGender"]:checked')?.value || 'male';
+  const applioTtsModel = applioGender === 'female' ? 'en-US-AvaMultilingualNeural' : 'fr-FR-RemyMultilingualNeural';
+
+  // Guardar preferencias
+  saveBrollTranslatePrefs();
+
+  const btn = document.getElementById('btnStartTranslateVideo');
+  const progressDiv = document.getElementById('translateVideoProgress');
+  const statusEl = document.getElementById('translateVideoStatus');
+  const percentEl = document.getElementById('translateVideoPercent');
+  const barEl = document.getElementById('translateVideoBar');
+
+  if (btn) { btn.disabled = true; btn.querySelector('span').textContent = 'Traduciendo...'; }
+  if (progressDiv) progressDiv.style.display = 'block';
+
+  try {
+    const formData = new FormData();
+    formData.append('projectFolderName', folderName);
+    formData.append('projectVideoFile', videoFile);
+    if (bgMusicFile) {
+      formData.append('projectMusicFile', bgMusicFile);
+    }
+    formData.append('musicVolume', bgMusicVolume.toString());
+    formData.append('targetLanguages', JSON.stringify(targetLanguages));
+    formData.append('ttsProvider', ttsProvider);
+    formData.append('translationModel', translationModel);
+    formData.append('transcriptionMethod', transcriptionMethod);
+    formData.append('googleVoice', googleVoice);
+    formData.append('applioVoice', applioVoice);
+    formData.append('cloudVoice', cloudVoice);
+    formData.append('applioTtsModel', applioTtsModel);
+    formData.append('applioVoicePath', applioVoice);
+    formData.append('applioSpeed', '0');
+    formData.append('applioPitch', '0');
+    formData.append('groupSize', groupSize);
+    formData.append('endScreenSeconds', endScreenSeconds);
+    if (podcastStyle) formData.append('podcastStyle', 'true');
+    if (keepTemp) formData.append('keepTemp', 'true');
+
+    const response = await fetch('/api/translate-video', {
+      method: 'POST',
+      body: formData
+    });
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        try {
+          const evt = JSON.parse(line.substring(6));
+          if (statusEl) statusEl.textContent = evt.status || '';
+          if (evt.progress !== null && evt.progress !== undefined) {
+            const pct = Math.round(evt.progress);
+            if (percentEl) percentEl.textContent = pct + '%';
+            if (barEl) barEl.style.width = pct + '%';
+          }
+          if (evt.completed) {
+            showNotification('Traduccion completada! Archivos guardados en la carpeta del proyecto.', 'success');
+          }
+          if (evt.error) {
+            showNotification('Error en traduccion: ' + evt.error, 'error');
+          }
+        } catch (e) { /* ignore parse errors */ }
+      }
+    }
+  } catch (err) {
+    showNotification('Error: ' + err.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.querySelector('span').textContent = 'Traducir'; }
   }
 }
 

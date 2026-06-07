@@ -17,6 +17,7 @@ import { initTelegramBot } from "./telegram-bot.js";
 import multer from 'multer';
 import axios from 'axios';
 import os from 'os';
+import textToSpeech from '@google-cloud/text-to-speech';
 
 const GEMINI_TEXT_MODEL = process.env.GEMINI_TEXT_MODEL || 'gemini-3.1-pro-preview';
 const GEMINI_IMAGE_MODEL = process.env.GEMINI_IMAGE_MODEL || 'gemini-2.5-flash-image';
@@ -14358,6 +14359,22 @@ app.get('/api/projects/:folderName', (req, res) => {
   }
 });
 
+// Check if a project has rendered B-Roll videos and bg music
+app.get('/api/projects/:folderName/rendered-videos', (req, res) => {
+  try {
+    const { folderName } = req.params;
+    const projectDir = path.join(globalOutputDir, folderName);
+    if (!fs.existsSync(projectDir)) return res.json({ success: true, videos: [] });
+
+    const files = fs.readdirSync(projectDir);
+    const videos = files.filter(f => f.includes('_broll_video') && f.endsWith('.mp4'));
+    const bgMusic = files.find(f => f.startsWith('bg_music.'));
+    res.json({ success: true, videos, bgMusicFile: bgMusic || null });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Endpoint para diagnosticar y reparar un proyecto específico
 app.get('/api/projects/:folderName/diagnose', (req, res) => {
   try {
@@ -17227,6 +17244,20 @@ async function renderFromPreview(preview, projectPath, projectName, sessionId, c
     await mergeVideoAudioBroll(finalVisualPath, finalAudioPath, finalOutputPath);
 
     updateProgress(98, 'Limpiando archivos temporales...');
+    // Save bg music to project folder for translation use
+    let savedBgMusicFile = null;
+    if (bgMusicPath && fs.existsSync(bgMusicPath)) {
+      try {
+        const ext = path.extname(bgMusicPath);
+        savedBgMusicFile = `bg_music${ext}`;
+        const destMusicPath = path.join(projectPath, savedBgMusicFile);
+        if (!fs.existsSync(destMusicPath)) {
+          fs.copyFileSync(bgMusicPath, destMusicPath);
+          console.log(`🎵 Música de fondo guardada: ${savedBgMusicFile}`);
+        }
+      } catch (e) { console.error('Error guardando música de fondo:', e.message); }
+    }
+
     try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch (e) {}
 
     // Cleanup preview thumbs
@@ -17244,6 +17275,8 @@ async function renderFromPreview(preview, projectPath, projectName, sessionId, c
       prog.status = 'completed'; prog.percent = 100;
       prog.message = 'Video generado exitosamente';
       prog.outputFile = outputFileName;
+      prog.bgMusicFile = savedBgMusicFile;
+      prog.bgMusicVolume = bgMusicVolume;
       prog.detail = `${sectionVideos.length} secciones procesadas`;
     }
     console.log(`Video B-Roll renderizado: ${finalOutputPath}`);
@@ -21073,6 +21106,594 @@ app.post('/generate-youtube-metadata-for-project', async (req, res) => {
   }
 });
 
+// ==============================
+// CLOUD TTS (Google Cloud Text-to-Speech - Neural2 & WaveNet)
+// ==============================
+
+const CLOUD_TTS_LANG_MAP = {
+    'es': 'es-ES', 'en': 'en-US', 'fr': 'fr-FR', 'de': 'de-DE',
+    'pt': 'pt-BR', 'it': 'it-IT', 'ru': 'ru-RU',
+    'zh': 'cmn-CN', 'ko': 'ko-KR', 'ja': 'ja-JP'
+};
+
+const CLOUD_TTS_VOICES = {
+    neural2: {
+        'es-ES': { male: 'es-ES-Neural2-B', female: 'es-ES-Neural2-A' },
+        'en-US': { male: 'en-US-Neural2-D', female: 'en-US-Neural2-C' },
+        'fr-FR': { male: 'fr-FR-Neural2-B', female: 'fr-FR-Neural2-A' },
+        'de-DE': { male: 'de-DE-Neural2-B', female: 'de-DE-Neural2-A' },
+        'pt-BR': { male: 'pt-BR-Neural2-B', female: 'pt-BR-Neural2-A' },
+        'it-IT': { male: 'it-IT-Neural2-C', female: 'it-IT-Neural2-A' },
+        'ru-RU': { male: 'ru-RU-Wavenet-B', female: 'ru-RU-Wavenet-A' },
+        'cmn-CN': { male: 'cmn-CN-Wavenet-B', female: 'cmn-CN-Wavenet-A' },
+        'ko-KR': { male: 'ko-KR-Neural2-C', female: 'ko-KR-Neural2-A' },
+        'ja-JP': { male: 'ja-JP-Neural2-C', female: 'ja-JP-Neural2-B' }
+    },
+    wavenet: {
+        'es-ES': { male: 'es-ES-Wavenet-B', female: 'es-ES-Wavenet-A' },
+        'en-US': { male: 'en-US-Wavenet-D', female: 'en-US-Wavenet-C' },
+        'fr-FR': { male: 'fr-FR-Wavenet-B', female: 'fr-FR-Wavenet-A' },
+        'de-DE': { male: 'de-DE-Wavenet-B', female: 'de-DE-Wavenet-A' },
+        'pt-BR': { male: 'pt-BR-Wavenet-B', female: 'pt-BR-Wavenet-A' },
+        'it-IT': { male: 'it-IT-Wavenet-C', female: 'it-IT-Wavenet-A' },
+        'ru-RU': { male: 'ru-RU-Wavenet-B', female: 'ru-RU-Wavenet-A' },
+        'cmn-CN': { male: 'cmn-CN-Wavenet-B', female: 'cmn-CN-Wavenet-A' },
+        'ja-JP': { male: 'ja-JP-Wavenet-C', female: 'ja-JP-Wavenet-B' },
+        'ko-KR': { male: 'ko-KR-Wavenet-C', female: 'ko-KR-Wavenet-A' }
+    }
+};
+
+const cloudTTSClients = new Map();
+
+function getCloudTTSClient(apiKey) {
+    if (!apiKey) throw new Error('No hay API key configurada para Google Cloud TTS');
+    if (!cloudTTSClients.has(apiKey)) {
+        cloudTTSClients.set(apiKey, new textToSpeech.TextToSpeechClient({ apiKey }));
+    }
+    return cloudTTSClients.get(apiKey);
+}
+
+async function generateSingleCloudTTS(text, outputPath, lang, cloudVoice = 'male', voiceType = 'neural2') {
+    if (!text || !text.trim()) throw new Error("Text is empty");
+
+    const langCode = CLOUD_TTS_LANG_MAP[lang] || 'en-US';
+    const tier = voiceType === 'wavenet' ? 'wavenet' : 'neural2';
+
+    let voiceName;
+    if (cloudVoice === 'male' || cloudVoice === 'female' || cloudVoice === 'auto' || !cloudVoice) {
+        const gender = (cloudVoice === 'female') ? 'female' : 'male';
+        voiceName = CLOUD_TTS_VOICES[tier]?.[langCode]?.[gender] || `${langCode}-${tier === 'wavenet' ? 'Wavenet' : 'Neural2'}-B`;
+    } else {
+        voiceName = cloudVoice;
+    }
+
+    const freeKeys = getFreeGoogleAPIKeys();
+    const keysToTry = [...freeKeys];
+    if (process.env.GOOGLE_API_KEY) {
+        keysToTry.push({ key: process.env.GOOGLE_API_KEY, name: GOOGLE_PRIMARY_API_NAME, isPrimary: true });
+    }
+    if (keysToTry.length === 0) throw new Error('No hay API keys configuradas para Cloud TTS.');
+
+    let lastError = null;
+    for (const entry of keysToTry) {
+        try {
+            const client = getCloudTTSClient(entry.key);
+            console.log(`🔊 Generating Cloud TTS for ${lang} using ${entry.name} voice=${voiceName}...`);
+
+            const [response] = await client.synthesizeSpeech({
+                input: { text: text },
+                voice: { languageCode: langCode, name: voiceName },
+                audioConfig: {
+                    audioEncoding: 'LINEAR16',
+                    sampleRateHertz: 24000,
+                    speakingRate: 1.0
+                }
+            });
+
+            if (!response.audioContent || response.audioContent.length < 100) {
+                throw new Error('Cloud TTS response empty or too short');
+            }
+
+            await writeFile(outputPath, response.audioContent);
+            console.log(`✅ Cloud TTS ${tier} generado: ${path.basename(outputPath)}`);
+            return { model: `cloud-tts-${tier}`, characters: text.length };
+
+        } catch (error) {
+            lastError = error;
+            const isRateLimit = error.message?.includes('429') || error.code === 8 || error.message?.includes('RESOURCE_EXHAUSTED');
+            if (isRateLimit) {
+                console.warn(`⚠️ Cloud TTS API ${entry.name} saturada (429)`);
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            } else {
+                console.warn(`⚠️ Cloud TTS error con ${entry.name}: ${error.message}`);
+            }
+        }
+    }
+    throw lastError || new Error('All API keys failed for Cloud TTS');
+}
+
+// ==============================
+// WHISPER LOCAL TRANSCRIPTION (from Traductor)
+// ==============================
+
+// Cache para el Python con CUDA (separado de detectPythonCommand)
+let cachedCudaPython = null;
+
+async function transcribeWithWhisperLocal(audioPath, language = null, modelSize = 'large-v3') {
+    return new Promise(async (resolve, reject) => {
+        const scriptPath = path.join(process.cwd(), 'whisper_local.py');
+        
+        // Detectar Python con CUDA torch para Whisper (cacheado)
+        if (!cachedCudaPython) {
+            const cudaCheck = `import torch; exit(0 if torch.cuda.is_available() else 1)`;
+            const tryPython = (cmd) => new Promise((res) => {
+                const p = spawn(cmd, ['-c', cudaCheck], { shell: true, windowsHide: true });
+                p.on('close', code => res(code === 0));
+                p.on('error', () => res(false));
+            });
+            
+            if (await tryPython('py')) {
+                cachedCudaPython = 'py';
+            } else if (await tryPython('python')) {
+                cachedCudaPython = 'python';
+            } else if (await tryPython('python3')) {
+                cachedCudaPython = 'python3';
+            } else {
+                console.warn('⚠️ Ningún Python tiene CUDA torch, Whisper correrá en CPU');
+                cachedCudaPython = process.platform === 'win32' ? 'py' : 'python3';
+            }
+            console.log(`🐍 Python con CUDA detectado: ${cachedCudaPython}`);
+        }
+        
+        const pythonCmd = cachedCudaPython;
+        const args = [`"${scriptPath}"`, 'transcribe', `"${audioPath}"`, language || 'auto', modelSize];
+        console.log(`🎙️ Transcribiendo con Whisper Local (${modelSize}) usando ${pythonCmd}...`);
+        
+        const proc = spawn(pythonCmd, args, { 
+            cwd: process.cwd(), 
+            env: { ...process.env, PYTHONIOENCODING: 'utf-8' }, 
+            shell: true, 
+            windowsHide: true 
+        });
+        let stdout = '';
+        let stderr = '';
+        
+        proc.stdout.on('data', d => stdout += d);
+        proc.stderr.on('data', d => stderr += d);
+        
+        proc.on('close', code => {
+            if (code !== 0) {
+                let errorMsg = stderr.slice(-500);
+                try {
+                    const errResult = JSON.parse(stdout);
+                    if (errResult.error) errorMsg = errResult.error;
+                } catch (_) {
+                    if (stdout.trim()) errorMsg = errorMsg || stdout.slice(-500);
+                }
+                console.error(`❌ Whisper Local error: ${errorMsg}`);
+                return reject(new Error(`Whisper Local failed (code ${code}): ${errorMsg}`));
+            }
+            try {
+                const result = JSON.parse(stdout);
+                if (!result.success) {
+                    return reject(new Error(result.error || 'Whisper transcription failed'));
+                }
+                const normalized = {
+                    language: result.language,
+                    transcript: result.transcript,
+                    segments: (result.segments || []).map(s => ({
+                        start: Math.round(s.start * 100) / 100,
+                        end: Math.round(s.end * 100) / 100,
+                        text: s.text
+                    }))
+                };
+                console.log(`✅ Whisper Local: ${normalized.segments.length} segmentos, idioma: ${normalized.language}`);
+                resolve(normalized);
+            } catch (e) {
+                reject(new Error(`Failed to parse Whisper output: ${e.message}`));
+            }
+        });
+        
+        proc.on('error', err => {
+            reject(new Error(`Could not start Python: ${err.message}`));
+        });
+    });
+}
+
+// ==============================
+// GEMINI TRANSCRIPTION (from Traductor)
+// ==============================
+
+const GEMINI_TRANSCRIPTION_MODEL = 'gemini-3.1-pro-preview';
+
+async function transcribeAudioWithGemini(audioPath) {
+    const freeKeys = getFreeGoogleAPIKeys();
+    const primaryKey = process.env.GOOGLE_API_KEY;
+    
+    const keysToTry = [...freeKeys];
+    if (primaryKey) keysToTry.push({ key: primaryKey, name: GOOGLE_PRIMARY_API_NAME, isPrimary: true });
+    if (keysToTry.length === 0) throw new Error('No hay API keys configuradas para transcripción.');
+
+    const audioBuffer = fs.readFileSync(audioPath);
+    const base64Audio = audioBuffer.toString('base64');
+    const ext = path.extname(audioPath).toLowerCase();
+    const mimeType = ext === '.wav' ? 'audio/wav' : ext === '.m4a' ? 'audio/m4a' : 'audio/mpeg';
+
+    const prompt = `Transcribe this audio accurately. Return ONLY a valid JSON object with this exact structure, no markdown, no code blocks:
+{"language": "es", "transcript": "the full transcription text here", "segments": [{"start": 0.0, "end": 2.5, "text": "segment text"}]}
+
+Rules:
+- "language" must be the ISO 639-1 code of the detected spoken language (e.g. "es", "en", "fr", "de", "pt", "it", "ru", "zh", "ko", "ja")
+- "transcript" must contain the complete transcription as a single string
+- "segments" is an array where each segment has "start" (seconds), "end" (seconds), and "text"
+- Each segment should contain ONE sentence or short phrase only
+- CRITICAL: Keep each segment UNDER 15 seconds. If a sentence is long, split it at natural pauses
+- Timestamps must be precise and in seconds (decimal). Do NOT lose accuracy after the first minute
+- Pay special attention to timestamp accuracy for audio beyond 60 seconds
+- Preserve the original language of the audio
+- Return ONLY the JSON object, nothing else`;
+
+    let lastError = null;
+    for (const entry of keysToTry) {
+        for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+            console.log(`🎙️ Transcribiendo con API ${entry.name} (${GEMINI_TRANSCRIPTION_MODEL})... intento ${attempt + 1}`);
+            const client = getGoogleTTSClient(entry.key);
+
+            const response = await client.models.generateContent({
+                model: GEMINI_TRANSCRIPTION_MODEL,
+                contents: [{
+                    role: 'user',
+                    parts: [
+                        { inlineData: { mimeType, data: base64Audio } },
+                        { text: prompt }
+                    ]
+                }]
+            });
+
+            let responseText = response?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+            responseText = responseText.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+
+            let result;
+            try {
+                result = JSON.parse(responseText);
+            } catch (parseErr) {
+                let cleaned = responseText
+                    .replace(/[\x00-\x1F\x7F]/g, ' ')
+                    .replace(/,\s*([}\]])/g, '$1');
+
+                try {
+                    result = JSON.parse(cleaned);
+                } catch (e2) {
+                    console.warn('⚠️ JSON parse failed, attempting manual extraction...');
+                    const transcriptMatch = cleaned.match(/"transcript"\s*:\s*"([\s\S]*?)(?:"\s*,\s*"segments"|"\s*})/);
+                    const transcript = transcriptMatch ? transcriptMatch[1].replace(/(?<!\\)"/g, '\\"') : null;
+                    if (!transcript) throw new Error(`JSON parse failed: ${parseErr.message}`);
+
+                    const segMatch = cleaned.match(/"segments"\s*:\s*(\[[\s\S]*\])\s*\}?\s*$/);
+                    let segments = [];
+                    if (segMatch) {
+                        try {
+                            let segJson = segMatch[1].replace(/"text"\s*:\s*"([\s\S]*?)"\s*}/g, (match, txt) => {
+                                return `"text": "${txt.replace(/(?<!\\)"/g, '\\"')}"}`;
+                            });
+                            segments = JSON.parse(segJson);
+                        } catch (e3) {
+                            console.warn('⚠️ Could not parse segments, continuing with transcript only');
+                        }
+                    }
+                    result = { transcript, segments };
+                }
+            }
+            if (!result.transcript) throw new Error('Respuesta sin transcript');
+
+            if (!result.segments || result.segments.length === 0) {
+                console.warn(`⚠️ Transcripción sin segmentos (intento ${attempt + 1}), reintentando...`);
+                if (attempt < 1) continue;
+                console.log('🔄 Generando segmentos con segunda llamada...');
+                try {
+                    const segResponse = await client.models.generateContent({
+                        model: GEMINI_TRANSCRIPTION_MODEL,
+                        contents: [{
+                            role: 'user',
+                            parts: [
+                                { inlineData: { mimeType, data: base64Audio } },
+                                { text: `I have this transcript of the audio. Now I need ONLY the timestamps for each sentence/phrase.
+
+TRANSCRIPT:
+${result.transcript}
+
+Return ONLY a JSON array of segments. Each segment must have "start" (seconds), "end" (seconds), and "text" fields.
+Keep each segment under 15 seconds. Split long sentences at natural pauses.
+Be precise with timestamps. Return ONLY the JSON array, nothing else.
+Example: [{"start": 0.0, "end": 2.5, "text": "Hello world"}]` }
+                            ]
+                        }]
+                    });
+                    let segText = segResponse?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                    segText = segText.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+                    const parsedSegs = JSON.parse(segText);
+                    if (Array.isArray(parsedSegs) && parsedSegs.length > 0) {
+                        result.segments = parsedSegs;
+                        console.log(`✅ Segmentos recuperados: ${parsedSegs.length}`);
+                    }
+                } catch (segErr) {
+                    console.warn('⚠️ No se pudieron generar segmentos en segunda llamada:', segErr.message);
+                }
+            }
+            
+            console.log(`✅ Transcripción completada con API ${entry.name} (${result.segments?.length || 0} segmentos)`);
+            return result;
+        } catch (error) {
+            lastError = error;
+            console.warn(`⚠️ Transcripción falló con API ${entry.name}: ${error.message}`);
+        }
+        }
+    }
+    throw new Error(`Transcripción falló con todas las API keys: ${lastError?.message || 'error desconocido'}`);
+}
+
+/**
+ * Split oversized segments into smaller ones based on sentence boundaries.
+ */
+function splitOversizedSegments(segments, maxDuration = 18) {
+    const result = [];
+    for (const seg of segments) {
+        const dur = seg.end - seg.start;
+        if (dur <= maxDuration || !seg.text) {
+            result.push(seg);
+            continue;
+        }
+
+        const sentences = seg.text.match(/[^.!?]+[.!?]+[\s]*/g);
+        if (!sentences || sentences.length <= 1) {
+            const parts = seg.text.split(/,\s*/);
+            if (parts.length <= 1) {
+                result.push(seg);
+                continue;
+            }
+            const totalChars = parts.reduce((s, p) => s + p.length, 0);
+            let currentStart = seg.start;
+            for (let i = 0; i < parts.length; i++) {
+                const ratio = parts[i].length / totalChars;
+                const partDur = dur * ratio;
+                const partEnd = (i === parts.length - 1) ? seg.end : currentStart + partDur;
+                result.push({
+                    start: Math.round(currentStart * 100) / 100,
+                    end: Math.round(partEnd * 100) / 100,
+                    text: parts[i].trim() + (i < parts.length - 1 ? ',' : '')
+                });
+                currentStart = partEnd;
+            }
+            continue;
+        }
+
+        const totalChars = sentences.reduce((s, sent) => s + sent.length, 0);
+        let currentStart = seg.start;
+        for (let i = 0; i < sentences.length; i++) {
+            const ratio = sentences[i].length / totalChars;
+            const sentDur = dur * ratio;
+            const sentEnd = (i === sentences.length - 1) ? seg.end : currentStart + sentDur;
+            result.push({
+                start: Math.round(currentStart * 100) / 100,
+                end: Math.round(sentEnd * 100) / 100,
+                text: sentences[i].trim()
+            });
+            currentStart = sentEnd;
+        }
+    }
+    console.log(`📊 Segmentos: ${segments.length} → ${result.length} (split de segmentos > ${maxDuration}s)`);
+    return result;
+}
+
+/**
+ * Fix timestamp issues from Gemini transcription
+ */
+function fixTimestampJumps(segments) {
+    if (!segments || segments.length < 2) return segments;
+
+    let totalGoodChars = 0;
+    let totalGoodDuration = 0;
+    for (const seg of segments) {
+        const dur = seg.end - seg.start;
+        if (dur >= 1.0 && seg.text) {
+            const cps = seg.text.length / dur;
+            if (cps > 5 && cps < 30) {
+                totalGoodChars += seg.text.length;
+                totalGoodDuration += dur;
+            }
+        }
+    }
+    const avgCharsPerSec = totalGoodDuration > 0 ? totalGoodChars / totalGoodDuration : 14;
+    console.log(`📊 Speaking rate from good segments: ${avgCharsPerSec.toFixed(1)} chars/sec`);
+
+    let cumulativeShift = 0;
+    for (let i = 0; i < segments.length; i++) {
+        segments[i].start = Math.round((segments[i].start - cumulativeShift) * 100) / 100;
+        segments[i].end = Math.round((segments[i].end - cumulativeShift) * 100) / 100;
+
+        const dur = segments[i].end - segments[i].start;
+        const textLen = (segments[i].text || '').length;
+        if (textLen > 0 && dur > 10) {
+            const expectedDur = textLen / avgCharsPerSec;
+            if (dur > expectedDur * 3 && (dur - expectedDur) > 10) {
+                const newEnd = Math.round((segments[i].start + expectedDur + 0.5) * 100) / 100;
+                const excess = segments[i].end - newEnd;
+                console.warn(`⚠️ Inflated segment ${i}: ${dur.toFixed(1)}s for "${segments[i].text.substring(0, 50)}..." (expected ~${expectedDur.toFixed(1)}s). Trimming ${excess.toFixed(1)}s`);
+                segments[i].end = newEnd;
+                cumulativeShift += excess;
+            }
+        }
+    }
+    if (cumulativeShift > 0) {
+        console.log(`📊 Total timestamp shift from inflated segments: ${cumulativeShift.toFixed(1)}s`);
+    }
+
+    const fixed = [{ ...segments[0] }];
+    if (fixed[0].end <= fixed[0].start) {
+        fixed[0].end = fixed[0].start + Math.max(2, fixed[0].text.length / avgCharsPerSec);
+    }
+
+    for (let i = 1; i < segments.length; i++) {
+        const prev = fixed[i - 1];
+        const curr = { ...segments[i] };
+        const rawDur = curr.end - curr.start;
+        const textLen = (curr.text || '').length;
+
+        const isClockReset = curr.start < prev.end - 5;
+        const isCompressed = rawDur < 0.5 && textLen > 15;
+        const isNegative = rawDur <= 0;
+
+        if (isClockReset || isCompressed || isNegative) {
+            const estimatedDur = Math.max(1.5, textLen / avgCharsPerSec);
+            const normalGap = 0.4;
+            curr.start = Math.round((prev.end + normalGap) * 100) / 100;
+            curr.end = Math.round((curr.start + estimatedDur) * 100) / 100;
+
+            if (isClockReset) {
+                console.warn(`⚠️ Clock reset at segment ${i} (was ${segments[i].start}→${segments[i].end}). Rebuilt: ${curr.start}→${curr.end}`);
+            } else {
+                console.warn(`⚠️ Bad timestamp at segment ${i}: ${rawDur.toFixed(2)}s for ${textLen} chars. Rebuilt: ${curr.start}→${curr.end} (${estimatedDur.toFixed(1)}s)`);
+            }
+        } else {
+            const gap = curr.start - prev.end;
+            if (gap > 8) {
+                const shift = gap - 0.5;
+                curr.start = Math.round((curr.start - shift) * 100) / 100;
+                curr.end = Math.round((curr.end - shift) * 100) / 100;
+                console.warn(`⚠️ Large gap (${gap.toFixed(2)}s) reduced at segment ${i}`);
+            } else if (gap < -0.1) {
+                curr.start = prev.end;
+                const dur = segments[i].end - segments[i].start;
+                curr.end = Math.round((curr.start + Math.max(1.0, dur)) * 100) / 100;
+            }
+        }
+
+        fixed.push(curr);
+    }
+
+    console.log(`📊 Timestamps: original last=${segments[segments.length-1].end.toFixed(1)}s → fixed last=${fixed[fixed.length-1].end.toFixed(1)}s`);
+    return fixed;
+}
+
+// ==============================
+// SEGMENT-BASED AUDIO HELPERS
+// ==============================
+
+async function generateSilence(outputPath, duration) {
+    if (duration < 0.01) duration = 0.01;
+    await new Promise((resolve, reject) => {
+        const p = spawn('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'anullsrc=r=24000:cl=mono', '-t', String(duration), '-acodec', 'pcm_s16le', '-ar', '24000', '-ac', '1', outputPath]);
+        let stderr = '';
+        p.stderr.on('data', d => stderr += d);
+        p.on('close', c => c === 0 ? resolve() : reject(new Error(`Silence gen failed: ${stderr.slice(-100)}`)));
+    });
+}
+
+async function adjustAudioSpeed(inPath, outPath, targetDuration) {
+    let currentDur = 0;
+    await new Promise(r => {
+        const p = spawn('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', inPath]);
+        let o = ''; p.stdout.on('data', d => o += d); p.on('close', () => { currentDur = parseFloat(o); r(); });
+    });
+    if (currentDur <= 0 || isNaN(currentDur)) {
+        await generateSilence(outPath, targetDuration);
+        return;
+    }
+    const speedFactor = currentDur / targetDuration;
+
+    let effectiveTarget = targetDuration;
+    if (speedFactor < 0.45) {
+        effectiveTarget = currentDur / 0.75;
+        console.warn(`⚠️ Speed factor ${speedFactor.toFixed(2)} too extreme for ${path.basename(inPath)} (${currentDur.toFixed(1)}s → ${targetDuration.toFixed(1)}s). Capping to ${effectiveTarget.toFixed(1)}s`);
+    }
+    const effectiveSpeed = currentDur / effectiveTarget;
+
+    if (Math.abs(effectiveSpeed - 1.0) < 0.01) {
+        const padFilter = `apad,atrim=0:${targetDuration}`;
+        await new Promise((resolve, reject) => {
+            const p = spawn('ffmpeg', ['-y', '-i', inPath, '-af', padFilter, '-ar', '24000', '-ac', '1', '-acodec', 'pcm_s16le', outPath]);
+            let stderr = '';
+            p.stderr.on('data', d => stderr += d);
+            p.on('close', c => c === 0 ? resolve() : reject(new Error(`Pad/trim failed: ${stderr.slice(-200)}`)));
+        });
+        return;
+    }
+    let filters = [];
+    let s = effectiveSpeed;
+    while (s > 2.0) { filters.push('atempo=2.0'); s /= 2.0; }
+    while (s < 0.5) { filters.push('atempo=0.5'); s /= 0.5; }
+    filters.push(`atempo=${s}`);
+    filters.push('apad');
+    filters.push(`atrim=0:${targetDuration}`);
+    await new Promise((resolve, reject) => {
+        const p = spawn('ffmpeg', ['-y', '-i', inPath, '-af', filters.join(','), '-ar', '24000', '-ac', '1', '-acodec', 'pcm_s16le', outPath]);
+        let stderr = '';
+        p.stderr.on('data', d => stderr += d);
+        p.on('close', c => c === 0 ? resolve() : reject(new Error(`Speed adjust failed: ${stderr.slice(-200)}`)));
+    });
+}
+
+async function translateSegmentsBatch(segments, lang, langName, options) {
+    const { translationModel, podcastStyle, sameLanguage } = options;
+    const segmentTexts = segments.map(s => s.text);
+
+    const BATCH = 50;
+    const allTranslated = [];
+
+    for (let bStart = 0; bStart < segmentTexts.length; bStart += BATCH) {
+        const batch = segmentTexts.slice(bStart, bStart + BATCH);
+
+        let prompt;
+        if (sameLanguage && podcastStyle) {
+            prompt = `Rewrite each of the following transcript segments in a conversational podcast style in ${langName}.
+Make it sound natural, casual, and engaging — like a real podcast host talking to their audience.
+Add natural speech flow, but do NOT change the meaning or add new information.
+Keep each segment roughly the same length as the original.
+Return ONLY a valid JSON array of strings. Each element is the rewritten version of the corresponding input segment at the same index.
+Do NOT add, remove, or reorder segments. Return exactly ${batch.length} strings.
+OUTPUT ONLY THE JSON ARRAY. No markdown code blocks, no explanation.
+
+${JSON.stringify(batch)}`;
+        } else {
+            prompt = `Translate each of the following transcript segments to ${langName}.
+Return ONLY a valid JSON array of strings. Each element is the translation of the corresponding input segment at the same index.
+Do NOT add, remove, or reorder segments. Return exactly ${batch.length} translated strings.
+${podcastStyle ? 'Keep the translation conversational and natural sounding.' : 'Maintain the original tone and style.'}
+OUTPUT ONLY THE JSON ARRAY. No markdown code blocks, no explanation.
+
+${JSON.stringify(batch)}`;
+        }
+
+        const selectedModel = translationModel || GEMINI_TEXT_MODEL;
+        let result;
+        let retries = 3;
+        while (retries > 0) {
+            try {
+                const forcePrimary = (retries === 1);
+                const aiResult = await getGoogleAI(selectedModel, { context: 'llm', forcePrimary });
+                result = await aiResult.model.generateContent(prompt);
+                break;
+            } catch (err) {
+                retries--;
+                if (retries === 0) throw err;
+                await new Promise(r => setTimeout(r, (4 - retries) * 2000));
+            }
+        }
+
+        let responseText = result.response.text().trim();
+        responseText = responseText.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?\s*```$/i, '').trim();
+
+        const translated = JSON.parse(responseText);
+        if (!Array.isArray(translated) || translated.length !== batch.length) {
+            throw new Error(`Translation returned ${translated?.length} segments, expected ${batch.length}`);
+        }
+        allTranslated.push(...translated);
+    }
+
+    return allTranslated;
+}
+
 // Helper functions for Google TTS in Video Translation
 async function generateSingleGoogleTTS(text, outputPath, lang, selectedVoice = 'Kore', modelName = GEMINI_TTS_MODEL_FLASH) {
     if (!text || !text.trim()) {
@@ -21472,9 +22093,8 @@ app.get('/api/check-video-exists', (req, res) => {
     }
 });
 
-// --- Endpoint para Traducir Videos ---
+// --- Endpoint para Traducir Videos (Pipeline Segment-Based del Traductor) ---
 app.post('/api/translate-video', upload.fields([{ name: 'video', maxCount: 1 }, { name: 'music', maxCount: 1 }]), async (req, res) => {
-    // Setup SSE
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
@@ -21488,16 +22108,43 @@ app.post('/api/translate-video', upload.fields([{ name: 'video', maxCount: 1 }, 
         let videoPath;
         let videoName;
         let musicFile = req.files && req.files['music'] ? req.files['music'][0] : null;
+        let isProjectMode = false;
+        let projectOutputDir = null;
+        let customMusicVolume = null;
 
-        // Check if this is a retry with an existing video
-        if (req.body.retryVideoName) {
+        // Check music volume override
+        if (req.body.musicVolume !== undefined) {
+            customMusicVolume = parseFloat(req.body.musicVolume);
+            if (isNaN(customMusicVolume)) customMusicVolume = null;
+        }
+
+        // Mode 1: Project video (from B-Roll render)
+        if (req.body.projectFolderName && req.body.projectVideoFile) {
+            isProjectMode = true;
+            const projFolder = req.body.projectFolderName;
+            const projVideoFile = req.body.projectVideoFile;
+            projectOutputDir = path.join(globalOutputDir, projFolder);
+            videoPath = path.join(projectOutputDir, projVideoFile);
+            videoName = projFolder;
+
+            if (!fs.existsSync(videoPath)) {
+                throw new Error(`Video del proyecto no encontrado: ${projVideoFile}`);
+            }
+            console.log(`🎬 Modo proyecto: traduciendo ${projVideoFile} de ${projFolder}`);
+
+            // Use project's bgMusic if it exists and no music was uploaded
+            if (!musicFile && req.body.projectMusicFile) {
+                const musicPath = path.join(projectOutputDir, req.body.projectMusicFile);
+                if (fs.existsSync(musicPath)) {
+                    musicFile = { path: musicPath, originalname: req.body.projectMusicFile };
+                    console.log(`🎵 Usando música del proyecto: ${req.body.projectMusicFile}`);
+                }
+            }
+        }
+        // Mode 2: Retry with existing video
+        else if (req.body.retryVideoName) {
             videoName = path.parse(req.body.retryVideoName).name;
             const outputDir = path.join(globalOutputDir, videoName);
-            // Try to find the saved original video
-            // We don't know the extension for sure, so we might need to look for it or assume mp4/original name
-            // Let's assume we saved it as 'original_video.mp4' or similar. 
-            // Better: look for any file starting with 'original_video' in the output dir
-            
             if (fs.existsSync(outputDir)) {
                 const files = fs.readdirSync(outputDir);
                 const originalVideo = files.find(f => f.startsWith('original_video.'));
@@ -21506,7 +22153,6 @@ app.post('/api/translate-video', upload.fields([{ name: 'video', maxCount: 1 }, 
                     console.log(`🔄 Retrying with existing video: ${videoPath}`);
                 }
             }
-            
             if (!videoPath) {
                 throw new Error('Could not find existing video for retry. Please upload the file again.');
             }
@@ -21520,430 +22166,145 @@ app.post('/api/translate-video', upload.fields([{ name: 'video', maxCount: 1 }, 
             videoName = path.parse(videoFile.originalname).name;
         }
 
-        // Limpiar carpeta temp de archivos viejos (excepto los actuales)
+        // Limpiar carpeta temp
         try {
             const tempDir = './temp';
             if (fs.existsSync(tempDir)) {
                 const files = fs.readdirSync(tempDir);
-                const currentFiles = [
-                    path.basename(videoPath),
-                    musicFile ? path.basename(musicFile.path) : null
-                ].filter(Boolean);
-
-                console.log('🧹 Limpiando archivos temporales antiguos...');
+                const currentFiles = [path.basename(videoPath), musicFile ? path.basename(musicFile.path) : null].filter(Boolean);
                 for (const file of files) {
                     if (!currentFiles.includes(file)) {
                         try {
                             const filePath = path.join(tempDir, file);
-                            // Solo borrar si es un archivo (no directorios)
-                            if (fs.lstatSync(filePath).isFile()) {
-                                fs.unlinkSync(filePath);
-                            }
-                        } catch (err) {
-                            console.error(`⚠️ No se pudo borrar ${file}:`, err.message);
-                        }
+                            if (fs.lstatSync(filePath).isFile()) fs.unlinkSync(filePath);
+                        } catch (err) {}
                     }
                 }
             }
-        } catch (cleanupError) {
-            console.error('Error durante la limpieza de temp:', cleanupError);
-        }
+        } catch (cleanupError) {}
 
-        // Usar carpeta pública para outputs, con el nombre del video
-        const outputDir = path.join(globalOutputDir, videoName);
-        
-        // Crear directorio si no existe (recursive: true asegura que cree outputs/ si falta)
-        if (!fs.existsSync(outputDir)) {
-            fs.mkdirSync(outputDir, { recursive: true });
-        }
-        
-        // Save the video to outputDir if it's a new upload (not a retry)
-        if (!req.body.retryVideoName) {
+        const outputDir = isProjectMode ? projectOutputDir : path.join(globalOutputDir, videoName);
+        if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
+
+        if (!req.body.retryVideoName && !isProjectMode) {
             const ext = path.extname(videoPath);
             const savedVideoPath = path.join(outputDir, `original_video${ext}`);
-            // Copy instead of move to keep temp file logic simple (multer cleans up? actually we clean up manually above)
-            // But we want to persist it.
-            try {
-                fs.copyFileSync(videoPath, savedVideoPath);
-                console.log(`💾 Video saved for retry: ${savedVideoPath}`);
-            } catch (e) {
-                console.error("Error saving backup video:", e);
-            }
+            try { fs.copyFileSync(videoPath, savedVideoPath); } catch (e) {}
         }
-        
-        console.log(`📂 Directorio de salida: ${outputDir}`);
 
         sendStatus('Video subido. Iniciando procesamiento...', 10);
 
         // 1. Extract Audio
         const audioPath = path.join(outputDir, 'original_audio.mp3');
-        
         if (fs.existsSync(audioPath)) {
-            console.log('✅ Audio original ya existe, saltando extracción.');
             sendStatus('Audio original encontrado, saltando extracción...', 20);
         } else {
             sendStatus('Extrayendo audio...', 20);
             await new Promise((resolve, reject) => {
                 const ffmpeg = spawn('ffmpeg', ['-y', '-i', videoPath, '-vn', '-acodec', 'libmp3lame', audioPath]);
-                
-                ffmpeg.on('error', (err) => {
-                    if (err.code === 'ENOENT') {
-                        reject(new Error('CRÍTICO: FFmpeg no está instalado o no se encuentra en el PATH. Por favor instala FFmpeg.'));
-                    } else {
-                        reject(err);
-                    }
-                });
-
-                ffmpeg.on('close', (code) => {
-                    if (code === 0) resolve();
-                    else reject(new Error('FFmpeg error extracting audio'));
-                });
+                let stderr = '';
+                ffmpeg.stderr.on('data', (data) => { stderr += data.toString(); });
+                ffmpeg.on('error', (err) => reject(err.code === 'ENOENT' ? new Error('FFmpeg no está instalado o no se encuentra en el PATH.') : err));
+                ffmpeg.on('close', (code) => code === 0 ? resolve() : reject(new Error(`FFmpeg error extracting audio (code ${code}): ${stderr.slice(-300)}`)));
             });
         }
 
         // Get Video Duration
         let videoDuration = 0;
         await new Promise((resolve, reject) => {
-             const ffprobe = spawn('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', videoPath]);
-             let output = '';
-             ffprobe.stdout.on('data', (data) => output += data.toString());
-             ffprobe.on('close', (code) => {
-                 if (code === 0) {
-                     videoDuration = parseFloat(output);
-                     resolve();
-                 } else reject(new Error('FFprobe error'));
-             });
+            const ffprobe = spawn('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', videoPath]);
+            let output = '';
+            ffprobe.stdout.on('data', (data) => output += data.toString());
+            ffprobe.on('close', (code) => {
+                if (code === 0) { videoDuration = parseFloat(output); resolve(); }
+                else reject(new Error('FFprobe error'));
+            });
         });
 
-        // 2. Transcribe Audio (CON BYPASS MANUAL)
+        const endScreenSeconds = Math.max(0, parseInt(req.body.endScreenSeconds) || 0);
+
+        // 2. Transcribe
         let transcriptionResult = null;
-        let sectionData = [];
-        let isMultiSection = false;
-        let markers = [];
         let transcriptionJsonPath = path.join(outputDir, 'transcription.json');
-        let bypassSuccessful = false;
         let originalText = '';
-        if (req.body.promoTexts && req.body.promoStartTimes) {
-            console.log('? Textos manuales detectados. Omitiendo Whisper...');
-            sendStatus('Textos manuales detectados. Preparando secciones...', 30);
-            try {
-                const manualTexts = JSON.parse(req.body.promoTexts);
-                const times = JSON.parse(req.body.promoStartTimes);
-                let tempMarkers = [];
-                if (Array.isArray(times)) {
-                     times.forEach(t => {
-                         let val = 0;
-                         const valStr = t.toString().trim();
-                         if (valStr.includes(':')) {
-                             const parts = valStr.split(':');
-                             if (parts.length === 2) val = parseInt(parts[0]) * 60 + parseFloat(parts[1]);
-                         } else {
-                             val = parseFloat(valStr);
-                         }
-                         if (!isNaN(val) && val > 0 && val < videoDuration) tempMarkers.push(val);
-                     });
-                }
-                tempMarkers = [...new Set(tempMarkers)].sort((a, b) => a - b);
-                if (manualTexts.length > 0 && manualTexts.length === tempMarkers.length + 1) {
-                    const intervals = [0, ...tempMarkers, videoDuration];
-                    for (let i = 0; i < intervals.length - 1; i++) {
-                        sectionData.push({
-                            index: i,
-                            start: intervals[i],
-                            end: intervals[i+1],
-                            duration: intervals[i+1] - intervals[i],
-                            segments: [], // not used in bypass phase
-                            text: (() => {
-                                let raw = manualTexts[i];
-                                let match = raw.match(/CONTENIDO DEL GUI[^\n]*\n/i);
-                                if (match) {
-                                    let cleanText = raw.substring(match.index + match[0].length).trim();
-                                    let footerMatch = cleanText.match(/={10,}/);
-                                    if (footerMatch) {
-                                        return cleanText.substring(0, footerMatch.index).trim();
-                                    }
-                                    return cleanText;
-                                }
-                                return raw.trim();
-                            })()
-                        });
-                    }
-                    isMultiSection = true;
-                    bypassSuccessful = true;
-                    originalText = sectionData.map(s => s.text).join('\n\n');
-                    transcriptionResult = { transcript: originalText, segments: [] };
-                    markers = tempMarkers; // Set global markers
-                    console.log('?? Secciones creadas desde textos manuales ('+sectionData.length+').');
-                    sendStatus('Transcripci�n manual completada. Traduciendo...', 50);
-                    try {
-                      fs.writeFileSync(transcriptionJsonPath, JSON.stringify(transcriptionResult, null, 2));
-                    } catch(jsonErr) {}
-                } else {
-                    console.warn('?? Fallo en pareo: ' + manualTexts.length + ' textos vs ' + tempMarkers.length + ' cortes. Volviendo a Whisper...');
-                }
-            } catch(e) {
-                console.error('Error al parear textos manuales:', e);
-            }
-        }
-        if (!bypassSuccessful) {
-        // --- WHISPER ORIGINAL --- 
-// (Whisper Fallback)
-        /* let transcriptionResult = null; */
-        /* const transcriptionJsonPath ... */
 
         if (fs.existsSync(transcriptionJsonPath)) {
-            console.log('✅ Transcripción ya existe, cargando...');
             sendStatus('Transcripción encontrada, cargando...', 30);
             try {
                 transcriptionResult = JSON.parse(fs.readFileSync(transcriptionJsonPath, 'utf8'));
-            } catch (e) {
-                console.error('Error leyendo transcripción existente, re-transcribiendo...');
+                if (!transcriptionResult.segments || transcriptionResult.segments.length === 0) {
+                    console.warn('⚠️ transcription.json sin segmentos, re-transcribiendo...');
+                    transcriptionResult = null;
+                }
             }
+            catch (e) { console.error('Error leyendo transcripción existente, re-transcribiendo...'); }
         }
 
         if (!transcriptionResult) {
-            sendStatus('Transcribiendo audio...', 30);
+            const transcriptionMethod = req.body.transcriptionMethod || 'gemini';
             
-            const transcriptionScript = `
-# -*- coding: utf-8 -*-
-import sys
-import json
-import os
-sys.path.append('${process.cwd().replace(/\\/g, '/')}')
-from whisper_local import whisper_local
+            if (transcriptionMethod === 'whisper') {
+                sendStatus('Transcribiendo audio con Whisper Local (GPU)...', 30);
+                transcriptionResult = await transcribeWithWhisperLocal(audioPath);
+            } else {
+                sendStatus('Transcribiendo audio con Gemini...', 30);
+                transcriptionResult = await transcribeAudioWithGemini(audioPath);
+            }
 
-# Configurar codificación UTF-8 para Windows
-if sys.platform == 'win32':
-    import codecs
-    sys.stdout = codecs.getwriter('utf-8')(sys.stdout.detach())
-    sys.stderr = codecs.getwriter('utf-8')(sys.stderr.detach())
-
-def transcribe():
-    try:
-        if not whisper_local.is_loaded:
-            whisper_local.load_model('medium')
-        
-        result = whisper_local.transcribe_audio(r'${audioPath.replace(/\\/g, '/')}')
-        print("---JSON_START---")
-        print(json.dumps(result))
-        print("---JSON_END---")
-    except Exception as e:
-        print("---JSON_START---")
-        print(json.dumps({'error': str(e)}))
-        print("---JSON_END---")
-
-if __name__ == "__main__":
-    transcribe()
-`;
-            const scriptPath = path.join(outputDir, 'transcribe_temp.py');
-            fs.writeFileSync(scriptPath, transcriptionScript);
-
-            // Función auxiliar para ejecutar Python con reintentos (python -> py)
-            const runPythonScript = async () => {
-                let cmd, args;
-                try {
-                    const detected = await detectPythonCommand();
-                    cmd = detected.cmd;
-                    args = detected.args;
-                } catch (e) {
-                    // Fallback
-                    cmd = process.platform === 'win32' ? 'py' : 'python3';
-                    args = [];
-                }
-
-                return await new Promise((resolve, reject) => {
-                    const proc = spawn(cmd, [...args, scriptPath]);
-                    let out = '', err = '';
-                    proc.stdout.on('data', d => out += d);
-                    proc.stderr.on('data', d => err += d);
-                    proc.on('error', e => reject(e));
-                    proc.on('close', code => {
-                        if (code === 0) resolve(out);
-                        else reject(new Error(err || `Exit code ${code}`));
-                    });
-                });
-            };
-
-            transcriptionResult = await runPythonScript().then(output => {
-                try {
-                    const jsonStart = output.indexOf("---JSON_START---");
-                    const jsonEnd = output.indexOf("---JSON_END---");
-                    
-                    if (jsonStart !== -1 && jsonEnd !== -1) {
-                        const jsonStr = output.substring(jsonStart + 16, jsonEnd).trim();
-                        const json = JSON.parse(jsonStr);
-                        if (json.error) throw new Error(json.error);
-                        return json;
-                    } else {
-                        // Fallback
-                        const lines = output.trim().split('\n');
-                        const lastLine = lines[lines.length - 1];
-                        try {
-                            const json = JSON.parse(lastLine);
-                            if (json.error) throw new Error(json.error);
-                            return json;
-                        } catch (e) {
-                            throw new Error('Invalid JSON from transcription: ' + output);
-                        }
-                    }
-                } catch (e) {
-                    throw new Error('Invalid JSON from transcription: ' + output);
-                }
-            });
-            
-            // Guardar transcripción para futuro uso
+            // Post-process: split oversized + fix timestamp jumps
+            if (transcriptionResult.segments && transcriptionResult.segments.length > 0) {
+                transcriptionResult.segments = splitOversizedSegments(transcriptionResult.segments);
+                transcriptionResult.segments = fixTimestampJumps(transcriptionResult.segments);
+            }
             fs.writeFileSync(transcriptionJsonPath, JSON.stringify(transcriptionResult, null, 2));
         }
 
+        // Filter empty segments (music, SFX, pauses)
+        if (transcriptionResult.segments && transcriptionResult.segments.length > 0) {
+            const before = transcriptionResult.segments.length;
+            transcriptionResult.segments = transcriptionResult.segments.filter(s => s.text && s.text.trim());
+            const after = transcriptionResult.segments.length;
+            if (before !== after) {
+                console.log(`🧹 Filtrados ${before - after} segmentos vacíos (${before} → ${after})`);
+            }
+        }
+
+        // Filter segments that fall in the end screen zone (music/silence at the end)
+        if (endScreenSeconds > 0 && videoDuration > 0 && transcriptionResult.segments?.length > 0) {
+            const speechCutoff = videoDuration - endScreenSeconds;
+            const before = transcriptionResult.segments.length;
+            transcriptionResult.segments = transcriptionResult.segments.filter(s => s.start < speechCutoff);
+            const after = transcriptionResult.segments.length;
+            if (before !== after) {
+                console.log(`🔇 Filtrados ${before - after} segmentos en zona de pantalla final (start >= ${speechCutoff.toFixed(1)}s)`);
+            }
+            transcriptionResult.transcript = transcriptionResult.segments.map(s => s.text).join(' ');
+        }
+
         originalText = transcriptionResult.transcript;
-        if (!originalText) {
-            throw new Error('La transcripción del audio falló o devolvió texto vacío.');
-        }
-
-        // --- MULTI-SECTION SYNC LOGIC ---
-        /* let sectionData = []; */ // Array objects: { text: "...", duration: 123, index: 0, segments: [] }
-        /* let isMultiSection = false; */
-        /* let markers = []; */
-
-        // Parse markers
-        if (req.body.promoStartTimes) {
-            try {
-                const times = JSON.parse(req.body.promoStartTimes);
-                if (Array.isArray(times)) {
-                     times.forEach(t => {
-                         let val = 0;
-                         const valStr = t.toString().trim();
-                         if (valStr.includes(':')) {
-                             const parts = valStr.split(':');
-                             if (parts.length === 2) val = parseInt(parts[0]) * 60 + parseFloat(parts[1]);
-                         } else {
-                             val = parseFloat(valStr);
-                         }
-                         if (!isNaN(val) && val > 0 && val < videoDuration) markers.push(val);
-                     });
-                }
-            } catch (e) {
-                console.error("Error parsing promoStartTimes:", e);
-            }
-        } 
-        // Backward compatibility
-        else if (req.body.promoStartTime) {
-             let val = 0;
-             const valStr = req.body.promoStartTime.toString().trim();
-             if (valStr.includes(':')) {
-                 const parts = valStr.split(':');
-                 if (parts.length === 2) val = parseInt(parts[0]) * 60 + parseFloat(parts[1]);
-             } else {
-                 val = parseFloat(valStr);
-             }
-             if (!isNaN(val) && val > 0 && val < videoDuration) markers.push(val);
-        }
-        
-        // Sort and deduplicate
-        markers = [...new Set(markers)].sort((a, b) => a - b);
-        
-        if (markers.length > 0 && transcriptionResult.segments && transcriptionResult.segments.length > 0) {
-            console.log(`⏱️ Multi-Section Sync habilitado con ${markers.length} cortes: [${markers.join(', ')}] segs`);
-            
-            // Definir intervalos: [0, m1], [m1, m2], ..., [mk, duration]
-            const intervals = [0, ...markers, videoDuration];
-            
-            // Crear secciones
-            for (let i = 0; i < intervals.length - 1; i++) {
-                sectionData.push({
-                    index: i,
-                    start: intervals[i],
-                    end: intervals[i+1],
-                    duration: intervals[i+1] - intervals[i],
-                    segments: [],
-                    text: ""
-                });
-            }
-            
-            // Asignar segmentos a secciones
-            // Estrategia: Asignar segmento a la sección donde TENGA MAYOR SUPERPOSICIÓN o donde termine
-            let currentSectionIndex = 0;
-            
-            for (const seg of transcriptionResult.segments) {
-                // Encontrar a qué sección pertenece este segmento
-                // Simple: Si seg.end <= section.end, pertenece a esta sección (o anteriores)
-                // O check overlap logic
-                
-                // Avanzar currentSectionIndex si el segmento empieza después del final de la actual
-                while (currentSectionIndex < sectionData.length - 1 && seg.start >= sectionData[currentSectionIndex].end) {
-                    currentSectionIndex++;
-                }
-                
-                // Caso borde: transiciones. Si el segmento cruza el límite.
-                // Usamos el punto medio del segmento para decidir
-                const segMid = (seg.start + seg.end) / 2;
-                
-                // Verificar si mid point está dentro del rango de la sección actual
-                let assignedIndex = currentSectionIndex;
-                
-                // Refinamiento: Buscar la sección que contenga el midpoint
-                for(let j=0; j<sectionData.length; j++) {
-                     if (segMid >= sectionData[j].start && segMid < sectionData[j].end) {
-                         assignedIndex = j;
-                         break;
-                     }
-                }
-                
-                sectionData[assignedIndex].segments.push(seg);
-            }
-            
-            // Construir texto y validar
-            let validSections = 0;
-            sectionData.forEach(sec => {
-                sec.text = sec.segments.map(s => s.text).join(" ").trim();
-                if (sec.text) validSections++;
-            });
-            
-            if (validSections === sectionData.length) {
-                isMultiSection = true;
-                console.log(`✂️ Transcripción dividida en ${sectionData.length} secciones exitosamente.`);
-                sectionData.forEach(s => console.log(`  - Sección ${s.index + 1}: ${s.duration.toFixed(2)}s (${s.segments.length} segmentos)`));
-            } else {
-                console.warn("⚠️ Alguna sección quedó vacía. Usando modo normal (sin cortes).");
-                isMultiSection = false;
-            }
-        }
+        if (!originalText) throw new Error('La transcripción del audio falló o devolvió texto vacío.');
 
         sendStatus('Transcripción completada. Traduciendo...', 50);
 
-        } // FIN DEL BYPASS MANUAL
-
         // 3. Translate and Generate Audio
-        let languages = ['es', 'en', 'fr', 'de', 'pt', 'it', 'ru', 'zh', 'ko', 'ja']; 
-
+        let languages = ['es', 'en', 'fr', 'de', 'pt', 'it', 'ru', 'zh', 'ko', 'ja'];
         if (req.body.targetLanguages) {
             try {
                 const userLangs = JSON.parse(req.body.targetLanguages);
-                if (Array.isArray(userLangs)) {
-                    languages = userLangs;
-                }
-            } catch (e) {
-                console.error("Error parsing targetLanguages for video translation:", e);
-            }
+                if (Array.isArray(userLangs)) languages = userLangs;
+            } catch (e) {}
         }
 
         const langNames = {
-            'es': 'Spanish', 'en': 'English', 'fr': 'French', 'de': 'German', 
+            'es': 'Spanish', 'en': 'English', 'fr': 'French', 'de': 'German',
             'pt': 'Portuguese', 'it': 'Italian', 'ru': 'Russian',
             'zh': 'Chinese', 'ko': 'Korean', 'ja': 'Japanese'
         };
-        
-        // Mapa de voces TTS para cada idioma (Edge TTS)
+
         const voiceMap = {
-            'es': 'es-ES-AlvaroNeural',
-            'en': 'en-US-ChristopherNeural',
-            'fr': 'fr-FR-HenriNeural',
-            'de': 'de-DE-ConradNeural',
-            'pt': 'pt-BR-AntonioNeural',
-            'it': 'it-IT-DiegoNeural',
-            'ru': 'ru-RU-DmitryNeural',
-            'zh': 'zh-CN-YunxiNeural',
-            'ko': 'ko-KR-InJoonNeural',
+            'es': 'es-ES-AlvaroNeural', 'en': 'en-US-ChristopherNeural', 'fr': 'fr-FR-HenriNeural',
+            'de': 'de-DE-ConradNeural', 'pt': 'pt-BR-AntonioNeural', 'it': 'it-IT-DiegoNeural',
+            'ru': 'ru-RU-DmitryNeural', 'zh': 'zh-CN-YunxiNeural', 'ko': 'ko-KR-InJoonNeural',
             'ja': 'ja-JP-KeitaNeural'
         };
 
@@ -21952,7 +22313,7 @@ if __name__ == "__main__":
 
         for (const lang of languages) {
             const finalAudioPath = path.join(outputDir, `${langNames[lang]}.wav`);
-            
+
             if (fs.existsSync(finalAudioPath)) {
                 console.log(`✅ Audio final para ${langNames[lang]} ya existe, saltando.`);
                 sendStatus(`Audio para ${langNames[lang]} ya existe, saltando...`, progress + progressStep);
@@ -21961,589 +22322,442 @@ if __name__ == "__main__":
             }
 
             sendStatus(`Traduciendo a ${langNames[lang]}...`, progress);
-            
+
             let translatedText = "";
-            const scriptPath = path.join(outputDir, `script_${lang}.txt`);
+            const langScriptPath = path.join(outputDir, `script_${lang}.txt`);
 
-            // --- MULTI-SECTION SYNC ENABLED ---
-            let audioAlreadyGenerated = false;
+            if (transcriptionResult.segments && transcriptionResult.segments.length > 0) {
+                // ====== SEGMENT-BASED: cada segmento con timing exacto ======
+                console.log(`🎯 Modo Segment-Based para ${langNames[lang]}`);
 
-            if (isMultiSection && sectionData.length > 0) {
-                console.log(`🔀 Modo Multi-Section Sync para ${langNames[lang]}`);
-                const sectionAudioPaths = [];
-                const translatedSections = [];
+                // 1. Traducir segmentos
+                let translatedTexts;
+                const segTransPath = path.join(outputDir, `segments_${lang}.json`);
 
-
-                // Helper para TTS
-                const ttsProvider = req.body.ttsProvider || 'applio';
-                const googleVoice = req.body.googleVoice || 'Kore';
-                const isGoogle = ttsProvider === 'google' || ttsProvider === 'google_pro';
-                
-                const generatePartTTS = async (txt, outPath, sectionIndex) => {
-                         if (!txt || txt === 'undefined' || !txt.trim()) return false;
-                         if (isGoogle) {
-                             const isPro = ttsProvider === 'google_pro';
-                             const ttsModelName = isPro ? GEMINI_TTS_MODEL_PRO : GEMINI_TTS_MODEL_FLASH;
-                             // Usamos disableParagraphSplitting = true para que genere un solo audio por sección (marca)
-                             const keepTemp = req.body.keepTempFiles === 'true';
-                             // Add a unique ID for this section to prevent temp file collisions
-                             const sectionUniqueId = `sec${sectionIndex}`;
-                             await generateGoogleTTSWithSplitting(txt, outPath, lang, googleVoice, ttsModelName, req.body.randomVoice === 'true', true, keepTemp, sectionUniqueId);
-                             return true;
-                         } else {
-                             // Applio en Modo Múltiples Secciones
-                             let isConnected = false;
-                             try { isConnected = await applioClient.checkConnection(); } catch(e) {}
-                             if (!isConnected) {
-                                 console.log("⚠️ Applio no está conectado, intentando iniciar...");
-                                 try { await startApplio(); await new Promise(r => setTimeout(r, 5000)); } catch(e) {}
-                             }
-                             const ttsModel = voiceMap[lang] || 'en-US-ChristopherNeural';
-                             const userApplioVoice = req.body.applioVoice || 'RemyOriginal.pth';
-                             await applioClient.textToSpeech(txt, outPath, {
-                                 model: ttsModel,
-                                 voicePath: userApplioVoice,
-                                 speed: 0,
-                                 pitch:0
-                             });
-                             return true;
-                         }
-                };
-
-                // Helper para Ajustar Velocidad
-                const adjustSpeed = async (inPath, outPath, targetDuration) => {
-                         let currentDur = 0;
-                         // Get Duration
-                         await new Promise(r => {
-                            const p = spawn('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', inPath]);
-                            let o = ''; p.stdout.on('data', d => o += d); p.on('close', () => { currentDur = parseFloat(o); r(); });
-                         });
-                         
-                         if(currentDur <= 0 || isNaN(currentDur)) {
-                             // Si falló el TTS o audio vacío, crear silencio
-                             await new Promise(r => { spawn('ffmpeg', ['-y', '-f', 'lavfi', '-i', `anullsrc=r=24000:cl=mono`, '-t', targetDuration, outPath]).on('close', r); });
-                             return;
-                         }
-
-                         const speedFactor = currentDur / targetDuration;
-                         let filters = [];
-                         let s = speedFactor;
-                         // Split extreme speed changes
-                         while (s > 2.0) { filters.push('atempo=2.0'); s /= 2.0; }
-                         while (s < 0.5) { filters.push('atempo=0.5'); s /= 0.5; }
-                         filters.push(`atempo=${s}`);
-                         
-                         // Aplicar filtro
-                         await new Promise((resolve, reject) => {
-                            const args = ['-y', '-i', inPath, '-af', filters.join(','), outPath];
-                            const p = spawn('ffmpeg', args);
-                            p.on('close', c => c===0?resolve():reject(new Error('FFmpeg speed adjust failed')));
-                         });
-                };
-
-                try {
-                    // FASE 1: Generar todos los Textos (Traducción)
-                    console.log(`📝 Fase 1: Generando/Cargando textos para ${sectionData.length} secciones (${langNames[lang]})...`);
-                    
-                    for(let i=0; i<sectionData.length; i++) {
-                        const sec = sectionData[i];
-                        const secScriptPath = path.join(outputDir, `script_${lang}_part_${i}.txt`);
-                        
-                        let secText = "";
-                        
-                        if (fs.existsSync(secScriptPath)) {
-                            secText = fs.readFileSync(secScriptPath, 'utf8');
-                        } else if (sec.text && sec.text.trim()) {
-                            
-                            let specialInstruction = "";
-                            // Lógica para estilo podcast/conversacional
-                            const isPodcastStyle = req.body.podcastStyle === 'true';
-                            if (isPodcastStyle) {
-                                specialInstruction += `
-                                STYLE AND TONE (CRITICAL):
-                                - Conversational and casual, but informative.
-                                - Include natural speech elements: "um", "uh", brief pauses.
-                                - Use conversational fillers: "you know", "I mean", "it's like" (translated naturally to target language).
-                                - Include some light laughter indicators where appropriate (e.g., "haha", "hehe") but don't overdo it.
-                                - Make it sound like a REAL PODCAST TRANSCRIPT, not a read script.
-                                
-                                DISFLUENCIES AND NATURALNESS (VERY IMPORTANT):
-                                - Include natural pauses indicated by "..."
-                                - Add occasional filler words appropriate for ${langNames[lang]}.
-                                - Allow sentences to have slight restarts or hesitation.
-                                
-                                LENGTH CONSTRAINT:
-                                - Keep the total word count similar to the original. Do not make it significantly longer.
-                                `;
-                            }
-
-                            // Prompt de traducción
-                            const prompt = `
-                            Translate the following video script content to ${langNames[lang]}.
-                            ${specialInstruction}
-                            Maintain the tone, style, and formatting.
-                            OUTPUT ONLY THE TRANSLATED TEXT.
-                            
-                            SCRIPT PART ${i+1}/${sectionData.length}:
-                            ${sec.text}
-                            `;
-                            
-                            // Reintentos con backoff exponencial y cambio de estrategia
-                            let retries = 3;
-                            
-                            while(retries > 0) {
-                                try {
-                                    // Determinar si debemos forzar el uso de la key primaria en el último intento
-                                    const forcePrimary = (retries === 1); 
-                                    
-                                    const { model } = await getGoogleAI(GEMINI_TEXT_MODEL, { 
-                                        context: 'llm',
-                                        forcePrimary: forcePrimary
-                                    });
-                                    
-                                    const result = await model.generateContent(prompt);
-                                    let txt = result.response.text();
-                                    txt = txt.replace(/```[\s\S]*?```/g, '').trim();
-                                    if (!txt) txt = result.response.text();
-                                    secText = txt;
-                                    fs.writeFileSync(secScriptPath, secText);
-                                    break;
-                                } catch (err) {
-                                    console.warn(`⚠️ Error en traducción sección ${i+1} (intento ${4-retries}/3): ${err.message}`);
-                                    
-                                    const isRateLimit = err.message.includes('429') || (err.status === 429) || 
-                                                       err.message.includes('Too Many Requests') || 
-                                                       err.message.includes('Quota exceeded');
-
-                                    retries--;
-                                    if(retries === 0) throw err;
-                                    
-                                    // Esperar antes de reintentar (backoff: 2s, 5s)
-                                    const delay = (3 - retries) * 2000 + 1000;
-                                    console.log(`⏳ Esperando ${delay}ms antes del reintento...`);
-                                    await new Promise(r => setTimeout(r, delay));
-                                }
-                            }
-                        }
-                        
-                        translatedSections.push(secText);
-                        sendStatus(`Texto traducido sección ${i+1}/${sectionData.length} para ${langNames[lang]}...`, progress);
+                if (fs.existsSync(segTransPath)) {
+                    translatedTexts = JSON.parse(fs.readFileSync(segTransPath, 'utf8'));
+                    if (translatedTexts.length !== transcriptionResult.segments.length) {
+                        console.log(`⚠️ Cache de traducción (${translatedTexts.length}) no coincide con segmentos (${transcriptionResult.segments.length}), re-traduciendo...`);
+                        translatedTexts = null;
                     }
-
-                    // FASE 2: Generación de Audio en Paralelo (Max 3)
-                    console.log(`🔊 Fase 2: Generando audios en paralelo (Max 3 threads) para ${langNames[lang]}...`);
-                    
-                    // Preparamos array del tamaño correcto para mantener orden
-                    const processedAudioPaths = new Array(sectionData.length);
-                    
-                    // Función constructora de tareas
-                    const createTask = (index) => async () => {
-                        const i = index;
-                        const secText = translatedSections[i];
-                        const sec = sectionData[i];
-                        const secAudioPath = path.join(outputDir, `audio_${lang}_part_${i}.wav`);
-                        const secAudioAdjPath = path.join(outputDir, `audio_${lang}_part_${i}_adj.wav`);
-                        
-                        try {
-                            // SKIP IF EXISTS
-                            if (fs.existsSync(secAudioAdjPath)) {
-                                console.log(`⏩ Audio sección ${i+1}/${sectionData.length} ya existe (${secAudioAdjPath}). Saltando generación.`);
-                                processedAudioPaths[i] = secAudioAdjPath;
-                                sendStatus(`Audio ya existe para sección ${i+1}/${sectionData.length} (${langNames[lang]})...`, progress);
-                                return;
-                            }
-
-                            // Generar Audio si hay texto
-                            // Aplicamos reintentos también al audio
-                            let audioRetries = 2;
-                            let hasAudio = false;
-                            
-
-                            while(audioRetries > 0) {
-                                try {
-                                    hasAudio = await generatePartTTS(secText, secAudioPath, i);
-                                    break;
-                                } catch(e) {
-                                    console.warn(`⚠️ Error generando audio para sección ${i+1}, reintentando...`);
-                                    audioRetries--;
-                                    if(audioRetries===0) throw e;
-                                    await new Promise(r => setTimeout(r, 2000));
-                                }
-                            }
-                            
-                            // Ajustar Duración
-                            let targetDuration = sec.duration;
-
-                            const isShortVid = req.body.isShortVideo === 'true';
-                            const silencePad = isShortVid ? 0 : 20;
-
-                            // Corrección: Si distribuimos el silencio en TODAS las secciones, los cortes 
-                            // que el usuario marcó manualmente se van recorriendo hacia atrás (desincronizando).
-                            // Por lo tanto, SI hay silencio, y estamos en el modo de tiempos explícitos,
-                            // o en general para mantener la sincronía, debemos descontar los 20s 
-                            // ÚNICAMENTE de la ÚLTIMA sección (o si no cabe, ajustarla a un mínimo).
-                            if (silencePad > 0 && i === sectionData.length - 1) {
-                                targetDuration = Math.max(1, targetDuration - silencePad);
-                            }
-
-                            if (hasAudio && fs.existsSync(secAudioPath)) {
-                                 await adjustSpeed(secAudioPath, secAudioAdjPath, targetDuration);
-                                 processedAudioPaths[i] = secAudioAdjPath;
-                            } else {
-                                 // Generar silencio
-                                 await new Promise(r => { spawn('ffmpeg', ['-y', '-f', 'lavfi', '-i', `anullsrc=r=24000:cl=mono`, '-t', targetDuration, secAudioAdjPath]).on('close', r); });
-                                 processedAudioPaths[i] = secAudioAdjPath;
-                            }
-                            
-                            sendStatus(`Audio generado sección ${i+1}/${sectionData.length} para ${langNames[lang]}...`, progress);
-                        } catch (err) {
-                            console.error(`Error generando audio sección ${i}:`, err);
-                            throw err; 
-                        }
-                    };
-
-                    // Ejecutar en lotes de 3
-                    const audioTasks = sectionData.map((_, i) => createTask(i));
-                    const BATCH_SIZE = 3;
-                    
-                    for (let i = 0; i < audioTasks.length; i += BATCH_SIZE) {
-                        const batch = audioTasks.slice(i, i + BATCH_SIZE);
-                        await Promise.all(batch.map(task => task()));
-                    }
-                    
-                    // Asignar al array final en orden
-                    processedAudioPaths.forEach(p => sectionAudioPaths.push(p));
-
-                    // 4. Combinar Audio Final
-                    translatedText = translatedSections.join("\n\n");
-                    fs.writeFileSync(scriptPath, translatedText);
-                    
-                    const audioOutputPath = path.join(outputDir, `audio_${lang}.wav`);
-                    
-                    // ffmpeg concat filter
-                    // inputs: sectionAudioPaths
-                    const inputs = sectionAudioPaths.flatMap(p => ['-i', p]);
-                    const filter = sectionAudioPaths.map((_, i) => `[${i}:a]`).join('') + `concat=n=${sectionAudioPaths.length}:v=0:a=1[out]`;
-                      await new Promise((resolve, reject) => {
-                           const args = ['-y', ...inputs, '-filter_complex', filter, '-map', '[out]', audioOutputPath];
-                           const p = spawn('ffmpeg', args);
-                           p.on('close', c=>c===0?resolve():reject(new Error('Concat failed')));
-                      });
-
-                      const isShortVideo = req.body.isShortVideo === 'true';
-                      if (!isShortVideo) {
-                           const tempOutputPath = audioOutputPath.replace('.wav', '_temp.wav');
-                           await new Promise((resolve, reject) => {
-                               console.log(`🔇 Agregando 20 segundos de silencio al final del audio concatenado (${lang})...`);
-                               const silencePath = path.join(outputDir, `silence_${lang}.wav`);
-                               const p1 = spawn('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'anullsrc=r=24000:cl=mono', '-t', '20', silencePath]);
-                               p1.on('close', (c1) => {
-                                   if(c1!==0) { reject(new Error('Silence gen failed')); return; }
-                                   const p2 = spawn('ffmpeg', ['-y', '-i', audioOutputPath, '-i', silencePath, '-filter_complex', '[0:a][1:a]concat=n=2:v=0:a=1', tempOutputPath]);
-                                   p2.on('close', (c2) => {
-                                       try { fs.unlinkSync(silencePath); } catch(e){}
-                                       if (c2 === 0 && fs.existsSync(tempOutputPath)) {
-                                           try { fs.unlinkSync(audioOutputPath); } catch(e){}
-                                           fs.renameSync(tempOutputPath, audioOutputPath);
-                                           resolve();
-                                       } else {
-                                           reject(new Error('Final padding concat failed'));
-                                       }
-                                   });
-                               });
-                           });
-                      }
-
-
-                    console.log(`✅ Audio multi-sección generado para ${lang}: ${audioOutputPath}`);
-                    audioAlreadyGenerated = true; // Flag to skip legacy generation
-                    
-
-
-
-                } catch (errSpl) {
-                    console.error("Error en Multi-Section Sync:", errSpl);
-                    throw errSpl;
                 }
-            } else if (fs.existsSync(scriptPath)) {
-                console.log(`✅ Guión traducido para ${langNames[lang]} ya existe, cargando.`);
-                translatedText = fs.readFileSync(scriptPath, 'utf8');
-            } else {
-                let specialInstruction = "";
-
-                // Ruso, Coreano y Alemán: Reducir 30% de los párrafos aleatoriamente (3 de cada 10)
-                if (['de', 'ko', 'ru'].includes(lang)) {
-                    specialInstruction = `
-                    IMPORTANT DURATION CONTROL:
-                    1. Analyze the paragraphs in the script.
-                    2. Randomly select approximately 30% of the paragraphs (e.g., 3 out of every 10).
-                    3. For these selected paragraphs ONLY, condense the translation by about 20% (remove filler words, be concise).
-                    4. Translate the remaining paragraphs faithfully.
-                    5. Maintain the exact same number of paragraphs as the original.
-                    `;
-                }
-                
-
-                // Lógica para estilo podcast/conversacional
-                const isPodcastStyle = req.body.podcastStyle === 'true';
-                if (isPodcastStyle) {
-                    specialInstruction += `
-                    STYLE AND TONE (CRITICAL):
-                    - Conversational and casual, but informative.
-                    - Include natural speech elements: "um", "uh", brief pauses.
-                    - Use conversational fillers: "you know", "I mean", "it's like" (translated naturally to target language).
-                    - Include some light laughter indicators where appropriate (e.g., "haha", "hehe") but don't overdo it.
-                    - Make it sound like a REAL PODCAST TRANSCRIPT, not a read script.
-                    
-                    DISFLUENCIES AND NATURALNESS (VERY IMPORTANT):
-                    - Include natural pauses indicated by "..."
-                    - Add occasional filler words appropriate for ${langNames[lang]}.
-                    - Allow sentences to have slight restarts or hesitation.
-                    
-                    LENGTH CONSTRAINT:
-                    - Keep the total word count similar to the original. Do not make it significantly longer.
-                    `;
-                }
-
-                // Translate
-                const prompt = `
-                Translate the following video script content to ${langNames[lang]}.
-                ${specialInstruction}
-                Maintain the tone, style, and formatting.
-                OUTPUT ONLY THE TRANSLATED TEXT.
-                
-                SCRIPT:
-                ${originalText}
-                `;
-                
-                let result;
-                try {
-                    // Seleccionar modelo (default a 3.0 si no se especifica)
-                    const selectedModel = req.body.translationModel || GEMINI_TEXT_MODEL;
-                    console.log(`🤖 Usando modelo de traducción: ${selectedModel}`);
-                    
-                    const { model } = await getGoogleAI(selectedModel, { context: 'llm' });
-                    result = await model.generateContent(prompt);
-                } catch (error) {
-                    const isRateLimit = error.message.includes('429') || (error.status === 429) || error.message.includes('Too Many Requests') || error.message.includes('Quota exceeded');
-                    const isOverloaded = error.message.includes('503') || (error.status === 503) || error.message.includes('overloaded') || error.message.includes('Overloaded');
-                    
-                    if (isRateLimit || isOverloaded) {
-                        console.warn(`⚠️ API gratuita ${isRateLimit ? 'saturada (429)' : 'sobrecargada (503)'} durante traducción. Reintentando con API PRINCIPAL...`);
-                        
-                        // Forzar uso de API principal con el modelo seleccionado (o fallback a 3.0)
-                        const selectedModel = req.body.translationModel || GEMINI_TEXT_MODEL;
-                        
-                        try {
-                            const { model } = await getGoogleAI(selectedModel, { context: 'llm', forcePrimary: true });
-                            result = await model.generateContent(prompt);
-                        } catch (primaryError) {
-                            const isPrimaryOverloaded = primaryError.message.includes('503') || (primaryError.status === 503) || primaryError.message.includes('overloaded') || primaryError.message.includes('Overloaded');
-                            
-                            // Si falla la API principal con 503 y estabamos usando flash 3, intentar fallback a 2.5
-                            if (isPrimaryOverloaded && selectedModel === GEMINI_TEXT_MODEL) {
-                                console.warn(`⚠️ Modelo principal saturado incluso en API PRINCIPAL (503). Intentando fallback a Gemini 3.5 Flash...`);
-                                const { model: fallbackModel } = await getGoogleAI("gemini-3.5-flash", { context: 'llm', forcePrimary: true });
-                                result = await fallbackModel.generateContent(prompt);
-                            } else {
-                                throw primaryError;
-                            }
-                        }
+                if (!translatedTexts) {
+                    const detectedLang = transcriptionResult.language || null;
+                    const isPodcast = req.body.podcastStyle === 'true';
+                    if (detectedLang && detectedLang === lang && !isPodcast) {
+                        console.log(`🔄 Idioma detectado (${detectedLang}) coincide con target (${lang}), usando textos originales`);
+                        sendStatus(`Idioma original detectado: ${langNames[lang]}. Usando transcripción original...`, progress);
+                        translatedTexts = transcriptionResult.segments.map(s => s.text);
                     } else {
-                        throw error; // Re-lanzar si no es error de cuota
+                        if (detectedLang && detectedLang === lang && isPodcast) {
+                            console.log(`🎙️ Mismo idioma (${lang}) pero estilo podcast activo, reescribiendo...`);
+                            sendStatus(`Reescribiendo en estilo podcast para ${langNames[lang]}...`, progress);
+                        } else {
+                            sendStatus(`Traduciendo segmentos a ${langNames[lang]}...`, progress);
+                        }
+                        translatedTexts = await translateSegmentsBatch(
+                            transcriptionResult.segments, lang, langNames[lang],
+                            {
+                                translationModel: req.body.translationModel,
+                                podcastStyle: isPodcast,
+                                sameLanguage: detectedLang && detectedLang === lang
+                            }
+                        );
                     }
+                    fs.writeFileSync(segTransPath, JSON.stringify(translatedTexts, null, 2));
                 }
 
-                translatedText = result.response.text();
-                
-                // Limpiar posibles bloques de código markdown
-                translatedText = translatedText.replace(/```[\s\S]*?```/g, '').trim();
-                if (!translatedText) translatedText = result.response.text(); // Fallback si se borró todo
+                translatedText = translatedTexts.join('\n');
+                fs.writeFileSync(langScriptPath, translatedText);
 
-                // Save translated text
-                fs.writeFileSync(scriptPath, translatedText);
+                // Check text_only
+                const segTtsProvider = req.body.ttsProvider || 'google';
+                if (segTtsProvider === 'text_only') {
+                    progress += progressStep;
+                    sendStatus(`Texto traducido para ${langNames[lang]} guardado.`, progress);
+                    continue;
+                }
+
+                // 2. Generar audio por grupo de segmentos con timing exacto
+                const segGoogleVoice = req.body.googleVoice || 'Kore';
+                const segIsCloud = segTtsProvider === 'google_cloud' || segTtsProvider === 'google_wavenet';
+                const segCloudVoiceType = segTtsProvider === 'google_wavenet' ? 'wavenet' : 'neural2';
+                const segCloudVoice = req.body.cloudVoice || 'male';
+                const segIsPro = segTtsProvider === 'google_pro';
+                const segTtsModel = segIsPro ? GEMINI_TTS_MODEL_PRO : GEMINI_TTS_MODEL_FLASH;
+
+                console.log(`🔊 TTS Config: provider=${segTtsProvider}, googleVoice=${segGoogleVoice}, applioVoicePath=${req.body.applioVoicePath}, applioVoice=${req.body.applioVoice}, applioTtsModel=${req.body.applioTtsModel}`);
+
+                const segAudioOutputPath = path.join(outputDir, `audio_${lang}.wav`);
+
+                if (!fs.existsSync(segAudioOutputPath)) {
+                    const segDir = path.join(outputDir, `segments_${lang}`);
+                    if (!fs.existsSync(segDir)) fs.mkdirSync(segDir, { recursive: true });
+
+                    const segs = transcriptionResult.segments;
+                    const GROUP_SIZE = Math.max(1, Math.min(12, parseInt(req.body.groupSize) || 3));
+                    const SEG_BATCH = 9;
+                    const voicesList = ['Zephyr','Kore','Leda','Aoede','Callirrhoe','Autonoe','Algieba','Despina','Erinome','Algenib','Rasalgethi','Laomedeia','Achernar','Gacrux','Pulcherrima','Achird','Vindemiatrix','Sadachbia','Sadaltager','Sulafat','Puck','Charon','Fenrir','Orus','Enceladus','Iapetus','Umbriel','Alnilam','Schedar','Zubenelgenubi'];
+
+                    // Build groups, breaking on significant gaps
+                    const GAP_BREAK_THRESHOLD = 1.5;
+                    const groups = [];
+                    let gi = 0;
+                    while (gi < segs.length) {
+                        let groupEnd = Math.min(gi + GROUP_SIZE, segs.length);
+                        for (let j = gi + 1; j < groupEnd; j++) {
+                            const intraGap = segs[j].start - segs[j - 1].end;
+                            if (intraGap > GAP_BREAK_THRESHOLD) {
+                                groupEnd = j;
+                                break;
+                            }
+                        }
+                        const groupSegs = segs.slice(gi, groupEnd);
+                        const groupTexts = groupSegs.map((_, idx) => translatedTexts[gi + idx]).filter(t => t && t.trim());
+                        const groupStart = groupSegs[0].start;
+                        const gEnd = groupSegs[groupSegs.length - 1].end;
+                        groups.push({
+                            index: groups.length,
+                            startSegIdx: gi,
+                            endSegIdx: groupEnd - 1,
+                            text: groupTexts.join(' '),
+                            start: groupStart,
+                            end: gEnd,
+                            duration: gEnd - groupStart
+                        });
+                        gi = groupEnd;
+                    }
+                    console.log(`📊 ${segs.length} segmentos → ${groups.length} grupos de ~${GROUP_SIZE} para TTS`);
+
+                    // Count already done for resume
+                    let doneCount = 0;
+                    for (const g of groups) {
+                        const adjPath = path.join(segDir, `adj_g${g.index}.wav`);
+                        if (fs.existsSync(adjPath) && fs.statSync(adjPath).size > 100) doneCount++;
+                    }
+                    if (doneCount > 0) {
+                        sendStatus(`Retomando: ${doneCount}/${groups.length} grupos ya generados para ${langNames[lang]}`, progress);
+                    }
+
+                    // Generate TTS per group in parallel batches
+                    for (let bStart = 0; bStart < groups.length; bStart += SEG_BATCH) {
+                        const bEnd = Math.min(bStart + SEG_BATCH, groups.length);
+                        const batchPromises = [];
+
+                        for (let gIdx = bStart; gIdx < bEnd; gIdx++) {
+                            batchPromises.push((async () => {
+                                const group = groups[gIdx];
+                                let groupDuration = group.duration;
+                                const rawPath = path.join(segDir, `raw_g${group.index}.wav`);
+                                const adjPath = path.join(segDir, `adj_g${group.index}.wav`);
+
+                                const textLen = (group.text || '').length;
+                                if (groupDuration < 0.5 && textLen > 15) {
+                                    console.warn(`⚠️ Group ${group.index} duration ${groupDuration.toFixed(2)}s too short for ${textLen} chars. Estimating.`);
+                                    groupDuration = Math.max(1.5, textLen / 14);
+                                } else if (groupDuration <= 0) {
+                                    groupDuration = Math.max(1.5, textLen / 14);
+                                }
+
+                                if (fs.existsSync(adjPath) && fs.statSync(adjPath).size > 100) return;
+
+                                if (fs.existsSync(rawPath) && fs.statSync(rawPath).size < 100) {
+                                    try { fs.unlinkSync(rawPath); } catch(e) {}
+                                }
+                                if (fs.existsSync(adjPath) && fs.statSync(adjPath).size < 100) {
+                                    try { fs.unlinkSync(adjPath); } catch(e) {}
+                                }
+
+                                if (group.text && group.text.trim() && groupDuration > 0.1) {
+                                    let ttsRetries = 2;
+                                    while (ttsRetries >= 0) {
+                                        try {
+                                            if (!fs.existsSync(rawPath) || fs.statSync(rawPath).size < 100) {
+                                                if (segTtsProvider === 'applio') {
+                                                    let isConnected = false;
+                                                    try { isConnected = await applioClient.checkConnection(); } catch(e) {}
+                                                    if (!isConnected) {
+                                                        try { await startApplio(); await new Promise(r => setTimeout(r, 5000)); } catch(e) {}
+                                                    }
+                                                    // Select language-appropriate Edge TTS base model
+                                                    let applioModel = req.body.applioTtsModel || 'fr-FR-RemyMultilingualNeural';
+                                                    const isFemaleModel = applioModel.includes('Ava') || applioModel.includes('Emma') || applioModel.includes('Vivienne');
+                                                    if (!isFemaleModel) {
+                                                        // Male models: use native-language base for better prosody
+                                                        const maleEdgeModels = {
+                                                            en: 'en-US-AndrewMultilingualNeural',
+                                                            de: 'de-DE-FlorianMultilingualNeural',
+                                                        };
+                                                        applioModel = maleEdgeModels[lang] || applioModel;
+                                                    } else {
+                                                        const femaleEdgeModels = {
+                                                            en: 'en-US-AvaMultilingualNeural',
+                                                            fr: 'fr-FR-VivienneMultilingualNeural',
+                                                        };
+                                                        applioModel = femaleEdgeModels[lang] || applioModel;
+                                                    }
+                                                    const applioVoicePath = req.body.applioVoicePath || req.body.applioVoice || 'logs\\VOCES\\RemyOriginal.pth';
+                                                    console.log(`🎤 Applio TTS: lang=${lang}, model=${applioModel}, voice=${applioVoicePath}`);
+                                                    await applioClient.textToSpeech(group.text, rawPath, {
+                                                        model: applioModel,
+                                                        voicePath: applioVoicePath,
+                                                        speed: parseFloat(req.body.applioSpeed) || 0,
+                                                        pitch: parseFloat(req.body.applioPitch) || 0
+                                                    });
+                                                } else if (segIsCloud) {
+                                                    await generateSingleCloudTTS(group.text, rawPath, lang, segCloudVoice, segCloudVoiceType);
+                                                } else {
+                                                    let voice = segGoogleVoice;
+                                                    if (req.body.randomVoice === 'true') {
+                                                        voice = voicesList[Math.floor(Math.random() * voicesList.length)];
+                                                    }
+                                                    await generateSingleGoogleTTS(group.text, rawPath, lang, voice, segTtsModel);
+                                                }
+                                            }
+                                            await adjustAudioSpeed(rawPath, adjPath, groupDuration);
+                                            break;
+                                        } catch (segErr) {
+                                            ttsRetries--;
+                                            console.warn(`⚠️ Grupo ${group.index} falló (${segErr.message}), reintentos restantes: ${ttsRetries + 1}`);
+                                            if (fs.existsSync(rawPath)) try { fs.unlinkSync(rawPath); } catch(e) {}
+                                            if (fs.existsSync(adjPath)) try { fs.unlinkSync(adjPath); } catch(e) {}
+                                            if (ttsRetries < 0) {
+                                                console.warn(`❌ Grupo ${group.index} agotó reintentos, insertando silencio`);
+                                                await generateSilence(adjPath, Math.max(0.01, groupDuration));
+                                            } else {
+                                                await new Promise(r => setTimeout(r, 2000 * (2 - ttsRetries)));
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    await generateSilence(adjPath, Math.max(0.01, groupDuration));
+                                }
+                            })());
+                        }
+
+                        await Promise.all(batchPromises);
+                        const currentDone = groups.slice(0, bEnd).filter((_, idx) => {
+                            const ap = path.join(segDir, `adj_g${idx}.wav`);
+                            return fs.existsSync(ap) && fs.statSync(ap).size > 100;
+                        }).length;
+                        sendStatus(`Audio grupo ${currentDone}/${groups.length} para ${langNames[lang]}...`, progress + (progressStep * 0.8 * (currentDone / groups.length)));
+                    }
+
+                    // Build timeline with silences in gaps between groups
+                    const timeline = [];
+
+                    if (groups[0].start > 0.05) {
+                        const silPath = path.join(segDir, 'pre_silence.wav');
+                        if (!fs.existsSync(silPath)) await generateSilence(silPath, groups[0].start);
+                        timeline.push(silPath);
+                    }
+
+                    for (let i = 0; i < groups.length; i++) {
+                        timeline.push(path.join(segDir, `adj_g${i}.wav`));
+
+                        if (i < groups.length - 1) {
+                            const gap = groups[i + 1].start - groups[i].end;
+                            if (gap > 0.05 && gap < 30) {
+                                const gapPath = path.join(segDir, `gap_g${i}.wav`);
+                                if (!fs.existsSync(gapPath)) await generateSilence(gapPath, gap);
+                                timeline.push(gapPath);
+                            } else if (gap > 30) {
+                                console.warn(`⚠️ Gap grupo ${i} absurdly large (${gap.toFixed(2)}s), capping to 1s`);
+                                const gapPath = path.join(segDir, `gap_g${i}.wav`);
+                                if (!fs.existsSync(gapPath)) await generateSilence(gapPath, 1.0);
+                                timeline.push(gapPath);
+                            }
+                        }
+                    }
+
+                    // Concat timeline using absolute paths
+                    const listPath = path.join(segDir, 'concat.txt');
+                    fs.writeFileSync(listPath, timeline.map(f => `file '${f.replace(/\\/g, '/')}'`).join('\n'));
+                    await new Promise((resolve, reject) => {
+                        const p = spawn('ffmpeg', ['-y', '-f', 'concat', '-safe', '0', '-i', listPath, '-ar', '24000', '-ac', '1', '-acodec', 'pcm_s16le', segAudioOutputPath]);
+                        let stderr = '';
+                        p.stderr.on('data', d => stderr += d);
+                        p.on('close', c => {
+                            try { fs.unlinkSync(listPath); } catch(e) {}
+                            c === 0 ? resolve() : reject(new Error(`Segment concat failed: ${stderr.slice(-200)}`));
+                        });
+                    });
+
+                    sendStatus(`Audio segment-based listo para ${langNames[lang]}`, progress + (progressStep * 0.9));
+                }
+            } else if (fs.existsSync(langScriptPath)) {
+                translatedText = fs.readFileSync(langScriptPath, 'utf8');
+            } else {
+                // Fallback: full-text translation (no segments)
+                const detectedLang = transcriptionResult.language || null;
+                if (detectedLang && detectedLang === lang) {
+                    translatedText = originalText;
+                    fs.writeFileSync(langScriptPath, translatedText);
+                } else {
+                    let specialInstruction = "";
+                    if (['de', 'ko', 'ru'].includes(lang)) {
+                        specialInstruction = `
+                    IMPORTANT DURATION CONTROL:
+                    1. Randomly select approximately 30% of paragraphs.
+                    2. For these selected paragraphs ONLY, condense translation by about 20%.
+                    3. Translate remaining paragraphs faithfully.
+                    `;
+                    }
+                    if (req.body.podcastStyle === 'true') {
+                        specialInstruction += `
+                    STYLE AND TONE: Conversational and casual, but informative.
+                    Include natural speech elements and fillers.
+                    Make it sound like a REAL PODCAST TRANSCRIPT.
+                    Keep the total word count similar to the original.
+                    `;
+                    }
+
+                    const prompt = `Translate the following video script content to ${langNames[lang]}.
+${specialInstruction}
+Maintain the tone, style, and formatting.
+OUTPUT ONLY THE TRANSLATED TEXT.
+
+SCRIPT:
+${originalText}`;
+
+                    let result;
+                    let usedModel = req.body.translationModel || GEMINI_TEXT_MODEL;
+                    let retries = 3;
+                    while (retries > 0) {
+                        try {
+                            const forcePrimary = (retries === 1);
+                            const aiResult = await getGoogleAI(usedModel, { context: 'llm', forcePrimary });
+                            result = await aiResult.model.generateContent(prompt);
+                            break;
+                        } catch (err) {
+                            retries--;
+                            if (retries === 0) {
+                                // Last resort fallback model
+                                try {
+                                    const aiResult = await getGoogleAI("gemini-3.5-flash", { context: 'llm', forcePrimary: true });
+                                    result = await aiResult.model.generateContent(prompt);
+                                } catch (e2) { throw err; }
+                            } else {
+                                await new Promise(r => setTimeout(r, (4 - retries) * 2000));
+                            }
+                        }
+                    }
+
+                    translatedText = result.response.text();
+                    translatedText = translatedText.replace(/```[\s\S]*?```/g, '').trim();
+                    if (!translatedText) translatedText = result.response.text();
+                    fs.writeFileSync(langScriptPath, translatedText);
+                }
             }
 
-            // Check TTS Provider
-            const ttsProvider = req.body.ttsProvider || 'applio';
+            // TTS for non-segment path
+            const ttsProvider = req.body.ttsProvider || 'google';
             const googleVoice = req.body.googleVoice || 'Kore';
 
             if (ttsProvider === 'text_only') {
                 progress += progressStep;
                 sendStatus(`Texto traducido para ${langNames[lang]} guardado.`, progress);
-                continue; // Skip audio generation logic
+                continue;
             }
-            
-            // Generate Audio logic (only if NOT promo split enabled, because promo split logic handles its own TTS)
+
             const audioOutputPath = path.join(outputDir, `audio_${lang}.wav`);
 
-            if (!isMultiSection && !audioAlreadyGenerated) {
-                // --- NORMAL TTS LOGIC ---
+            if (!fs.existsSync(audioOutputPath)) {
                 sendStatus(`Generando audio para ${langNames[lang]}...`, progress + (progressStep / 2));
 
-                if (ttsProvider === 'google' || ttsProvider === 'google_pro') {
-                    const isPro = ttsProvider === 'google_pro';
-                    const ttsModelName = isPro ? GEMINI_TTS_MODEL_PRO : GEMINI_TTS_MODEL_FLASH;
-                    const randomVoice = req.body.randomVoice === 'true'; // Get flag from request
-                    
-                    if (!translatedText || translatedText === 'undefined') {
-                        throw new Error(`Error en la traducción a ${langNames[lang]}: Texto vacío o inválido.`);
-                    }
-                    
-                    sendStatus(`Generando audio con Google TTS (${randomVoice ? 'Voces Mixtas' : googleVoice} - ${ttsModelName}) para ${langNames[lang]}...`, progress + (progressStep / 2));
-                    try {
-                        // Siempre usar splitting, incluso para Pro (para mantener consistencia y evitar timeouts en textos muy largos)
+                if (!translatedText || translatedText === 'undefined') throw new Error(`Texto vacío para ${langNames[lang]}`);
+                try {
+                    if (ttsProvider === 'applio') {
+                        let isConnected = false;
+                        try { isConnected = await applioClient.checkConnection(); } catch(e) {}
+                        if (!isConnected) {
+                            try { await startApplio(); await new Promise(r => setTimeout(r, 5000)); } catch(e) {}
+                        }
+                        // Select language-appropriate Edge TTS base model
+                        let applioModel = req.body.applioTtsModel || 'fr-FR-RemyMultilingualNeural';
+                        const isFemaleModel2 = applioModel.includes('Ava') || applioModel.includes('Emma') || applioModel.includes('Vivienne');
+                        if (!isFemaleModel2) {
+                            const maleEdgeModels2 = { en: 'en-US-AndrewMultilingualNeural', de: 'de-DE-FlorianMultilingualNeural' };
+                            applioModel = maleEdgeModels2[lang] || applioModel;
+                        } else {
+                            const femaleEdgeModels2 = { en: 'en-US-AvaMultilingualNeural', fr: 'fr-FR-VivienneMultilingualNeural' };
+                            applioModel = femaleEdgeModels2[lang] || applioModel;
+                        }
+                        const applioVoicePath = req.body.applioVoicePath || req.body.applioVoice || 'logs\\VOCES\\RemyOriginal.pth';
+                        console.log(`🎤 Applio TTS (non-seg): lang=${lang}, model=${applioModel}, voice=${applioVoicePath}`);
+                        await applioClient.textToSpeech(translatedText, audioOutputPath, {
+                            model: applioModel,
+                            voicePath: applioVoicePath,
+                            speed: parseFloat(req.body.applioSpeed) || 0,
+                            pitch: parseFloat(req.body.applioPitch) || 0
+                        });
+                    } else if (ttsProvider === 'google_cloud' || ttsProvider === 'google_wavenet') {
+                        const cloudVoice = req.body.cloudVoice || 'male';
+                        const voiceType = ttsProvider === 'google_wavenet' ? 'wavenet' : 'neural2';
+                        await generateSingleCloudTTS(translatedText, audioOutputPath, lang, cloudVoice, voiceType);
+                    } else {
+                        const isPro = ttsProvider === 'google_pro';
+                        const ttsModelName = isPro ? GEMINI_TTS_MODEL_PRO : GEMINI_TTS_MODEL_FLASH;
+                        const randomVoice = req.body.randomVoice === 'true';
                         await generateGoogleTTSWithSplitting(translatedText, audioOutputPath, lang, googleVoice, ttsModelName, randomVoice);
-                    } catch (err) {
-                        console.error(`Error Google TTS for ${lang}:`, err);
-                        
-                        // Check for Rate Limit Error
-                        const isRateLimit = err.message.includes('429') || (err.status === 429) || err.message.includes('Quota exceeded') || err.message.includes('RESOURCE_EXHAUSTED');
-                        
-                        if (isRateLimit) {
-                            sendStatus(`⚠️ Cuota de API agotada para ${langNames[lang]}. Esperando 5 minutos...`, progress, false, "RATE_LIMIT_EXCEEDED");
-                            throw new Error(`RATE_LIMIT_EXCEEDED: Se han agotado las cuotas de API para ${langNames[lang]}. Por favor espera unos minutos y vuelve a intentar.`);
-                        }
-                        
-                        throw new Error(`Error generando audio con Google TTS para ${lang}: ${err.message}`);
                     }
-                } else {
-                    // Applio Logic
-                    const ttsModel = voiceMap[lang] || 'en-US-ChristopherNeural';
-                    
-                    let isConnected = false;
-                    try {
-                        isConnected = await applioClient.checkConnection();
-                    } catch (e) {
-                        isConnected = false;
+                } catch (err) {
+                    const isRateLimit = err.message.includes('429') || (err.status === 429) || err.message.includes('RESOURCE_EXHAUSTED');
+                    if (isRateLimit) {
+                        sendStatus(`⚠️ Cuota agotada para ${langNames[lang]}.`, progress, false, "RATE_LIMIT_EXCEEDED");
+                        throw new Error(`RATE_LIMIT_EXCEEDED para ${langNames[lang]}`);
                     }
-
-                    if (!isConnected) {
-                        console.log("⚠️ Applio no está conectado, intentando iniciar...");
-                        sendStatus("Iniciando servidor Applio...", progress);
-                        try {
-                            await startApplio();
-                            await new Promise(resolve => setTimeout(resolve, 5000));
-                        } catch (startError) {
-                            throw new Error("No se pudo iniciar Applio automáticamente: " + startError.message);
-                        }
-                    }
-
-                    if (!translatedText || translatedText === 'undefined') {
-                        throw new Error(`Error en la traducción a ${langNames[lang]}: Texto vacío o inválido.`);
-                    }
-
-                    const userApplioVoice = req.body.applioVoice || 'RemyOriginal.pth';
-
-                    await applioClient.textToSpeech(translatedText, audioOutputPath, {
-                        model: ttsModel,
-                        voicePath: userApplioVoice,
-                        speed: 0,
-                        pitch: 0
-                    });
+                    throw err;
                 }
-            } 
+            }
 
-            // 4. Adjust Duration (Pad/Trim) with Time Stretching
-            let filterString = `apad,atrim=0:${videoDuration}`; // Default fallback
+            // Duration adjust
+            const segmentBased = transcriptionResult.segments && transcriptionResult.segments.length > 0;
+            let filterString = `apad,atrim=0:${videoDuration}`;
 
-            if (!isMultiSection && !audioAlreadyGenerated) {
-                // --- NORMAL DURATION ADJUST MENT ---
+            if (!segmentBased) {
                 let ttsDuration = 0;
                 try {
                     await new Promise((resolve) => {
                         const ffprobe = spawn('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', audioOutputPath]);
                         let output = '';
-                        ffprobe.stdout.on('data', (data) => output += data.toString());
-                        ffprobe.on('close', (code) => {
-                            if (code === 0) ttsDuration = parseFloat(output);
-                            resolve();
-                        });
+                        ffprobe.stdout.on('data', (d) => output += d);
+                        ffprobe.on('close', () => { ttsDuration = parseFloat(output) || 0; resolve(); });
                     });
-                } catch (e) {
-                    console.error("Error getting TTS duration:", e);
-                }
+                } catch (e) {}
 
                 if (ttsDuration > 0) {
-                    const isShortVideo = req.body.isShortVideo === 'true';
-                    const silenceDuration = isShortVideo ? 0 : 20;
-                    const targetSpeechDuration = Math.max(1.0, videoDuration - silenceDuration);
+                    const targetSpeechDuration = Math.max(1.0, videoDuration - endScreenSeconds);
                     const speedFactor = ttsDuration / targetSpeechDuration;
-                    
                     let filters = [];
                     let currentSpeed = speedFactor;
-                    
                     while (currentSpeed > 2.0) { filters.push('atempo=2.0'); currentSpeed /= 2.0; }
                     while (currentSpeed < 0.5) { filters.push('atempo=0.5'); currentSpeed /= 0.5; }
                     filters.push(`atempo=${currentSpeed}`);
-                    
                     filterString = filters.join(',') + `,apad,atrim=0:${videoDuration}`;
                 }
-            } else {
-                 filterString = `apad,atrim=0:${videoDuration}`;
             }
-            
+
+            // Final mix
+            console.log(`🎬 Final mix: segmentBased=${segmentBased}, videoDuration=${videoDuration}, filterString=${filterString}`);
+            const bgmVol = (customMusicVolume !== null ? customMusicVolume : 0.7).toFixed(2);
             await new Promise((resolve, reject) => {
                 let ffmpegArgs = [];
-                
+
                 if (musicFile) {
-                                        if (isMultiSection || audioAlreadyGenerated) {
-                        ffmpegArgs = [
-                            '-y',
-                            '-i', audioOutputPath,
-                            '-stream_loop', '-1', '-i', musicFile.path,
-                            '-filter_complex', `[0:a]aresample=48000[speech];[1:a]aresample=48000,volume=0.7[bgm];[speech][bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,volume=2[out]`,
-                            '-map', '[out]',
-                            '-acodec', 'pcm_s16le',
-                            finalAudioPath
-                        ];
-                    } else {
-                        ffmpegArgs = [
-                            '-y',
-                            '-i', audioOutputPath,
-                            '-stream_loop', '-1', '-i', musicFile.path,
-                            '-filter_complex', `[0:a]aresample=48000${filterString}[speech];[1:a]aresample=48000,volume=0.7[bgm];[speech][bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,volume=2[out]`,
-                            '-map', '[out]',
-                            '-acodec', 'pcm_s16le',
-                            finalAudioPath
-                        ];
-                    }
+                    ffmpegArgs = ['-y', '-i', audioOutputPath, '-stream_loop', '-1', '-i', musicFile.path,
+                        '-filter_complex', `[0:a]aresample=48000,${filterString}[speech];[1:a]aresample=48000,volume=${bgmVol}[bgm];[speech][bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[out]`,
+                        '-map', '[out]', '-acodec', 'pcm_s16le', finalAudioPath];
                 } else {
-                    if (isMultiSection || audioAlreadyGenerated) {
-                         ffmpegArgs = [
-                            '-y',
-                            '-i', audioOutputPath,
-                             '-af', 'aresample=48000',
-                            '-acodec', 'pcm_s16le',
-                            finalAudioPath
-                        ];
-                    } else {
-                        ffmpegArgs = [
-                            '-y',
-                            '-i', audioOutputPath,
-                            '-af', `aresample=48000,${filterString}`,
-                            '-acodec', 'pcm_s16le',
-                            finalAudioPath
-                        ];
-                    }
+                    ffmpegArgs = ['-y', '-i', audioOutputPath, '-af', `aresample=48000,${filterString}`, '-acodec', 'pcm_s16le', finalAudioPath];
                 }
 
-                const ffmpegCmd = spawn('ffmpeg', ffmpegArgs);
-                
+                const ffmpeg = spawn('ffmpeg', ffmpegArgs);
                 let stderr = '';
-                ffmpegCmd.stderr.on('data', (data) => {
-                    stderr += data.toString();
-                });
-
-                ffmpegCmd.on('close', (code) => {
-                    if (code === 0) {
-                        resolve();
-                    }
-                    else {
-                        console.error(`❌ FFmpeg adjust duration failed. Args: ${ffmpegArgs.join(' ')}`);
-                        console.error(`❌ Stderr: ${stderr}`);
-                        reject(new Error(`FFmpeg error adjusting duration: ${stderr.slice(-200)}`));
-                    }
+                ffmpeg.stderr.on('data', (data) => { stderr += data.toString(); });
+                ffmpeg.on('close', (code) => {
+                    if (code === 0) resolve();
+                    else reject(new Error(`FFmpeg error: ${stderr.slice(-200)}`));
                 });
             });
 
@@ -22566,6 +22780,7 @@ const manualUploadFields = [
     { name: 'music', maxCount: 1 },
     ...['es', 'en', 'fr', 'de', 'it', 'pt', 'ru', 'zh', 'ko', 'ja'].map(lang => ({ name: `audio_${lang}`, maxCount: 1 }))
 ];
+
 
 app.post('/api/manual-translate-video', upload.fields(manualUploadFields), async (req, res) => {
     res.setHeader('Content-Type', 'text/event-stream');
@@ -22673,6 +22888,7 @@ app.post('/api/manual-translate-video', upload.fields(manualUploadFields), async
             }
 
             // FFmpeg mix
+            const bgmVol2 = (customMusicVolume !== null ? customMusicVolume : 0.7).toFixed(2);
             await new Promise((resolve, reject) => {
                 let ffmpegArgs = [];
                 if (musicFile) {
@@ -22680,8 +22896,8 @@ app.post('/api/manual-translate-video', upload.fields(manualUploadFields), async
                         '-y',
                             '-i', audioOutputPath,
                             '-stream_loop', '-1', '-i', musicFile.path,
-                            // Fix: Set bgm volume to 70%, force 48kHz, disable amix normalization, compensate volume
-                            '-filter_complex', `[0:a]aresample=48000${filterString}[speech];[1:a]aresample=48000,volume=0.7[bgm];[speech][bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,volume=2[out]`,
+                            // Fix: Set bgm volume, force 48kHz, disable amix normalization, compensate volume
+                            '-filter_complex', `[0:a]aresample=48000,${filterString}[speech];[1:a]aresample=48000,volume=${bgmVol2}[bgm];[speech][bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,volume=2[out]`,
                             '-map', '[out]',
                              '-acodec', 'pcm_s16le',
                             finalOutputPath

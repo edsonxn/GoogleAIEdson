@@ -996,6 +996,204 @@
           <div id="brollVideoProgressInfo" style="color: #94a3b8; font-size: 0.8rem; margin-top: 6px;"></div>
         </div>
 
+        <!-- Panel de Traducción de Video (post-render) -->
+        <div id="brollTranslatePanel" style="display: none; margin-top: 16px; padding: 0; background: #0f172a; border: 1px solid rgba(6,182,212,0.18); border-radius: 14px; overflow: hidden;">
+          <!-- Header -->
+          <div style="display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; background: linear-gradient(135deg, rgba(6,182,212,0.12), rgba(6,182,212,0.04)); border-bottom: 1px solid rgba(6,182,212,0.12);">
+            <h3 style="color: #06b6d4; font-size: 0.95rem; font-weight: 700; display: flex; align-items: center; gap: 8px; margin: 0;">
+              <i class="fas fa-language"></i> Traducir Video Renderizado
+            </h3>
+            <button onclick="document.getElementById('brollTranslatePanel').style.display='none'" style="background:none; border:none; color:#64748b; cursor:pointer; font-size:1.1rem; padding:4px;"><i class="fas fa-times"></i></button>
+          </div>
+
+          <div style="padding: 16px 20px; display: flex; flex-direction: column; gap: 14px;">
+            <!-- === ROW 1: 4-column grid — Transcripción | Modelo | Proveedor | Voz/Config === -->
+            <div style="display: grid; grid-template-columns: 150px 170px 220px 1fr; gap: 14px; align-items: start;">
+
+              <!-- Col 1: Transcripción -->
+              <div>
+                <div style="font-size: 0.68rem; color: #64748b; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; display:flex; align-items:center; gap:4px;">
+                  <i class="fas fa-ear-listen" style="font-size:0.7rem;"></i> Transcripción
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 3px;">
+                  <label style="display:flex; align-items:center; gap:5px; font-size:0.75rem; color:#cbd5e1; cursor:pointer; padding:3px 0;">
+                    <input type="radio" name="brollTranscription" value="gemini" style="accent-color:#06b6d4;"> Gemini
+                  </label>
+                  <label style="display:flex; align-items:center; gap:5px; font-size:0.75rem; color:#cbd5e1; cursor:pointer; padding:3px 0;">
+                    <input type="radio" name="brollTranscription" value="whisper" checked style="accent-color:#06b6d4;"> Whisper (GPU)
+                  </label>
+                </div>
+              </div>
+
+              <!-- Col 2: Modelo Traducción -->
+              <div>
+                <div style="font-size: 0.68rem; color: #64748b; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; display:flex; align-items:center; gap:4px;">
+                  <i class="fas fa-brain" style="font-size:0.7rem;"></i> Modelo
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 3px;">
+                  <label style="display:flex; align-items:center; gap:5px; font-size:0.75rem; color:#cbd5e1; cursor:pointer; padding:3px 0;">
+                    <input type="radio" name="brollTranslationModel" value="gemini-3.5-flash" checked style="accent-color:#06b6d4;"> 3.5 Flash
+                  </label>
+                  <label style="display:flex; align-items:center; gap:5px; font-size:0.75rem; color:#cbd5e1; cursor:pointer; padding:3px 0;">
+                    <input type="radio" name="brollTranslationModel" value="gemini-3.1-pro-preview" style="accent-color:#06b6d4;"> 3.1 Pro
+                  </label>
+                  <label style="display:flex; align-items:center; gap:5px; font-size:0.75rem; color:#cbd5e1; cursor:pointer; padding:3px 0;">
+                    <input type="radio" name="brollTranslationModel" value="gemini-2.5-flash" style="accent-color:#06b6d4;"> 2.5 Flash
+                  </label>
+                </div>
+              </div>
+
+              <!-- Col 3: Proveedor de Voz -->
+              <div>
+                <div style="font-size: 0.68rem; color: #64748b; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; display:flex; align-items:center; gap:4px;">
+                  <i class="fas fa-microphone-alt" style="font-size:0.7rem;"></i> Proveedor de Voz
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2px 10px;">
+                  <label style="display:flex; align-items:center; gap:4px; font-size:0.73rem; color:#cbd5e1; cursor:pointer; padding:3px 0;">
+                    <input type="radio" name="brollTtsProvider" value="applio" checked onchange="onTranslateTtsChange()" style="accent-color:#06b6d4;"> Applio (RVC)
+                  </label>
+                  <label style="display:flex; align-items:center; gap:4px; font-size:0.73rem; color:#cbd5e1; cursor:pointer; padding:3px 0;">
+                    <input type="radio" name="brollTtsProvider" value="google" onchange="onTranslateTtsChange()" style="accent-color:#06b6d4;"> Gemini TTS
+                  </label>
+                  <label style="display:flex; align-items:center; gap:4px; font-size:0.73rem; color:#cbd5e1; cursor:pointer; padding:3px 0;">
+                    <input type="radio" name="brollTtsProvider" value="google_pro" onchange="onTranslateTtsChange()" style="accent-color:#06b6d4;"> Gemini Pro
+                  </label>
+                  <label style="display:flex; align-items:center; gap:4px; font-size:0.73rem; color:#cbd5e1; cursor:pointer; padding:3px 0;">
+                    <input type="radio" name="brollTtsProvider" value="google_cloud" onchange="onTranslateTtsChange()" style="accent-color:#06b6d4;"> Cloud Neural2
+                  </label>
+                  <label style="display:flex; align-items:center; gap:4px; font-size:0.73rem; color:#cbd5e1; cursor:pointer; padding:3px 0;">
+                    <input type="radio" name="brollTtsProvider" value="google_wavenet" onchange="onTranslateTtsChange()" style="accent-color:#06b6d4;"> Cloud WaveNet
+                  </label>
+                  <label style="display:flex; align-items:center; gap:4px; font-size:0.73rem; color:#cbd5e1; cursor:pointer; padding:3px 0;">
+                    <input type="radio" name="brollTtsProvider" value="text_only" onchange="onTranslateTtsChange()" style="accent-color:#06b6d4;"> Solo Texto
+                  </label>
+                </div>
+              </div>
+
+              <!-- Col 4: Voice Config (dynamic) -->
+              <div>
+                <!-- Applio Voice (shown by default) -->
+                <div id="translateApplioVoiceDiv">
+                  <div style="font-size: 0.68rem; color: #64748b; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">VOZ APPLIO</div>
+                  <select id="translateApplioVoice" style="width:100%; padding:5px 8px; background:#1e293b; border:1px solid #334155; border-radius:6px; color:#e2e8f0; font-size:0.78rem; margin-bottom:6px;">
+                    <option value="logs\VOCES\RemyOriginal.pth">Cargando...</option>
+                  </select>
+                  <div style="display: flex; gap: 12px;">
+                    <label style="display:flex; align-items:center; gap:4px; font-size:0.72rem; color:#94a3b8; cursor:pointer;">
+                      <input type="radio" name="brollApplioGender" value="male" checked style="accent-color:#06b6d4;"> 🗣️ Hombre
+                    </label>
+                    <label style="display:flex; align-items:center; gap:4px; font-size:0.72rem; color:#94a3b8; cursor:pointer;">
+                      <input type="radio" name="brollApplioGender" value="female" style="accent-color:#06b6d4;"> 👩 Mujer
+                    </label>
+                  </div>
+                </div>
+
+                <!-- Google Voice (hidden) -->
+                <div id="translateGoogleVoiceDiv" style="display: none;">
+                  <div style="font-size: 0.68rem; color: #64748b; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">VOZ GOOGLE</div>
+                  <select id="translateGoogleVoice" style="width:100%; padding:5px 8px; background:#1e293b; border:1px solid #334155; border-radius:6px; color:#e2e8f0; font-size:0.78rem;">
+                    <option value="Zephyr">Zephyr (Brillante)</option>
+                    <option value="Kore">Kore (Firme)</option>
+                    <option value="Puck">Puck (Optimista)</option>
+                    <option value="Charon">Charon (Informativa)</option>
+                    <option value="Fenrir">Fenrir (Excitable)</option>
+                    <option value="Orus">Orus (Firme)</option>
+                    <option value="Enceladus">Enceladus (Sin aliento)</option>
+                    <option value="Iapetus">Iapetus (Claro)</option>
+                    <option value="Umbriel">Umbriel (Relajado)</option>
+                  </select>
+                </div>
+
+                <!-- Cloud Voice (hidden) -->
+                <div id="translateCloudVoiceDiv" style="display: none;">
+                  <div style="font-size: 0.68rem; color: #64748b; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">GÉNERO CLOUD</div>
+                  <div style="display: flex; gap: 12px;">
+                    <label style="display:flex; align-items:center; gap:4px; font-size:0.72rem; color:#94a3b8; cursor:pointer;">
+                      <input type="radio" name="brollCloudVoice" value="male" checked style="accent-color:#06b6d4;"> 🗣️ Hombre
+                    </label>
+                    <label style="display:flex; align-items:center; gap:4px; font-size:0.72rem; color:#94a3b8; cursor:pointer;">
+                      <input type="radio" name="brollCloudVoice" value="female" style="accent-color:#06b6d4;"> 👩 Mujer
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- === ROW 2: Options + Languages + Button === -->
+            <div style="display: flex; gap: 14px; align-items: flex-start; border-top: 1px solid rgba(6,182,212,0.08); padding-top: 12px;">
+
+              <!-- Segmentos -->
+              <div style="min-width: 130px;">
+                <div style="font-size: 0.68rem; color: #64748b; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">
+                  <i class="fas fa-layer-group" style="font-size:0.65rem; margin-right:2px;"></i> Segmentos
+                </div>
+                <div style="display:flex; align-items:center; gap:6px;">
+                  <input type="range" id="brollGroupSize" min="1" max="12" value="3" style="width:80px; accent-color:#06b6d4;" oninput="document.getElementById('brollGroupSizeVal').textContent=this.value">
+                  <span id="brollGroupSizeVal" style="color:#06b6d4; font-weight:700; font-size:0.85rem;">3</span>
+                </div>
+              </div>
+
+              <!-- Opciones -->
+              <div style="display: flex; gap: 12px; align-items: center; flex-shrink: 0;">
+                <label style="display:flex; align-items:center; gap:4px; font-size:0.73rem; color:#94a3b8; cursor:pointer;" title="Estilo conversacional podcast">
+                  <input type="checkbox" id="brollPodcastStyle" style="accent-color:#34d399;">
+                  <i class="fas fa-podcast" style="color:#34d399; font-size:0.75rem;"></i> Podcast
+                </label>
+                <label style="display:flex; align-items:center; gap:4px; font-size:0.73rem; color:#94a3b8; cursor:pointer;" title="No borrar archivos raw/adj">
+                  <input type="checkbox" id="brollKeepTemp" checked style="accent-color:#fca5a5;">
+                  <i class="fas fa-file-audio" style="color:#fca5a5; font-size:0.75rem;"></i> Temporales
+                </label>
+                <label style="display:flex; align-items:center; gap:4px; font-size:0.73rem; color:#94a3b8;" title="Segundos de silencio al final">
+                  <i class="fas fa-hourglass-end" style="color:#60a5fa; font-size:0.75rem;"></i>
+                  <input type="number" id="brollEndScreenSeconds" value="0" min="0" max="120" step="1" style="width:42px; padding:2px 4px; background:#1e293b; border:1px solid #334155; border-radius:4px; color:#fff; font-size:0.75rem; text-align:center;">
+                  <span style="font-size:0.68rem;">s</span>
+                </label>
+              </div>
+
+              <!-- Separator -->
+              <div style="width:1px; height:32px; background:rgba(6,182,212,0.12); flex-shrink:0;"></div>
+
+              <!-- Idiomas -->
+              <div style="flex: 1;">
+                <div style="font-size: 0.68rem; color: #64748b; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 5px;">
+                  <i class="fas fa-globe" style="font-size:0.65rem; margin-right:2px;"></i> Idiomas
+                </div>
+                <div id="translateLangChecks" style="display: flex; flex-wrap: wrap; gap: 2px 8px;">
+                  <label style="display:flex; align-items:center; gap:3px; font-size:0.73rem; color:#cbd5e1; cursor:pointer;"><input type="checkbox" value="en" checked style="accent-color:#06b6d4;"> EN</label>
+                  <label style="display:flex; align-items:center; gap:3px; font-size:0.73rem; color:#cbd5e1; cursor:pointer;"><input type="checkbox" value="fr" style="accent-color:#06b6d4;"> FR</label>
+                  <label style="display:flex; align-items:center; gap:3px; font-size:0.73rem; color:#cbd5e1; cursor:pointer;"><input type="checkbox" value="de" style="accent-color:#06b6d4;"> DE</label>
+                  <label style="display:flex; align-items:center; gap:3px; font-size:0.73rem; color:#cbd5e1; cursor:pointer;"><input type="checkbox" value="ko" style="accent-color:#06b6d4;"> KO</label>
+                  <label style="display:flex; align-items:center; gap:3px; font-size:0.73rem; color:#cbd5e1; cursor:pointer;"><input type="checkbox" value="ru" style="accent-color:#06b6d4;"> RU</label>
+                  <label style="display:flex; align-items:center; gap:3px; font-size:0.73rem; color:#cbd5e1; cursor:pointer;"><input type="checkbox" value="pt" style="accent-color:#06b6d4;"> PT</label>
+                  <label style="display:flex; align-items:center; gap:3px; font-size:0.73rem; color:#cbd5e1; cursor:pointer;"><input type="checkbox" value="it" style="accent-color:#06b6d4;"> IT</label>
+                  <label style="display:flex; align-items:center; gap:3px; font-size:0.73rem; color:#cbd5e1; cursor:pointer;"><input type="checkbox" value="ja" style="accent-color:#06b6d4;"> JA</label>
+                  <label style="display:flex; align-items:center; gap:3px; font-size:0.73rem; color:#cbd5e1; cursor:pointer;"><input type="checkbox" value="zh" style="accent-color:#06b6d4;"> ZH</label>
+                  <label style="display:flex; align-items:center; gap:3px; font-size:0.73rem; color:#cbd5e1; cursor:pointer;"><input type="checkbox" value="es" style="accent-color:#06b6d4;"> ES</label>
+                </div>
+              </div>
+
+              <!-- Botón -->
+              <div style="flex-shrink: 0; align-self: center;">
+                <button id="btnStartTranslateVideo" onclick="startBrollTranslation()" style="padding: 10px 24px; background: linear-gradient(135deg, #0891b2, #06b6d4); border: none; border-radius: 8px; color: white; font-weight: 700; font-size: 0.82rem; cursor: pointer; display: flex; align-items: center; gap: 8px; white-space: nowrap; transition: opacity 0.15s;">
+                  <i class="fas fa-language"></i>
+                  <span>Traducir</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Progress -->
+            <div id="translateVideoProgress" style="display:none;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                <span id="translateVideoStatus" style="color: #94a3b8; font-size: 0.78rem;">Iniciando...</span>
+                <span id="translateVideoPercent" style="color: #06b6d4; font-weight: bold; font-size: 0.82rem;">0%</span>
+              </div>
+              <div style="width: 100%; height: 5px; background: #1e293b; border-radius: 3px; overflow: hidden;">
+                <div id="translateVideoBar" style="width: 0%; height: 100%; background: linear-gradient(90deg, #0891b2, #06b6d4); transition: width 0.3s ease;"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Timeline Preview B-Roll (inline box) -->
         <div id="brollTimelinePanel" class="tl-panel" style="display: none;">
           <div class="tl-topbar">

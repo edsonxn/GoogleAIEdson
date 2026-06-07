@@ -25,6 +25,7 @@
   "author": "Edson Jair Iniguez",
   "license": "MIT",
   "dependencies": {
+    "@google-cloud/text-to-speech": "^6.4.1",
     "@google-cloud/vertexai": "^1.10.0",
     "@google/genai": "^1.14.0",
     "@google/generative-ai": "^0.10.0",
