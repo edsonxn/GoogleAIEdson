@@ -12,6 +12,7 @@ import path from 'path';
 import fetch from 'node-fetch';
 import ApplioClient from "./applio-client.js";
 import QwenClient from "./qwen-client.js";
+import OllamaClient from "./ollama-client.js";
 import { transcribeAudio, getAudioTracks } from "./transcriber.js";
 import { initTelegramBot } from "./telegram-bot.js";
 import multer from 'multer';
@@ -23,6 +24,78 @@ const GEMINI_TEXT_MODEL = process.env.GEMINI_TEXT_MODEL || 'gemini-3.1-pro-previ
 const GEMINI_IMAGE_MODEL = process.env.GEMINI_IMAGE_MODEL || 'gemini-2.5-flash-image';
 const GEMINI_TTS_MODEL_FLASH = process.env.GEMINI_TTS_MODEL_FLASH || 'gemini-2.5-flash-preview-tts';
 const GEMINI_TTS_MODEL_PRO = process.env.GEMINI_TTS_MODEL_PRO || 'gemini-2.5-pro-preview-tts';
+
+// ==============================
+// OLLAMA LOCAL LLM
+// ==============================
+const OLLAMA_URL = process.env.OLLAMA_URL || 'http://127.0.0.1:11434';
+const OLLAMA_DEFAULT_MODEL = process.env.OLLAMA_MODEL || 'gemma3:4b';
+const ollamaClient = new OllamaClient(OLLAMA_URL);
+
+/**
+ * Unified text generation router. Routes to local Ollama or Gemini API.
+ * @param {string} prompt - The prompt text
+ * @param {object} options
+ * @param {string} [options.provider] - 'gemini' | 'local'
+ * @param {string} [options.model] - Model name (Gemini model or Ollama model)
+ * @param {string} [options.system] - System instruction (Ollama only, Gemini uses generationConfig)
+ * @param {string} [options.context] - API key context for Gemini ('llm', 'tts', etc.)
+ * @param {boolean} [options.forcePrimary] - Force primary API key (Gemini)
+ * @param {number} [options.temperature] - Temperature (Ollama)
+ * @param {number} [options.maxTokens] - Max tokens (Ollama)
+ * @param {number} [options.retries] - Number of retries (default 3)
+ * @returns {Promise<string>} Generated text
+ */
+async function generateTextWithLLM(prompt, options = {}) {
+    const {
+        provider = 'gemini',
+        model = null,
+        system = null,
+        context = 'llm',
+        forcePrimary = false,
+        temperature = 0.7,
+        maxTokens = 8192,
+        retries = 3,
+    } = options;
+
+    if (provider === 'local') {
+        const ollamaModel = model || OLLAMA_DEFAULT_MODEL;
+        let lastErr;
+        for (let attempt = 0; attempt < retries; attempt++) {
+            try {
+                const result = await ollamaClient.generateText(prompt, {
+                    model: ollamaModel,
+                    system,
+                    temperature,
+                    maxTokens,
+                });
+                console.log(`🏠 Local LLM (${ollamaModel}): ${result.tokensPerSecond} tok/s, ${result.totalDuration}s`);
+                return result.text;
+            } catch (err) {
+                lastErr = err;
+                console.warn(`⚠️ Ollama attempt ${attempt + 1}/${retries} failed: ${err.message}`);
+                if (attempt < retries - 1) await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
+            }
+        }
+        throw lastErr;
+    }
+
+    // Default: Gemini API
+    const selectedModel = model || GEMINI_TEXT_MODEL;
+    let lastErr;
+    for (let attempt = 0; attempt < retries; attempt++) {
+        try {
+            const fp = forcePrimary || (attempt === retries - 1);
+            const aiResult = await getGoogleAI(selectedModel, { context, forcePrimary: fp });
+            const result = await aiResult.model.generateContent(prompt);
+            return result.response.text().trim();
+        } catch (err) {
+            lastErr = err;
+            if (attempt < retries - 1) await new Promise(r => setTimeout(r, (attempt + 1) * 2000));
+        }
+    }
+    throw lastErr;
+}
 
 
 // Helper para detectar el comando de Python correcto (Python 3.13 preferido sobre 3.14 preview)
@@ -1803,18 +1876,41 @@ async function generateUniversalContent(model, promptOrHistory, systemInstructio
   console.log(`🤖 Generando contenido con modelo: ${model}`);
   
   // Determinar el proveedor basado en el modelo
-  const isOpenAI = model.includes('gpt') || model.includes('openai');
-  const isGoogle = model.includes('gemini') || model.includes('google');
+  const isOllama = model === 'local' || model.startsWith('ollama:');
+  const isOpenAI = !isOllama && (model.includes('gpt') || model.includes('openai'));
+  const isGoogle = !isOllama && !isOpenAI;
   
-  console.log(`🔍 Proveedor detectado: ${isOpenAI ? 'OpenAI' : 'Google AI'} para modelo "${model}"`);
+  const providerLabel = isOllama ? 'Ollama (Local)' : isOpenAI ? 'OpenAI' : 'Google AI';
+  console.log(`🔍 Proveedor detectado: ${providerLabel} para modelo "${model}"`);
   
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
   let currentApiKeyType = null;
 
     try {
-      console.log(`🔄 Intento ${attempt}/${maxRetries} con ${isOpenAI ? 'OpenAI' : 'Google AI'}...`);
+      console.log(`🔄 Intento ${attempt}/${maxRetries} con ${providerLabel}...`);
       
-      if (isOpenAI) {
+      if (isOllama) {
+        // Usar Ollama local
+        const ollamaModelName = model.startsWith('ollama:') ? model.replace('ollama:', '') : (OLLAMA_DEFAULT_MODEL || 'gemma3:4b');
+        let promptText = '';
+        if (Array.isArray(promptOrHistory)) {
+          // Convertir historial de conversación a texto plano para Ollama
+          promptText = promptOrHistory.map(h => {
+            const role = h.role === 'model' ? 'assistant' : h.role;
+            return `${role}: ${h.parts[0].text}`;
+          }).join('\n\n');
+        } else {
+          promptText = promptOrHistory;
+        }
+        const result = await ollamaClient.generateText(promptText, {
+          model: ollamaModelName,
+          system: systemInstruction || undefined,
+          temperature: 0.7,
+        });
+        console.log(`✅ Contenido generado con Ollama (${ollamaModelName}) - ${result.tokensPerSecond?.toFixed(1) || '?'} tok/s`);
+        return result.text;
+
+      } else if (isOpenAI) {
         // Usar OpenAI
         const messages = [];
         
@@ -12862,6 +12958,56 @@ if __name__ == '__main__':
   }
 });
 
+// ==============================
+// OLLAMA LOCAL LLM ENDPOINTS
+// ==============================
+
+app.get('/api/ollama/status', async (req, res) => {
+    try {
+        const connected = await ollamaClient.checkConnection();
+        if (!connected) {
+            return res.json({ connected: false, models: [], url: OLLAMA_URL });
+        }
+        const models = await ollamaClient.listModels();
+        res.json({ connected: true, models, url: OLLAMA_URL, defaultModel: OLLAMA_DEFAULT_MODEL });
+    } catch (err) {
+        res.json({ connected: false, error: err.message, url: OLLAMA_URL });
+    }
+});
+
+app.post('/api/ollama/pull', async (req, res) => {
+    const { model } = req.body;
+    if (!model) return res.status(400).json({ error: 'model name required' });
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    try {
+        await ollamaClient.pullModel(model, (status, completed, total) => {
+            res.write(`data: ${JSON.stringify({ status, completed, total })}\n\n`);
+        });
+        res.write(`data: ${JSON.stringify({ status: 'success', completed: true })}\n\n`);
+        res.end();
+    } catch (err) {
+        res.write(`data: ${JSON.stringify({ status: 'error', error: err.message })}\n\n`);
+        res.end();
+    }
+});
+
+app.post('/api/ollama/test', async (req, res) => {
+    const { model } = req.body;
+    const testModel = model || OLLAMA_DEFAULT_MODEL;
+    try {
+        const result = await ollamaClient.generateText('Responde solo "OK" si puedes leer esto.', {
+            model: testModel, maxTokens: 32, temperature: 0,
+        });
+        res.json({ success: true, response: result.text, tokensPerSecond: result.tokensPerSecond, model: testModel });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 // Ruta para obtener las voces disponibles de Applio
 app.get('/api/applio-voices', (req, res) => {
   try {
@@ -21635,7 +21781,7 @@ async function adjustAudioSpeed(inPath, outPath, targetDuration) {
 }
 
 async function translateSegmentsBatch(segments, lang, langName, options) {
-    const { translationModel, podcastStyle, sameLanguage } = options;
+    const { translationModel, podcastStyle, sameLanguage, llmProvider = 'gemini', localModel = null } = options;
     const segmentTexts = segments.map(s => s.text);
 
     const BATCH = 50;
@@ -21665,23 +21811,13 @@ OUTPUT ONLY THE JSON ARRAY. No markdown code blocks, no explanation.
 ${JSON.stringify(batch)}`;
         }
 
-        const selectedModel = translationModel || GEMINI_TEXT_MODEL;
-        let result;
-        let retries = 3;
-        while (retries > 0) {
-            try {
-                const forcePrimary = (retries === 1);
-                const aiResult = await getGoogleAI(selectedModel, { context: 'llm', forcePrimary });
-                result = await aiResult.model.generateContent(prompt);
-                break;
-            } catch (err) {
-                retries--;
-                if (retries === 0) throw err;
-                await new Promise(r => setTimeout(r, (4 - retries) * 2000));
-            }
-        }
+        let responseText = await generateTextWithLLM(prompt, {
+            provider: llmProvider,
+            model: llmProvider === 'local' ? localModel : (translationModel || GEMINI_TEXT_MODEL),
+            context: 'llm',
+            retries: 3,
+        });
 
-        let responseText = result.response.text().trim();
         responseText = responseText.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?\s*```$/i, '').trim();
 
         const translated = JSON.parse(responseText);
@@ -22360,7 +22496,9 @@ app.post('/api/translate-video', upload.fields([{ name: 'video', maxCount: 1 }, 
                             {
                                 translationModel: req.body.translationModel,
                                 podcastStyle: isPodcast,
-                                sameLanguage: detectedLang && detectedLang === lang
+                                sameLanguage: detectedLang && detectedLang === lang,
+                                llmProvider: req.body.llmProvider || 'gemini',
+                                localModel: req.body.localModel || null,
                             }
                         );
                     }
@@ -22620,32 +22758,30 @@ OUTPUT ONLY THE TRANSLATED TEXT.
 SCRIPT:
 ${originalText}`;
 
-                    let result;
-                    let usedModel = req.body.translationModel || GEMINI_TEXT_MODEL;
-                    let retries = 3;
-                    while (retries > 0) {
-                        try {
-                            const forcePrimary = (retries === 1);
-                            const aiResult = await getGoogleAI(usedModel, { context: 'llm', forcePrimary });
-                            result = await aiResult.model.generateContent(prompt);
-                            break;
-                        } catch (err) {
-                            retries--;
-                            if (retries === 0) {
-                                // Last resort fallback model
-                                try {
-                                    const aiResult = await getGoogleAI("gemini-3.5-flash", { context: 'llm', forcePrimary: true });
-                                    result = await aiResult.model.generateContent(prompt);
-                                } catch (e2) { throw err; }
-                            } else {
-                                await new Promise(r => setTimeout(r, (4 - retries) * 2000));
-                            }
-                        }
+                    const llmProvider = req.body.llmProvider || 'gemini';
+                    let responseText;
+                    try {
+                        responseText = await generateTextWithLLM(prompt, {
+                            provider: llmProvider,
+                            model: llmProvider === 'local' ? (req.body.localModel || null) : (req.body.translationModel || GEMINI_TEXT_MODEL),
+                            context: 'llm',
+                            retries: 3,
+                        });
+                    } catch (err) {
+                        // Last resort fallback to gemini-3.5-flash
+                        if (llmProvider !== 'local') {
+                            responseText = await generateTextWithLLM(prompt, {
+                                provider: 'gemini',
+                                model: 'gemini-3.5-flash',
+                                context: 'llm',
+                                forcePrimary: true,
+                                retries: 1,
+                            });
+                        } else { throw err; }
                     }
 
-                    translatedText = result.response.text();
-                    translatedText = translatedText.replace(/```[\s\S]*?```/g, '').trim();
-                    if (!translatedText) translatedText = result.response.text();
+                    translatedText = responseText.replace(/```[\s\S]*?```/g, '').trim();
+                    if (!translatedText) translatedText = responseText;
                     fs.writeFileSync(langScriptPath, translatedText);
                 }
             }

@@ -532,10 +532,17 @@
             <label for="llmModelSelect" class="field-label">
               <i class="fas fa-brain"></i> Modelo LLM:
             </label>
-            <select id="llmModelSelect" class="field-select">
+            <select id="llmModelSelect" class="field-select" onchange="onMainLlmChange()">
               <option value="gemini-3.5-flash" selected>Gemini 3.5 Flash</option>
               <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview</option>
+              <option value="local">🏠 Local (Ollama)</option>
             </select>
+            <div id="mainLocalModelDiv" style="display:none; margin-top:6px;">
+              <select id="mainLocalModel" class="field-select" style="font-size:0.85em;">
+                <option value="">Cargando modelos...</option>
+              </select>
+              <span id="mainOllamaStatus" style="font-size:0.75em; color:#94a3b8;"></span>
+            </div>
           </div>
         </div>
 
@@ -1032,14 +1039,23 @@
                 </div>
                 <div style="display: flex; flex-direction: column; gap: 3px;">
                   <label style="display:flex; align-items:center; gap:5px; font-size:0.75rem; color:#cbd5e1; cursor:pointer; padding:3px 0;">
-                    <input type="radio" name="brollTranslationModel" value="gemini-3.5-flash" checked style="accent-color:#06b6d4;"> 3.5 Flash
+                    <input type="radio" name="brollTranslationModel" value="gemini-3.5-flash" checked style="accent-color:#06b6d4;" onchange="onBrollLlmChange()"> 3.5 Flash
                   </label>
                   <label style="display:flex; align-items:center; gap:5px; font-size:0.75rem; color:#cbd5e1; cursor:pointer; padding:3px 0;">
-                    <input type="radio" name="brollTranslationModel" value="gemini-3.1-pro-preview" style="accent-color:#06b6d4;"> 3.1 Pro
+                    <input type="radio" name="brollTranslationModel" value="gemini-3.1-pro-preview" style="accent-color:#06b6d4;" onchange="onBrollLlmChange()"> 3.1 Pro
                   </label>
                   <label style="display:flex; align-items:center; gap:5px; font-size:0.75rem; color:#cbd5e1; cursor:pointer; padding:3px 0;">
-                    <input type="radio" name="brollTranslationModel" value="gemini-2.5-flash" style="accent-color:#06b6d4;"> 2.5 Flash
+                    <input type="radio" name="brollTranslationModel" value="gemini-2.5-flash" style="accent-color:#06b6d4;" onchange="onBrollLlmChange()"> 2.5 Flash
                   </label>
+                  <label style="display:flex; align-items:center; gap:5px; font-size:0.75rem; color:#10b981; cursor:pointer; padding:3px 0; border-top:1px solid rgba(16,185,129,0.15); margin-top:2px; padding-top:5px;">
+                    <input type="radio" name="brollTranslationModel" value="local" style="accent-color:#10b981;" onchange="onBrollLlmChange()"> 🏠 Local (Ollama)
+                  </label>
+                  <div id="brollLocalModelDiv" style="display:none; margin-top:3px;">
+                    <select id="brollLocalModel" style="width:100%; padding:4px 6px; background:#1e293b; border:1px solid rgba(16,185,129,0.25); border-radius:5px; color:#10b981; font-size:0.72rem;">
+                      <option value="">Cargando modelos...</option>
+                    </select>
+                    <div id="brollOllamaStatus" style="font-size:0.65rem; margin-top:3px; color:#64748b;"></div>
+                  </div>
                 </div>
               </div>
 

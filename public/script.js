@@ -2632,6 +2632,7 @@ async function runAutoGeneration() {
   const promptModifier = document.getElementById("promptModifier")?.value?.trim() || '';
   const selectedImageModel = getSelectedImageModel();
   const selectedLlmModel = document.getElementById("llmModelSelect")?.value || 'gemini';
+  const mainLocalModel = document.getElementById("mainLocalModel")?.value || '';
   let googleImages = document.getElementById("googleImages")?.checked || false;
   let localAIImages = document.getElementById("localAIImages")?.checked || false;
   const comfyOnlyMode = document.getElementById('attemptComfyCheckbox')?.checked || false;
@@ -2821,7 +2822,7 @@ async function runAutoGeneration() {
         aspectRatio,
         promptModifier,
   imageModel: selectedImageModel,
-        llmModel: selectedLlmModel,
+        llmModel: selectedLlmModel === 'local' ? `ollama:${mainLocalModel}` : selectedLlmModel,
         skipImages,
         googleImages,
         localAIImages,
@@ -2910,7 +2911,7 @@ async function runAutoGeneration() {
         aspectRatio: aspectRatio,
         promptModifier: promptModifier,
   imageModel: selectedImageModel,
-        llmModel: selectedLlmModel,
+        llmModel: selectedLlmModel === 'local' ? `ollama:${mainLocalModel}` : selectedLlmModel,
         skipImages: skipImages,
         googleImages: googleImages,
         localAIImages: localAIImages,
@@ -5396,6 +5397,7 @@ generateBtn.addEventListener("click", async () => {
   const promptModifier = document.getElementById("promptModifier").value.trim();
   const selectedImageModel = getSelectedImageModel();
   const selectedLlmModel = document.getElementById("llmModelSelect").value;
+  const mainLocalModel = document.getElementById("mainLocalModel")?.value || '';
   const skipImages = document.getElementById("skipImages").checked;
   const googleImages = document.getElementById("googleImages").checked;
   const localAIImages = document.getElementById("localAIImages").checked;
@@ -5485,7 +5487,7 @@ generateBtn.addEventListener("click", async () => {
         aspectRatio: aspectRatio,
         promptModifier: promptModifier,
         imageModel: selectedImageModel,
-        llmModel: selectedLlmModel,
+        llmModel: selectedLlmModel === 'local' ? `ollama:${mainLocalModel}` : selectedLlmModel,
         skipImages: skipImages,
         googleImages: googleImages,
         localAIImages: localAIImages,
@@ -5685,6 +5687,7 @@ generateBtn.addEventListener("click", async () => {
   const promptModifier = document.getElementById("promptModifier").value.trim();
   const selectedImageModel = getSelectedImageModel();
   const selectedLlmModel = document.getElementById("llmModelSelect").value;
+  const mainLocalModel = document.getElementById("mainLocalModel")?.value || '';
   let skipImages = document.getElementById("skipImages").checked;
   let googleImages = document.getElementById("googleImages").checked;
   
@@ -5735,7 +5738,7 @@ generateBtn.addEventListener("click", async () => {
         aspectRatio: aspectRatio,
         promptModifier: promptModifier,
         imageModel: selectedImageModel,
-        llmModel: selectedLlmModel,
+        llmModel: selectedLlmModel === 'local' ? `ollama:${mainLocalModel}` : selectedLlmModel,
         skipImages: skipImages,
         googleImages: googleImages,
         localAIImages: localAIImages,
@@ -19134,6 +19137,7 @@ function saveBrollTranslatePrefs() {
       podcastStyle: document.getElementById('brollPodcastStyle')?.checked,
       keepTemp: document.getElementById('brollKeepTemp')?.checked,
       endScreenSeconds: document.getElementById('brollEndScreenSeconds')?.value,
+      localModel: document.getElementById('brollLocalModel')?.value,
       languages: Array.from(document.querySelectorAll('#translateLangChecks input[type="checkbox"]')).map(cb => ({ value: cb.value, checked: cb.checked })),
     };
     localStorage.setItem('brollTranslatePrefs', JSON.stringify(prefs));
@@ -19210,7 +19214,86 @@ function restoreBrollTranslatePrefs() {
         if (cb) cb.checked = lang.checked;
       });
     }
+    // Local Model
+    if (prefs.localModel) {
+      const sel = document.getElementById('brollLocalModel');
+      if (sel) {
+        const match = Array.from(sel.options).find(o => o.value === prefs.localModel);
+        if (match) match.selected = true;
+      }
+    }
+    // Trigger LLM change to show/hide local model selector
+    onBrollLlmChange();
   } catch (e) { console.error('Error restoring translate prefs:', e); }
+}
+
+// Ollama local LLM controls
+let _ollamaModelsCache = null;
+
+async function loadOllamaModels(selectId = 'brollLocalModel', statusId = 'brollOllamaStatus') {
+  const sel = document.getElementById(selectId);
+  const statusEl = document.getElementById(statusId);
+  if (!sel) return;
+
+  if (_ollamaModelsCache) {
+    renderOllamaModels(_ollamaModelsCache, sel);
+    if (statusEl) statusEl.textContent = `✅ ${_ollamaModelsCache.length} modelo(s) disponible(s)`;
+    return;
+  }
+
+  try {
+    const resp = await fetch('/api/ollama/status');
+    const data = await resp.json();
+    if (!data.connected) {
+      sel.innerHTML = '<option value="">Ollama no detectado</option>';
+      if (statusEl) statusEl.innerHTML = '❌ Ollama no está corriendo. <a href="https://ollama.com" target="_blank" style="color:#06b6d4;">Instalar</a>';
+      return;
+    }
+    _ollamaModelsCache = data.models;
+    renderOllamaModels(data.models, sel);
+    if (statusEl) {
+      if (data.models.length === 0) {
+        statusEl.textContent = 'No hay modelos. Corre: ollama pull gemma3:4b';
+      } else {
+        statusEl.textContent = `✅ ${data.models.length} modelo(s) disponible(s)`;
+      }
+    }
+  } catch (e) {
+    sel.innerHTML = '<option value="">Error conectando</option>';
+    if (statusEl) statusEl.textContent = '❌ ' + e.message;
+  }
+}
+
+function renderOllamaModels(models, sel) {
+  sel.innerHTML = '';
+  if (models.length === 0) {
+    sel.innerHTML = '<option value="">Sin modelos</option>';
+    return;
+  }
+  models.forEach(m => {
+    const opt = document.createElement('option');
+    opt.value = m.name;
+    opt.textContent = `${m.name} (${m.sizeGB}GB, ${m.quantization})`;
+    sel.appendChild(opt);
+  });
+}
+
+function onBrollLlmChange() {
+  const selected = document.querySelector('input[name="brollTranslationModel"]:checked')?.value;
+  const localDiv = document.getElementById('brollLocalModelDiv');
+  if (localDiv) {
+    localDiv.style.display = selected === 'local' ? 'block' : 'none';
+    if (selected === 'local') loadOllamaModels('brollLocalModel', 'brollOllamaStatus');
+  }
+}
+
+function onMainLlmChange() {
+  const selected = document.getElementById('llmModelSelect')?.value;
+  const localDiv = document.getElementById('mainLocalModelDiv');
+  if (localDiv) {
+    localDiv.style.display = selected === 'local' ? 'block' : 'none';
+    if (selected === 'local') loadOllamaModels('mainLocalModel', 'mainOllamaStatus');
+  }
 }
 
 async function startBrollTranslation() {
@@ -19263,7 +19346,9 @@ async function startBrollTranslation() {
     formData.append('musicVolume', bgMusicVolume.toString());
     formData.append('targetLanguages', JSON.stringify(targetLanguages));
     formData.append('ttsProvider', ttsProvider);
-    formData.append('translationModel', translationModel);
+    formData.append('translationModel', translationModel === 'local' ? '' : translationModel);
+    formData.append('llmProvider', translationModel === 'local' ? 'local' : 'gemini');
+    formData.append('localModel', document.getElementById('brollLocalModel')?.value || '');
     formData.append('transcriptionMethod', transcriptionMethod);
     formData.append('googleVoice', googleVoice);
     formData.append('applioVoice', applioVoice);
