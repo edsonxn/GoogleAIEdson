@@ -725,7 +725,7 @@ window.startVideoTranslation = async function(isRetry = false) {      if (!isRet
             formData.append('promoStartTimes', JSON.stringify(promoStartTimes));
         }
 
-        const translationModel = document.querySelector('input[name="translationModel"]:checked')?.value || 'gemini-3.5-flash';
+        const translationModel = document.querySelector('input[name="translationModel"]:checked')?.value || 'gemini-3.1-flash-lite';
         formData.append('translationModel', translationModel);
     }
 

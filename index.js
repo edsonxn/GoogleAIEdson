@@ -703,6 +703,13 @@ let applioStarted = false; // Nueva variable para rastrear si ya se inició
 const APPLIO_PATH = 'C:\\applio2\\Applio';
 const APPLIO_START_BAT = path.join(APPLIO_PATH, 'run-applio.bat');
 
+// Variables para control de proceso Qwen TTS
+let qwenProcess = null;
+let qwenStarted = false;
+const QWEN_PATH = 'C:\\QWEN\\Qwen3-TTS';
+const QWEN_START_BAT = path.join(QWEN_PATH, 'start_demo.bat');
+const QWEN_URL = 'http://127.0.0.1:8000';
+
 // Variable para rastrear progreso de proyectos
 const projectProgressTracker = {};
 
@@ -1147,7 +1154,7 @@ async function generateMissingScript(topic, sectionNumber, totalSections, chapte
     }
 
     // Usar el cliente de IA con fallback automático
-  const { model } = await getGoogleAI("gemini-3.5-flash", { context: 'llm' });
+  const { model } = await getGoogleAI("gemini-3.1-flash-lite", { context: 'llm' });
     
     console.log('🤖 Enviando prompt al modelo de IA...');
     const result = await model.generateContent({
@@ -1530,6 +1537,100 @@ async function stopApplio() {
     return true;
   } catch (error) {
     console.error('❌ Error cerrando Applio:', error.message);
+    return false;
+  }
+}
+
+async function startQwen() {
+  try {
+    // Si ya está marcado como iniciado, verificar conexión
+    if (qwenStarted) {
+      console.log('ℹ️ Qwen TTS ya fue iniciado anteriormente, verificando conexión...');
+      try {
+        const resp = await fetch(QWEN_URL, { signal: AbortSignal.timeout(3000) });
+        if (resp.ok) {
+          console.log('✅ Qwen TTS sigue ejecutándose y listo');
+          return true;
+        }
+      } catch (e) {
+        console.log('⚠️ Qwen TTS fue iniciado pero no responde, intentando reiniciar...');
+        qwenStarted = false;
+      }
+    }
+
+    console.log('🚀 Iniciando Qwen TTS...');
+
+    // Verificar si ya está ejecutándose
+    try {
+      const resp = await fetch(QWEN_URL, { signal: AbortSignal.timeout(3000) });
+      if (resp.ok) {
+        console.log('✅ Qwen TTS ya está ejecutándose');
+        qwenStarted = true;
+        return true;
+      }
+    } catch (e) {
+      // No está corriendo, lo iniciamos
+    }
+
+    // Verificar que el .bat existe
+    if (!fs.existsSync(QWEN_START_BAT)) {
+      throw new Error(`No se encontró start_demo.bat en: ${QWEN_START_BAT}`);
+    }
+
+    console.log('📂 Abriendo nueva ventana CMD para Qwen TTS...');
+
+    const tempBatPath = path.join(__dirname, 'temp_start_qwen.bat');
+    const batContent = `@echo off
+title Qwen TTS Server - PERMANENTE
+cd /d "${QWEN_PATH}"
+call start_demo.bat`;
+
+    fs.writeFileSync(tempBatPath, batContent);
+
+    qwenProcess = spawn('cmd', ['/c', 'start', tempBatPath], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: false
+    });
+    qwenProcess.unref();
+
+    console.log('🪟 Nueva ventana CMD abierta para Qwen TTS');
+
+    // Limpiar archivo temporal
+    setTimeout(() => {
+      try { if (fs.existsSync(tempBatPath)) fs.unlinkSync(tempBatPath); } catch (e) {}
+    }, 10000);
+
+    // Esperar a que Qwen esté listo (carga modelo en GPU, puede tardar)
+    console.log('⏳ Esperando a que Qwen TTS cargue el modelo en GPU...');
+    const maxAttempts = 180; // 3 minutos — el modelo tarda en cargar
+    let attempt = 0;
+
+    while (attempt < maxAttempts) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      attempt++;
+
+      try {
+        const resp = await fetch(QWEN_URL, { signal: AbortSignal.timeout(3000) });
+        if (resp.ok) {
+          console.log(`✅ Qwen TTS listo después de ${attempt} segundos`);
+          qwenStarted = true;
+          return true;
+        }
+      } catch (e) {
+        // Sigue cargando...
+      }
+
+      if (attempt % 30 === 0) {
+        console.log(`⏳ Intento ${attempt}/${maxAttempts}... (Qwen TTS cargando modelo)`);
+      }
+    }
+
+    throw new Error('Timeout: Qwen TTS no respondió después de 180 segundos');
+
+  } catch (error) {
+    console.error('❌ Error iniciando Qwen TTS:', error.message);
+    qwenStarted = false;
     return false;
   }
 }
@@ -2404,7 +2505,7 @@ REGLAS ESTRICTAS:
 `;
 
     // Llamar a la IA para generar metadatos
-  const { model } = await getGoogleAI('gemini-3.5-flash', { context: 'llm' });
+  const { model } = await getGoogleAI('gemini-3.1-flash-lite', { context: 'llm' });
     
     console.log(`🤖 Enviando request a Gemini para generar metadatos...`);
     const result = await model.generateContent([{ text: prompt }]);
@@ -5508,6 +5609,10 @@ async function performBatchAudioGeneration(params = {}) {
 
   if (useQwen) {
     console.log('🤖 Usando Qwen TTS para generación de audio...');
+    const qwenReady = await startQwen();
+    if (!qwenReady) {
+      throw new Error('No se pudo iniciar Qwen TTS');
+    }
   } else if (useApplio) {
     console.log('🔄 Verificando disponibilidad de Applio para la cola actual...');
     const applioStarted = await startApplio();
@@ -6653,6 +6758,10 @@ app.post('/generate-missing-applio-audios', async (req, res) => {
     // Inicializar el proveedor de TTS solo si hay audios que generar
     if (useQwen) {
       console.log('🤖 Usando Qwen TTS para generación de audios faltantes...');
+      const qwenReady = await startQwen();
+      if (!qwenReady) {
+        throw new Error('No se pudo iniciar Qwen TTS');
+      }
     } else {
       console.log('🔄 Iniciando Applio para generación de audios faltantes...');
       const applioStarted = await startApplio();
@@ -14171,7 +14280,7 @@ app.post('/generate-youtube-metadata', async (req, res) => {
       chaptersTimestamps
     });
 
-  const { model } = await getGoogleAI("gemini-3.5-flash", { context: 'llm' });
+  const { model } = await getGoogleAI("gemini-3.1-flash-lite", { context: 'llm' });
     
     let response;
     try {
@@ -14181,7 +14290,7 @@ app.post('/generate-youtube-metadata', async (req, res) => {
       const isOverloaded = genErr.message.includes('503') || (genErr.status === 503) || genErr.message.includes('overloaded');
       if (isRateLimit || isOverloaded) {
         console.warn(`⚠️ API gratuita saturada en metadata. Reintentando con API principal...`);
-        const { model: primaryModel } = await getGoogleAI("gemini-3.5-flash", { context: 'llm', forcePrimary: true });
+        const { model: primaryModel } = await getGoogleAI("gemini-3.1-flash-lite", { context: 'llm', forcePrimary: true });
         response = await primaryModel.generateContent([{ text: prompt }]);
       } else {
         throw genErr;
@@ -14368,14 +14477,14 @@ Title to translate: "${title}"`;
 
     let response;
     try {
-      const { model } = await getGoogleAI("gemini-3.5-flash", { context: 'llm' });
+      const { model } = await getGoogleAI("gemini-3.1-flash-lite", { context: 'llm' });
       response = await model.generateContent([{ text: prompt }]);
     } catch (genErr) {
       const isRateLimit = genErr.message?.includes('429') || genErr.status === 429 || genErr.message?.includes('Too Many Requests') || genErr.message?.includes('Quota exceeded');
       const isOverloaded = genErr.message?.includes('503') || genErr.status === 503 || genErr.message?.includes('overloaded');
       if (isRateLimit || isOverloaded) {
         console.warn('⚠️ API gratuita saturada en translate-title. Reintentando con API principal...');
-        const { model: primaryModel } = await getGoogleAI("gemini-3.5-flash", { context: 'llm', forcePrimary: true });
+        const { model: primaryModel } = await getGoogleAI("gemini-3.1-flash-lite", { context: 'llm', forcePrimary: true });
         response = await primaryModel.generateContent([{ text: prompt }]);
       } else {
         throw genErr;
@@ -14440,14 +14549,14 @@ ${description}`;
 
     let response;
     try {
-      const { model } = await getGoogleAI("gemini-3.5-flash", { context: 'llm' });
+      const { model } = await getGoogleAI("gemini-3.1-flash-lite", { context: 'llm' });
       response = await model.generateContent([{ text: prompt }]);
     } catch (genErr) {
       const isRateLimit = genErr.message?.includes('429') || genErr.status === 429 || genErr.message?.includes('Too Many Requests') || genErr.message?.includes('Quota exceeded');
       const isOverloaded = genErr.message?.includes('503') || genErr.status === 503 || genErr.message?.includes('overloaded');
       if (isRateLimit || isOverloaded) {
         console.warn('API gratuita saturada en translate-description. Reintentando con API principal...');
-        const { model: primaryModel } = await getGoogleAI("gemini-3.5-flash", { context: 'llm', forcePrimary: true });
+        const { model: primaryModel } = await getGoogleAI("gemini-3.1-flash-lite", { context: 'llm', forcePrimary: true });
         response = await primaryModel.generateContent([{ text: prompt }]);
       } else {
         throw genErr;
@@ -17271,8 +17380,9 @@ async function renderFromPreview(preview, projectPath, projectName, sessionId, c
         proc.on('error', () => resolve());
       });
 
-      // Get main content duration for music loop
-      mainContentDuration = await getMediaDuration(visualMasterPath);
+      // Get main content duration — use the LONGER of visual/audio to avoid cutting TTS
+      mainContentDuration = Math.max(await getMediaDuration(visualMasterPath), await getMediaDuration(audioMasterPath));
+      console.log(`📐 Main content duration (max of visual/audio): ${mainContentDuration.toFixed(2)}s`);
 
       // Concatenate visual master + end screen video
       const combinedVisualPath = path.join(tempDir, 'visual_with_endscreen.mp4');
@@ -17372,8 +17482,8 @@ async function renderFromPreview(preview, projectPath, projectName, sessionId, c
         finalAudioPath = mixedAudioPath;
       }
     } else if (endScreenAudioPath) {
-      // No background music but has end screen audio - pad TTS to visual duration then concat
-      if (!mainContentDuration) mainContentDuration = await getMediaDuration(visualMasterPath || audioMasterPath);
+      // No background music but has end screen audio - pad TTS to match visual then concat
+      if (!mainContentDuration) mainContentDuration = Math.max(await getMediaDuration(visualMasterPath), await getMediaDuration(audioMasterPath));
       const paddedAudioPath = path.join(tempDir, 'audio_padded.wav');
       await new Promise((resolve, reject) => {
         const args = ['-y', '-i', audioMasterPath,
@@ -18177,7 +18287,6 @@ function mergeVideoAudioBroll(videoPath, audioPath, outputPath) {
       '-c:v', 'copy',
       '-c:a', 'aac',
       '-b:a', '192k',
-      '-shortest',
       outputPath
     ];
 
@@ -20150,7 +20259,7 @@ app.post('/api/generate-folder-name', async (req, res) => {
   }
 
   try {
-    const { model: aiModel } = await getGoogleAI('gemini-3.5-flash', { context: 'folder-name' });
+    const { model: aiModel } = await getGoogleAI('gemini-3.1-flash-lite', { context: 'folder-name' });
 
     const prompt = `Tu tarea es inventar un TÍTULO CORTO y CREATIVO para un proyecto de video basado en el tema descrito abajo.
 
@@ -20252,7 +20361,7 @@ app.post('/api/broll/analyze', async (req, res) => {
       return res.status(400).json({ error: 'No se encontraron guiones en las secciones. Genera los guiones primero.' });
     }
 
-    const { model: aiModel } = await getGoogleAI('gemini-3.5-flash', { context: 'broll' });
+    const { model: aiModel } = await getGoogleAI('gemini-3.1-flash-lite', { context: 'broll' });
 
     // Generar términos para cada sección basados en su guion individual
     const terms = [];
@@ -20293,7 +20402,7 @@ ${sec.text.slice(0, 3000)}`;
         if ((isRateLimit || isOverloaded) && !switchedToPrimary) {
           console.warn(`⚠️ API gratuita saturada en B-Roll analyze sección ${sec.numero}. Cambiando a API principal...`);
           try {
-            const { model: primaryModel } = await getGoogleAI('gemini-3.5-flash', { context: 'broll', forcePrimary: true });
+            const { model: primaryModel } = await getGoogleAI('gemini-3.1-flash-lite', { context: 'broll', forcePrimary: true });
             currentModel = primaryModel;
             switchedToPrimary = true;
             // Reintentar esta sección con la API principal
@@ -20607,7 +20716,7 @@ app.post('/api/broll/verify', async (req, res) => {
         const scriptText = fs.readFileSync(scriptPath, 'utf8').slice(0, 3000);
         const prompt = `Extrae 3 términos de búsqueda cortos para YouTube B-roll de este guion. Devuelve SOLO un JSON: {"terms": ["term1", "term2", "term3"]}. Usa nombres propios en inglés. Guion:\n${scriptText}`;
         try {
-          const { model: aiModel } = await getGoogleAI('gemini-3.5-flash', { context: 'broll' });
+          const { model: aiModel } = await getGoogleAI('gemini-3.1-flash-lite', { context: 'broll' });
           const result = await aiModel.generateContent(prompt);
           const jsonMatch = result.response.text().match(/\{[\s\S]*\}/);
           if (jsonMatch) {
@@ -20619,7 +20728,7 @@ app.post('/api/broll/verify', async (req, res) => {
           if (isRateLimit) {
             console.warn(`⚠️ [B-Roll Verify] API gratuita saturada para sección ${secNum}. Reintentando con API principal...`);
             try {
-              const { model: primaryModel } = await getGoogleAI('gemini-3.5-flash', { context: 'broll', forcePrimary: true });
+              const { model: primaryModel } = await getGoogleAI('gemini-3.1-flash-lite', { context: 'broll', forcePrimary: true });
               const retryResult = await primaryModel.generateContent(prompt);
               const retryMatch = retryResult.response.text().match(/\{[\s\S]*\}/);
               if (retryMatch) {
@@ -20973,7 +21082,7 @@ function brollYtSearch(query, maxResults, spawn) {
 
 async function brollValidateRelevance(videos, searchTerm, sectionName) {
   try {
-    const { model: aiModel } = await getGoogleAI('gemini-3.5-flash', { context: 'broll-validate' });
+    const { model: aiModel } = await getGoogleAI('gemini-3.1-flash-lite', { context: 'broll-validate' });
 
     const titles = videos.map((v, i) => `${i}. "${v.title}" (${v.channel})`).join('\n');
 
@@ -22780,11 +22889,11 @@ ${originalText}`;
                             retries: 3,
                         });
                     } catch (err) {
-                        // Last resort fallback to gemini-3.5-flash
+                        // Last resort fallback to gemini-3.1-flash-lite
                         if (llmProvider !== 'local') {
                             responseText = await generateTextWithLLM(prompt, {
                                 provider: 'gemini',
-                                model: 'gemini-3.5-flash',
+                                model: 'gemini-3.1-flash-lite',
                                 context: 'llm',
                                 forcePrimary: true,
                                 retries: 1,

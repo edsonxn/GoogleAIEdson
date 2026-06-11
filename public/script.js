@@ -29,6 +29,8 @@ function normalizeImageModel(model) {
     value === 'gemini3' ||
     value === 'gemini-3' ||
     value === 'gemini-3.5-flash' ||
+    value === 'gemini-3.1-pro-preview' ||
+    value === 'gemini-3.1-flash-lite' ||
     value === 'gemini-3-flash-preview' ||
     value === 'gemini-3-flash-preview-image'
   ) {
@@ -139,9 +141,9 @@ function createProjectEntryElement({ index, folderName = '', topic = '' }) {
     <div class="field-group topic-group">
       <label for="${topicId}" class="field-label">
         <i class="fas fa-edit"></i>
-        Tema del GuiÃ³n:
+        Tema del Guión:
       </label>
-      <textarea id="${topicId}" class="topic-textarea project-topic-input" data-project-role="topic" rows="3" placeholder="Describe el guiÃ³n para este proyecto"></textarea>
+      <textarea id="${topicId}" class="topic-textarea project-topic-input" data-project-role="topic" rows="3" placeholder="Describe el guión para este proyecto"></textarea>
     </div>
     <button type="button" class="project-remove-btn" aria-label="Eliminar proyecto">
       <i class="fas fa-times"></i>
@@ -802,7 +804,7 @@ function updateSectionButtons() {
     decreaseBtn.title = 'Disminuir secciones';
     increaseBtn.title = 'Aumentar secciones';
   } else {
-    decreaseBtn.title = currentValue <= 1 ? 'MÃ­nimo 1 secciÃ³n' : 'Disminuir secciones';
+    decreaseBtn.title = currentValue <= 1 ? 'Mínimo 1 sección' : 'Disminuir secciones';
     increaseBtn.title = currentValue >= 150 ? 'MÃ¡ximo 150 secciones' : 'Aumentar secciones';
   }
 }
@@ -1475,7 +1477,7 @@ function createProjectProgressContainer(projectKey, projectName, totalSections, 
         <!-- CÃ¡psulas de audio se generarÃ¡n dinÃ¡micamente -->
       </div>
       <div class="audio-progress-info">
-        <span class="audio-current-task">Esperando generaciÃ³n de guiones...</span>
+        <span class="audio-current-task">Esperando generación de guiones...</span>
       </div>
     </div>
     `;
@@ -1489,7 +1491,7 @@ function createProjectProgressContainer(projectKey, projectName, totalSections, 
         <div class="image-section-bar">
           <div class="image-section-header">
             <i class="fas fa-image"></i>
-            <span>SecciÃ³n ${section}</span>
+            <span>Sección ${section}</span>
           </div>
           <div class="progress-capsules image-capsules" id="imageCapsules-${projectKey}-section${section}" data-section="${section}">
             <!-- CÃ¡psulas de imÃ¡genes se generarÃ¡n dinÃ¡micamente -->
@@ -1509,7 +1511,7 @@ function createProjectProgressContainer(projectKey, projectName, totalSections, 
         ${imagesBarsHTML}
       </div>
       <div class="images-progress-info">
-        <span class="images-current-task">Esperando generaciÃ³n de guiones...</span>
+        <span class="images-current-task">Esperando generación de guiones...</span>
       </div>
     </div>
     `;
@@ -1553,7 +1555,7 @@ function createProjectProgressContainer(projectKey, projectName, totalSections, 
     <div class="project-section-images-container" id="sectionImagesContainer-${projectKey}" style="display: none;">
       <div class="section-images-header">
         <i class="fas fa-images"></i>
-        <span>Generar imÃ¡genes por secciÃ³n</span>
+        <span>Generar imágenes por sección</span>
       </div>
       <div id="sectionImagesButtons-${projectKey}" class="section-images-grid">
         <!-- Botones de secciÃ³n se generarÃ¡n dinÃ¡micamente -->
@@ -1718,7 +1720,7 @@ function updateProjectProgress(projectKey, data) {
           button.dataset.sectionNumber = sectionNumber.toString();
           button.innerHTML = `
             <i class="fas fa-images"></i>
-            <span>SecciÃ³n ${sectionNumber}</span>
+            <span>Sección ${sectionNumber}</span>
           `;
           button.disabled = !!isGeneratingImages;
           button.addEventListener('click', (event) => handleProjectSectionImageButtonClick(event, projectKey, sectionNumber));
@@ -1868,11 +1870,11 @@ function startProgressPolling(projectKey, onProgressUpdate = null) {
         const currentPhase = progressData.currentPhase || progressData.phase;
         
         if (currentPhase === 'script') {
-          currentTask = `Generando guiÃ³n ${progressData.currentStep}/${progressData.totalSteps}`;
+          currentTask = `Generando guión ${progressData.currentStep}/${progressData.totalSteps}`;
         } else if (currentPhase === 'audio') {
           currentTask = `Generando audio ${progressData.currentStep}/${progressData.totalSteps}`;
         } else if (currentPhase === 'images') {
-          currentTask = `Generando imÃ¡genes ${progressData.currentStep}/${progressData.totalSteps}`;
+          currentTask = `Generando imágenes ${progressData.currentStep}/${progressData.totalSteps}`;
         }
         
         const progressInfo = {
@@ -2040,7 +2042,7 @@ function updateProgressBar(data) {
       script: 'Generando textos',
       audio: 'Generando audios',
       images: 'Generando imÃ¡genes',
-      completed: 'GeneraciÃ³n finalizada'
+      completed: 'Generación finalizada'
     };
     currentPhaseElement.textContent = phaseNames[normalizedPhase] || 'Procesando...';
   }
@@ -2114,7 +2116,7 @@ function resetProgressBar() {
     currentStep: 0,
     totalSteps: 0,
     estimatedTimeRemaining: 'Calculando...',
-    currentTask: 'Preparando generaciÃ³n...',
+    currentTask: 'Preparando generación...',
     phases: {
         script: { total: 0, completed: 0 },
         audio: { total: 0, completed: 0 }
@@ -2128,7 +2130,7 @@ function resetProgressBar() {
 }
 
 // Completar la barra de progreso
-function completeProgressBar(message = 'GeneraciÃ³n completada') {
+function completeProgressBar(message = 'Generación completada') {
   updateProgressBar({
     percentage: 100,
     phase: 'completed',
@@ -2874,7 +2876,7 @@ async function runAutoGeneration() {
       currentStep: 0,
       totalSteps: totalSections,
       estimatedTimeRemaining: 'Calculando...',
-      currentTask: 'Generando guiones y prompts de imÃ¡genes...'
+      currentTask: 'Generando guiones y prompts de imágenes...'
     });
     
     startProgressPolling(primaryProjectKey, (progressData) => {
@@ -4142,7 +4144,7 @@ async function displaySectionContent(data, section) {
 
 // FunciÃ³n para actualizar el progreso de generaciÃ³n automÃ¡tica
 function updateGenerationProgress(section, total, phase, customMessage = null) {
-  const phaseText = customMessage || (phase === 'script' ? 'Generando guiÃ³n e imÃ¡genes' : phase === 'audio' ? 'Generando audio' : phase === 'images' ? 'Generando imÃ¡genes' : 'Procesando...');
+  const phaseText = customMessage || (phase === 'script' ? 'Generando guión e imágenes' : phase === 'audio' ? 'Generando audio' : phase === 'images' ? 'Generando imágenes' : 'Procesando...');
   
   generateBtn.innerHTML = `
     <i class="fas fa-magic"></i>
@@ -4369,7 +4371,7 @@ function showLoadingStages(sectionNum, imageCount = 5, skipImages = false, googl
     <div class="loading-stages">
       <div class="stage active" id="stage-script">
         <div class="stage-icon"><i class="fas fa-spinner loading"></i></div>
-        <div class="stage-text">Generando guiÃ³n - SecciÃ³n ${sectionNum}...</div>
+        <div class="stage-text">Generando guión - Sección ${sectionNum}...</div>
       </div>
       ${imageStagesHTML}
     </div>
@@ -19315,7 +19317,7 @@ async function startBrollTranslation() {
   const googleVoice = document.getElementById('translateGoogleVoice')?.value || 'Kore';
   const applioVoice = document.getElementById('translateApplioVoice')?.value || 'logs\\VOCES\\RemyOriginal.pth';
   const cloudVoice = document.querySelector('input[name="brollCloudVoice"]:checked')?.value || 'male';
-  const translationModel = document.querySelector('input[name="brollTranslationModel"]:checked')?.value || 'gemini-3.5-flash';
+  const translationModel = document.querySelector('input[name="brollTranslationModel"]:checked')?.value || 'gemini-3.1-flash-lite';
   const transcriptionMethod = document.querySelector('input[name="brollTranscription"]:checked')?.value || 'whisper';
   const groupSize = document.getElementById('brollGroupSize')?.value || '3';
   const podcastStyle = document.getElementById('brollPodcastStyle')?.checked || false;
