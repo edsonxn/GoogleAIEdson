@@ -25,6 +25,13 @@ const GEMINI_IMAGE_MODEL = process.env.GEMINI_IMAGE_MODEL || 'gemini-2.5-flash-i
 const GEMINI_TTS_MODEL_FLASH = process.env.GEMINI_TTS_MODEL_FLASH || 'gemini-2.5-flash-preview-tts';
 const GEMINI_TTS_MODEL_PRO = process.env.GEMINI_TTS_MODEL_PRO || 'gemini-2.5-pro-preview-tts';
 
+// Helper para truncar texto largo en logs
+function shortTopic(text, maxLen = 80) {
+  if (!text || typeof text !== 'string') return String(text ?? '');
+  const oneLine = text.replace(/[\r\n]+/g, ' ').trim();
+  return oneLine.length > maxLen ? oneLine.slice(0, maxLen) + '...' : oneLine;
+}
+
 // ==============================
 // OLLAMA LOCAL LLM
 // ==============================
@@ -154,6 +161,12 @@ process.on('uncaughtException', (error) => {
 async function getGoogleAI(model = GEMINI_TEXT_MODEL, options = {}) {
   const { context = 'general', forcePrimary = false } = options;
   const usageState = getTrackedUsageState(context);
+  // Auto-recovery: si ya pasó el tiempo, volver a intentar gratis
+  if (usageState?.preferPrimary && usageState.preferPrimaryUntil && Date.now() > usageState.preferPrimaryUntil) {
+    usageState.preferPrimary = false;
+    usageState.preferPrimaryUntil = null;
+    console.log(`🔄 [${context}] Auto-recovery: volviendo a intentar APIs gratuitas`);
+  }
   const skipFreeApis = forcePrimary || usageState?.preferPrimary;
 
   const freeApiEntries = skipFreeApis ? [] : getFreeGoogleAPIKeys();
@@ -506,11 +519,13 @@ function markFreeApiFailure(context, error) {
   }
 
   state.preferPrimary = true;
+  state.preferPrimaryUntil = Date.now() + 60000; // Auto-recovery: volver a intentar gratis en 60s
   state.lastFailureReason = error?.message || String(error || 'Error desconocido');
   state.lastFailureTimestamp = Date.now();
   state.consecutivePrimaryFailures = 0;
 
-  console.warn(`⚠️ [${context}] API gratuita falló. Se usará la API principal en adelante. Motivo: ${state.lastFailureReason}`);
+  const shortReason = (state.lastFailureReason || '').split('\n')[0].slice(0, 120);
+  console.warn(`⚠️ [${context}] API gratuita falló (recovery en 60s). Motivo: ${shortReason}`);
 }
 
 function markPrimarySuccess(context) {
@@ -538,10 +553,18 @@ function markPrimaryFailure(context, error) {
   state.lastFailureReason = error?.message || String(error || 'Error desconocido');
   state.lastFailureTimestamp = Date.now();
 
-  console.warn(`❌ [${context}] API principal falló (${state.consecutivePrimaryFailures}/${MAX_CONSECUTIVE_PRIMARY_FAILURES}). Motivo: ${state.lastFailureReason}`);
+  const shortPrimaryReason = (state.lastFailureReason || '').split('\n')[0].slice(0, 120);
+  console.warn(`❌ [${context}] API principal falló (${state.consecutivePrimaryFailures}/${MAX_CONSECUTIVE_PRIMARY_FAILURES}). Motivo: ${shortPrimaryReason}`);
+
+  // Si la principal falla repetidamente, resetear preferPrimary para volver a intentar la gratis
+  if (state.consecutivePrimaryFailures >= 2 && state.preferPrimary) {
+    state.preferPrimary = false;
+    state.preferPrimaryUntil = null;
+    console.log(`🔄 [${context}] Principal fallando — volviendo a intentar APIs gratuitas`);
+  }
 
   if (state.consecutivePrimaryFailures >= MAX_CONSECUTIVE_PRIMARY_FAILURES) {
-    const failureError = new Error(`API principal falló ${state.consecutivePrimaryFailures} veces seguidas: ${state.lastFailureReason}`);
+    const failureError = new Error(`API principal falló ${state.consecutivePrimaryFailures} veces seguidas: ${shortPrimaryReason}`);
     failureError.code = 'PRIMARY_API_FAILURE';
     throw failureError;
   }
@@ -1113,7 +1136,7 @@ function cleanScriptContent(rawContent) {
 async function generateMissingScript(topic, sectionNumber, totalSections, chapterTitle = null, previousSections = [], scriptStyle = 'professional', customStyleInstructions = '', wordsMin = 800, wordsMax = 1100) {
   try {
     console.log(`📝 Generando guión faltante para sección ${sectionNumber}/${totalSections}:`);
-    console.log(`🎯 Tema: ${topic}`);
+    console.log(`🎯 Tema: ${shortTopic(topic)}`);
     console.log(`📖 Capítulo: ${chapterTitle || 'Sin título específico'}`);
     console.log(`🎨 Estilo: ${scriptStyle}`);
     
@@ -2114,11 +2137,14 @@ async function generateUniversalContent(model, promptOrHistory, systemInstructio
       }
       
     } catch (error) {
-      console.error(`❌ Error en intento ${attempt}/${maxRetries}:`, error.message);
+      const shortErr = (error.message || '').split('\n')[0].slice(0, 150);
+      console.error(`❌ Error en intento ${attempt}/${maxRetries}: ${shortErr}`);
 
       if (isGoogle) {
-        if (currentApiKeyType === 'free') {
-          markFreeApiFailure('llm', error);
+        const is429 = error.status === 429 || error.message?.includes('429') || error.message?.includes('Too Many Requests');
+        if (currentApiKeyType === 'free' && !is429) {
+          // Solo marcar fallo permanente si NO es rate limit (429 es temporal)
+          markFreeApiFailure(context || 'llm', error);
         } else if (currentApiKeyType === 'primary') {
           try {
             markPrimaryFailure('llm', error);
@@ -2131,14 +2157,21 @@ async function generateUniversalContent(model, promptOrHistory, systemInstructio
       let isRetryableError = (isOpenAI && error.status >= 500) || 
                              (!isOpenAI && error.status === 503);
 
+      // 429 (rate limit) siempre es retriable — esperar más tiempo
+      if (error.status === 429) {
+        isRetryableError = true;
+      }
+
       if (isGoogle && currentApiKeyType === 'free') {
         isRetryableError = true;
       }
       
       if (isRetryableError && attempt < maxRetries) {
-        const baseDelay = 2000 * Math.pow(1.5, attempt - 1);
-        const delay = (isGoogle && currentApiKeyType === 'free') ? 250 : baseDelay;
-        console.log(`⏳ Esperando ${delay}ms antes del siguiente intento...`);
+        const baseDelay = error.status === 429
+          ? 5000 * Math.pow(2, attempt - 1)   // 429: 5s, 10s, 20s
+          : 2000 * Math.pow(1.5, attempt - 1);
+        const delay = (isGoogle && currentApiKeyType === 'free' && error.status !== 429) ? 250 : baseDelay;
+        console.log(`⏳ Esperando ${delay}ms antes del siguiente intento... (status: ${error.status || 'unknown'})`);
         await new Promise(resolve => setTimeout(resolve, delay));
       } else {
         throw error;
@@ -2405,7 +2438,7 @@ function saveProjectState(projectData) {
 // Función para generar metadatos de YouTube automáticamente para un proyecto completo
 async function generateYouTubeMetadataForProject(projectState) {
   try {
-    console.log(`🎬 Iniciando generación automática de metadatos para: ${projectState.topic}`);
+    console.log(`🎬 Iniciando generación automática de metadatos para: ${shortTopic(projectState.topic)}`);
     
     const safeFolderName = projectState.folderName;
     const projectDir = path.join(globalOutputDir, safeFolderName);
@@ -2783,12 +2816,7 @@ function reconstructProjectState(folderName) {
       localAIImages: false
     };
     
-    console.log(`🔧 Estado del proyecto reconstruido:`, {
-      topic: reconstructedState.topic,
-      totalSections: reconstructedState.totalSections,
-      sectionsCompleted: reconstructedState.sectionsCompleted,
-      carpetasAnalizadas: sectionDirs.length
-    });
+    console.log(`🔧 Estado del proyecto reconstruido: tema="${shortTopic(reconstructedState.topic)}", secciones=${reconstructedState.totalSections}, completadas=${reconstructedState.sectionsCompleted}, carpetas=${sectionDirs.length}`);
     
     return reconstructedState;
     
@@ -3125,11 +3153,7 @@ function loadProjectState(folderName) {
         }
       }
       
-      console.log(`📊 Estado del proyecto "${folderName}" cargado:`, {
-        topic: projectState.topic,
-        totalSections: projectState.totalSections,
-        completedSections: projectState.completedSections?.length || 0
-      });
+      console.log(`📊 Estado del proyecto "${folderName}" cargado: tema="${shortTopic(projectState.topic)}", secciones=${projectState.totalSections}, completadas=${projectState.completedSections?.length || 0}`);
     } catch (parseError) {
       console.error(`❌ Error parseando JSON del proyecto "${folderName}":`, parseError.message);
       console.log(`📄 Contenido del archivo (primeros 500 chars):`);
@@ -3335,8 +3359,48 @@ function createSafeFolderName(topic) {
     .replace(/\s+/g, '_') // Reemplazar espacios con guiones bajos
     .substring(0, 50); // Limitar longitud
     
-  console.log(`📁 createSafeFolderName: "${topic}" → "${safeName}"`);
+  console.log(`📁 createSafeFolderName: "${shortTopic(topic)}" → "${safeName}"`);
   return safeName;
+}
+
+/**
+ * Genera un nombre corto y creativo para un proyecto usando Gemini.
+ * Devuelve un string tipo "slug" de 2-5 palabras máximo.
+ */
+async function generateShortProjectName(topic) {
+  try {
+    const prompt = `Genera UN nombre corto y creativo (máximo 4 palabras en español) para un proyecto de video cuyo tema es:
+"${topic}"
+
+REGLAS ESTRICTAS:
+- Solo responde con el nombre, NADA MÁS
+- Máximo 4 palabras
+- Que sea memorable y relacionado al tema
+- Sin comillas, sin puntuación, sin explicaciones
+- En español
+- Ejemplos del formato esperado: "misterios del cable", "secretos wow clasico", "leyendas oscuras norte"`;
+
+    const shortName = await generateTextWithLLM(prompt, {
+      provider: 'gemini',
+      model: 'gemini-2.5-flash',
+      retries: 2,
+    });
+
+    const cleaned = shortName
+      .replace(/["'`\n\r]/g, '')
+      .replace(/^[\s\-:]+/, '')
+      .trim();
+
+    if (cleaned && cleaned.length >= 3 && cleaned.length <= 60) {
+      const safeName = createSafeFolderName(cleaned);
+      console.log(`🎨 Nombre creativo generado: "${shortTopic(topic)}" → "${cleaned}" → "${safeName}"`);
+      return safeName;
+    }
+  } catch (err) {
+    console.warn(`⚠️ No se pudo generar nombre creativo, usando fallback: ${err.message}`);
+  }
+  // Fallback: usar el topic sanitizado
+  return createSafeFolderName(topic);
 }
 
 // Función para limpiar el texto del guión de contenido no deseado
@@ -5279,23 +5343,28 @@ Ejemplo de despedida cómica: "Y así concluye este pinche episodio sobre [tema]
 RECUERDA: ESTE ES UN CAPÍTULO INTERMEDIO DE UN VIDEO YA INICIADO - CONTINÚA LA NARRATIVA SIN INTRODUCCIONES.`;
 }
 
-function normalizeMultiProjectEntries(projects = []) {
+async function normalizeMultiProjectEntries(projects = []) {
   const seenFolders = new Set();
   const normalized = [];
 
-  projects.forEach((project, index) => {
+  for (let index = 0; index < projects.length; index++) {
+    const project = projects[index];
     if (!project || typeof project.topic !== 'string') {
-      return;
+      continue;
     }
 
     const topic = project.topic.trim();
     if (!topic) {
-      return;
+      continue;
     }
 
     const requestedFolder = typeof project.folderName === 'string' ? project.folderName.trim() : '';
-    const baseFolderName = requestedFolder || topic;
-    let safeFolderName = createSafeFolderName(baseFolderName) || `proyecto_${index + 1}`;
+    let safeFolderName;
+    if (requestedFolder) {
+      safeFolderName = createSafeFolderName(requestedFolder) || `proyecto_${index + 1}`;
+    } else {
+      safeFolderName = await generateShortProjectName(topic);
+    }
 
     let uniqueFolderName = safeFolderName;
     let suffix = 2;
@@ -5316,7 +5385,7 @@ function normalizeMultiProjectEntries(projects = []) {
       projectKey: project.projectKey || uniqueFolderName,
       voice: requestedVoice || null
     });
-  });
+  }
 
   return normalized;
 }
@@ -5904,7 +5973,7 @@ function launchParallelBatchGenerationTask(entry, sharedConfig = {}) {
   (async () => {
     try {
       console.log(`\n${'⚡'.repeat(20)}`);
-      console.log(`⚡ Iniciando proyecto paralelo "${entry.topic}" (carpeta: ${entry.folderName})`);
+      console.log(`⚡ Iniciando proyecto paralelo "${shortTopic(entry.topic)}" (carpeta: ${entry.folderName})`);
       console.log(`${'⚡'.repeat(20)}\n`);
 
       const phase1Response = await fetch(`${baseUrl}/generate-batch-automatic`, {
@@ -5991,7 +6060,7 @@ app.post('/generate-batch-automatic/multi', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Debes enviar al menos un proyecto para procesar.' });
     }
 
-    const normalizedProjects = normalizeMultiProjectEntries(projects);
+    const normalizedProjects = await normalizeMultiProjectEntries(projects);
 
     if (!normalizedProjects.length) {
       return res.status(400).json({ success: false, error: 'No se encontraron proyectos válidos para procesar.' });
@@ -6028,7 +6097,7 @@ app.post('/generate-batch-automatic', async (req, res) => {
     console.log('\n' + '='.repeat(80));
     console.log('🚀 INICIANDO GENERACIÓN AUTOMÁTICA POR LOTES');
     console.log('='.repeat(80));
-    console.log(`🎯 Tema: "${topic}"`);
+    console.log(`🎯 Tema: "${shortTopic(topic)}"`);
     console.log(`📊 Total de secciones: ${totalSections}`);
     console.log(`🎤 Sistema de audio: ${generateQwenAudio ? 'Qwen TTS' : useApplio ? 'Applio' : 'Google TTS'}`);
     const selectedImageModel = normalizeImageModel(imageModel);
@@ -6056,12 +6125,14 @@ app.post('/generate-batch-automatic', async (req, res) => {
     const allImagePrompts = [];
     
     // Crear clave única para la conversación primero
-    // Si hay folderName personalizado, usarlo; sino usar el topic
-    const baseNameForKey = folderName && folderName.trim() 
-      ? folderName.trim() 
-      : topic;
-    const projectKey = createSafeFolderName(baseNameForKey);
-    console.log(`🔑 PROJECT KEY GENERADO: "${projectKey}" (de: "${baseNameForKey}")`);
+    // Si hay folderName personalizado, usarlo; sino generar nombre corto con IA
+    let projectKey;
+    if (folderName && folderName.trim()) {
+      projectKey = createSafeFolderName(folderName.trim());
+    } else {
+      projectKey = await generateShortProjectName(topic);
+    }
+    console.log(`🔑 PROJECT KEY GENERADO: "${projectKey}" (de: "${shortTopic(folderName || topic)}")`);
 
     // Función interna para procesar audio asíncronamente
     const processSectionAudioAsync = async (
@@ -6292,24 +6363,30 @@ RESPONDE SOLO CON LOS TÍTULOS SEPARADOS POR "||CAPITULO||", NADA MÁS.`;
     for (let section = 1; section <= sections; section++) {
       console.log(`📝 Generando guión de la sección ${section}/${sections}...`);
       
+      // Retry a nivel de sección (por si generateUniversalContent agota sus reintentos)
+      const MAX_SECTION_RETRIES = 3;
+      let sectionSuccess = false;
+
+      for (let sectionAttempt = 1; sectionAttempt <= MAX_SECTION_RETRIES; sectionAttempt++) {
       try {
         const promptContent = generateScriptPrompt(selectedStyle, topic, sections, section, customStyleInstructions, chapterStructure, section === 1 ? null : allSections, wordsMin, wordsMax);
         
         if (section === 1) {
           conversation.history = [{ role: 'user', parts: [{ text: promptContent }] }];
         } else {
+            // Quitar prompt anterior fallido si es un retry
+            if (sectionAttempt > 1 && conversation.history.length > 0 && conversation.history[conversation.history.length - 1].role === 'user') {
+              conversation.history.pop();
+            }
           conversation.history.push({ role: 'user', parts: [{ text: promptContent }] });
         }
         
         const scriptResponse = await generateUniversalContent(
           selectedLlmModel,
-          conversation.history,  // Pasar el historial completo como segundo parámetro
-          null  // No system instruction adicional
+          conversation.history,
+          null,
+          4
         );
-        
-        console.log(`🔍 DEBUG: scriptResponse tipo:`, typeof scriptResponse);
-        console.log(`🔍 DEBUG: scriptResponse contenido:`, scriptResponse);
-        console.log(`🔍 DEBUG: scriptResponse longitud:`, scriptResponse ? scriptResponse.length : 'NULL');
         
         const scriptText = scriptResponse || '';
         conversation.history.push({ role: 'model', parts: [{ text: scriptText }] });
@@ -6578,13 +6655,33 @@ VERIFICACIÓN FINAL: Tu respuesta debe contener exactamente ${numImages - 1} ocu
         
         saveProgressiveProjectState(projectKey, projectDataForSave, currentCompletedSections, [], []);
         
+        sectionSuccess = true;
+        break; // Salir del retry loop de sección
+
       } catch (error) {
-        console.error(`❌ Error generando sección ${section}:`, error);
+        const shortSectionErr = (error.message || '').split('\n')[0].slice(0, 120);
+        console.error(`❌ Error generando sección ${section} (intento ${sectionAttempt}/${MAX_SECTION_RETRIES}): ${shortSectionErr}`);
+        
+        if (sectionAttempt < MAX_SECTION_RETRIES) {
+          const retryDelay = 5000 * sectionAttempt;
+          console.log(`⏳ Reintentando sección ${section} en ${retryDelay / 1000}s...`);
+          await new Promise(resolve => setTimeout(resolve, retryDelay));
+        }
+      }
+      } // fin retry loop
+
+      // Pequeño delay entre secciones para no saturar la API
+      if (sectionSuccess && section < sections) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+
+      if (!sectionSuccess) {
+        console.error(`❌ Sección ${section} falló después de ${MAX_SECTION_RETRIES} intentos`);
         allSections.push({
           section: section,
-          title: `Sección ${section}`,
-          script: `Error generando contenido: ${error.message}`,
-          cleanScript: `Error generando contenido: ${error.message}`
+          title: chapterStructure[section - 1] || `Sección ${section}`,
+          script: '',
+          cleanScript: ''
         });
       }
     }
@@ -11036,7 +11133,7 @@ app.post('/generate', async (req, res) => {
     console.log(`📝 Historial actual: ${conversation.history.length} mensajes`);
 
     // Paso 1: Generar guión usando conversación continua
-    console.log(`📝 Generando guión de YouTube - Sección ${section}/${sections} para el tema: ${topic}...`);
+    console.log(`📝 Generando guión de YouTube - Sección ${section}/${sections} para: ${shortTopic(topic)}`);
     console.log(`🎭 Usando estilo: ${selectedStyle === 'comedy' ? 'Cómico/Sarcástico' : 'Profesional'}`);
     
     let promptContent;
@@ -11049,7 +11146,7 @@ app.post('/generate', async (req, res) => {
       conversation.currentSection = 1;
       conversation.history = []; // Limpiar historial para nueva conversación
 
-      console.log(`📋 PASO 1: Generando estructura de ${sections} capítulos para el tema: ${topic}...`);
+      console.log(`📋 PASO 1: Generando estructura de ${sections} capítulos para: ${shortTopic(topic)}`);
       
       // Generar estructura de capítulos
       let chapterPrompt;
@@ -11131,7 +11228,7 @@ RESPONDE SOLO CON LOS TÍTULOS SEPARADOS POR "||CAPITULO||", NADA MÁS.`;
         console.log('\n' + '='.repeat(60));
         console.log('📖 ESTRUCTURA COMPLETA DE CAPÍTULOS GENERADA');
         console.log('='.repeat(60));
-        console.log(`🎯 Tema: "${topic}"`);
+        console.log(`🎯 Tema: "${shortTopic(topic)}"`);
         console.log(`📊 Total de capítulos: ${sections}`);
         console.log(`🧠 Modelo LLM usado: ${selectedLlmModel}`);
         console.log('─'.repeat(60));
@@ -11198,7 +11295,7 @@ RESPONDE SOLO CON LOS TÍTULOS SEPARADOS POR "||CAPITULO||", NADA MÁS.`;
       console.log('\n' + '─'.repeat(50));
       console.log(`📚 CAPÍTULO ${section} DE ${sections}`);
       console.log('─'.repeat(50));
-      console.log(`🎯 Tema: "${topic}"`);
+      console.log(`🎯 Tema: "${shortTopic(topic)}"`);
       console.log(`📖 Capítulo actual: ${chapterStructure[section - 1] || 'Sin título'}`);
       console.log(`🧠 Modelo LLM: ${selectedLlmModel}`);
       
@@ -14208,7 +14305,7 @@ app.post('/generate-youtube-metadata', async (req, res) => {
       return res.status(400).json({ error: 'Tema y secciones requeridos' });
     }
 
-    console.log(`🎬 Generando metadata de YouTube para: ${topic}`);
+    console.log(`🎬 Generando metadata de YouTube para: ${shortTopic(topic)}`);
     console.log(`📝 Número de secciones: ${allSections.length}`);
     console.log(`🖼️ Estilo de miniatura: ${thumbnailStyle || 'default'}`);
     console.log(`🌐 Idioma objetivo de metadata: ${targetLanguage}`);
@@ -14442,10 +14539,17 @@ Generado automáticamente por el sistema de creación de contenido
     });
 
   } catch (error) {
-    console.error('❌ Error generando metadata de YouTube:', error);
+    const shortMetaErr = (error.message || '').split('\n')[0].slice(0, 150);
+    console.error('❌ Error generando metadata de YouTube:', shortMetaErr);
+    
+    const is429 = error.status === 429 || error.message?.includes('429') || error.message?.includes('Too Many Requests');
+    const userMsg = is429 
+      ? 'API de Gemini saturada (429). Espera unos segundos e intenta de nuevo.'
+      : 'Error generando metadata de YouTube: ' + shortMetaErr;
+    
     res.status(500).json({ 
       success: false, 
-      error: 'Error generando metadata de YouTube: ' + error.message 
+      error: userMsg
     });
   }
 });
@@ -17200,8 +17304,10 @@ app.post('/api/render-broll-video', async (req, res) => {
 
 async function renderFromPreview(preview, projectPath, projectName, sessionId, cfg, extras = {}) {
   const { endScreenPath = null, bgMusicPath = null, bgMusicVolume = 0.13 } = extras;
-  const tempDir = path.join(process.cwd(), 'temp', `broll_render_${Date.now()}`);
-  if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+  // Usar el mismo disco que el proyecto para evitar quedarse sin espacio en C:
+  const tempDir = path.join(projectPath, `_broll_render_temp`);
+  if (fs.existsSync(tempDir)) fs.rmSync(tempDir, { recursive: true, force: true });
+  fs.mkdirSync(tempDir, { recursive: true });
 
   const updateProgress = (percent, message, detail = '') => {
     const prog = brollVideoProgress.get(sessionId);
@@ -21266,7 +21372,7 @@ app.get('/get-project-state/:projectKey', async (req, res) => {
       return res.status(404).json({ error: `Proyecto no encontrado: ${projectKey}` });
     }
 
-    console.log(`✅ Estado del proyecto "${projectKey}" cargado:`, projectState);
+    console.log(`✅ Estado del proyecto "${projectKey}" cargado: tema="${shortTopic(projectState?.topic)}", secciones=${projectState?.totalSections}, completadas=${projectState?.completedSections?.length || 0}`);
 
     res.json({
       success: true,

@@ -9739,6 +9739,86 @@ body.prompts-panel-active .container {
   box-shadow: 0 0 8px rgba(0, 255, 127, 0.4);
 }
 
+/* B-Roll progress wrapper */
+.broll-progress-wrapper {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(139, 92, 246, 0.2);
+}
+
+.broll-progress-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.broll-progress-header i {
+  color: #a78bfa;
+  margin-right: 8px;
+}
+
+.broll-percentage {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #a78bfa;
+}
+
+.broll-progress-info {
+  margin-top: 8px;
+  text-align: center;
+}
+
+.broll-current-task {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+/* B-Roll capsules: grid layout para muchos ítems */
+.progress-capsules.broll-capsules {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  height: auto;
+  min-height: 32px;
+  padding: 6px;
+  background: rgba(7, 12, 22, 0.75);
+  border-radius: 10px;
+  border: 1px solid rgba(139, 92, 246, 0.18);
+}
+
+.progress-capsules.broll-capsules .capsule {
+  flex: 0 0 28px;
+  height: 28px;
+  border-radius: 5px;
+  border-color: rgba(139, 92, 246, 0.15);
+}
+
+.progress-capsules.broll-capsules .capsule.completed {
+  background: #a78bfa;
+  box-shadow: 0 0 8px rgba(139, 92, 246, 0.5);
+  border-color: #a78bfa;
+}
+
+.progress-capsules.broll-capsules .capsule.active {
+  background: rgba(139, 92, 246, 0.3);
+  border-color: #a78bfa;
+  box-shadow: 0 0 10px rgba(139, 92, 246, 0.4);
+  animation: pulse-purple 1.5s infinite;
+}
+
+.progress-capsules.broll-capsules .capsule.error {
+  background: #ef4444;
+  box-shadow: 0 0 8px rgba(239, 68, 68, 0.5);
+  border-color: #ef4444;
+}
+
+@keyframes pulse-purple {
+  0% { box-shadow: 0 0 0 0 rgba(139, 92, 246, 0.4); }
+  70% { box-shadow: 0 0 0 6px rgba(139, 92, 246, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(139, 92, 246, 0); }
+}
+
 /* Estilos para cápsulas de audio */
 .audio-capsule {
   background: rgba(7, 12, 22, 0.75);

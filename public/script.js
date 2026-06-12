@@ -270,21 +270,23 @@ function normalizeProjectEntries(rawEntries = []) {
     }
 
     const originalFolderName = entry.folderName ? entry.folderName.trim() : '';
-    const baseNameSource = originalFolderName || entry.topic;
-    let safeFolderName = createSafeFolderName(baseNameSource);
+    // Si el usuario puso un folderName manual, usarlo. Si no, dejar vacío para que el backend genere uno con IA
+    let safeFolderName = originalFolderName ? createSafeFolderName(originalFolderName) : '';
 
     if (!safeFolderName) {
-      safeFolderName = `project_${index + 1}`;
+      // No generar nombre del topic — el backend lo hará con IA
+      safeFolderName = '';
     }
 
     let uniqueName = safeFolderName;
-    let counter = 2;
-    while (seenNames.has(uniqueName)) {
-      uniqueName = `${safeFolderName}_${counter}`;
-      counter += 1;
+    if (safeFolderName) {
+      let counter = 2;
+      while (seenNames.has(uniqueName)) {
+        uniqueName = `${safeFolderName}_${counter}`;
+        counter += 1;
+      }
+      seenNames.add(uniqueName);
     }
-
-    seenNames.add(uniqueName);
 
     normalizedProjects.push({
       ...entry,
@@ -1624,6 +1626,10 @@ function formatTime(ms) {
   return `${formattedMinutes}:${formattedSeconds}`;
 }
 
+// Orden de fases para protección contra regresión
+const _projectPhaseOrder = { 'starting': 0, 'script': 1, 'audio': 2, 'images': 3, 'completed': 4 };
+const _projectCurrentPhase = new Map();
+
 // Actualizar progreso de un proyecto especÃ­fico
 function updateProjectProgress(projectKey, data) {
   console.log(`ÃƒÂ°Ã…Â¸Ã¢â‚¬ÂÃ¢â‚¬Å¾ [${projectKey}] Actualizando progreso:`, data);
@@ -1634,6 +1640,15 @@ function updateProjectProgress(projectKey, data) {
   }
 
   const { percentage, phase, currentStep, totalSteps, currentTask, audioProgress, imagesProgress } = data;
+
+  // Protección contra regresión de fase: no dejar que el polling revierta a fase anterior
+  const knownPhase = _projectCurrentPhase.get(projectKey) || 'starting';
+  const incomingOrder = _projectPhaseOrder[phase] ?? 0;
+  const currentOrder = _projectPhaseOrder[knownPhase] ?? 0;
+  if (incomingOrder < currentOrder) {
+    return;
+  }
+  _projectCurrentPhase.set(projectKey, phase);
 
   // Actualizar tiempos
   const projectData = projectDataMap.get(projectKey);
@@ -1740,19 +1755,19 @@ function updateProjectProgress(projectKey, data) {
     taskElement.textContent = currentTask || 'Procesando...';
   }
 
-  // Actualizar cÃ¡psulas si estamos en fase de script o si el proyecto estÃ¡ completo
+  // Actualizar cápsulas si estamos en fase de script o si el proyecto está completo
   if (phase === 'script') {
     updateProgressCapsules(currentStep, totalSteps, `progressCapsules-${projectKey}`);
-  } else if (phase === 'completed') {
-    // Si el proyecto estÃ¡ completo, marcar todas las cÃ¡psulas como completadas
+  } else if (phase === 'audio' || phase === 'images' || phase === 'completed') {
+    // Si pasamos de scripts a otra fase, marcar todas las cápsulas de scripts como completadas
     updateProgressCapsules(totalSteps, totalSteps, `progressCapsules-${projectKey}`);
   }
 
-  // Actualizar cÃ¡psulas de audio si estamos en fase de audio
+  // Actualizar cápsulas de audio si estamos en fase de audio
   if (phase === 'audio') {
     updateAudioCapsules(currentStep, totalSteps, `audioCapsules-${projectKey}`);
   } else if (phase === 'completed') {
-    // Si el proyecto estÃ¡ completo, marcar todas las cÃ¡psulas de audio como completadas
+    // Si el proyecto está completo, marcar todas las cápsulas de audio como completadas
     updateAudioCapsules(totalSteps, totalSteps, `audioCapsules-${projectKey}`);
   }
 
@@ -1784,6 +1799,7 @@ function clearAllProjectProgressContainers() {
     container.remove();
   });
   projectProgressContainers.clear();
+  _projectCurrentPhase.clear();
 }
 
 // Mostrar la barra de progreso
