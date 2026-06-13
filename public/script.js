@@ -17925,6 +17925,17 @@ function renderBrollTimeline() {
   const container = document.getElementById('brollTimelineContainer');
   if (!container || !_brollPreviewSections) return;
 
+  // Inject drag-drop styles once
+  if (!document.getElementById('broll-dnd-styles')) {
+    const style = document.createElement('style');
+    style.id = 'broll-dnd-styles';
+    style.textContent = `
+      .tl-clip.tl-clip-dragover { outline: 2px dashed #22d3ee; outline-offset: -2px; background: rgba(34,211,238,0.1) !important; }
+      .tl-clip.tl-clip-dragging { opacity: 0.4; }
+    `;
+    document.head.appendChild(style);
+  }
+
   let totalClips = 0, totalDuration = 0;
   _brollPreviewSections.forEach(s => { totalClips += s.clips.length; totalDuration += s.audioDuration; });
 
@@ -18086,11 +18097,49 @@ function renderBrollTimeline() {
     clipEl.addEventListener('drop', async (e) => {
       e.preventDefault();
       clipEl.classList.remove('tl-clip-dragover');
-      let from;
-      try { from = JSON.parse(e.dataTransfer.getData('text/plain')); } catch { return; }
       const toSI = parseInt(clipEl.dataset.section);
       const toCI = parseInt(clipEl.dataset.clip);
       if (isNaN(toSI) || isNaN(toCI)) return;
+
+      // Check if this is an internal drag (from another clip or pool) vs external file drop
+      let from = null;
+      const plainData = e.dataTransfer.getData('text/plain');
+      if (plainData) { try { from = JSON.parse(plainData); } catch {} }
+
+      // ── File drop from system (Windows Explorer) — only if NOT an internal drag ──
+      if (!from && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        const file = e.dataTransfer.files[0];
+        const validExts = ['.mp4','.webm','.mkv','.avi','.mov','.jpg','.jpeg','.png','.webp','.gif','.bmp'];
+        const ext = '.' + file.name.split('.').pop().toLowerCase();
+        if (!validExts.includes(ext)) {
+          showNotification('Formato no soportado. Usa video o imagen.', 'error');
+          return;
+        }
+        clipEl.style.opacity = '0.5';
+        try {
+          const formData = new FormData();
+          formData.append('file', file);
+          formData.append('folderName', _brollPreviewFolderName);
+          formData.append('sectionIndex', toSI);
+          formData.append('clipIndex', toCI);
+          formData.append('isPause', 'false');
+          const resp = await fetch('/api/broll-drop-file', { method: 'POST', body: formData });
+          const data = await resp.json();
+          if (!resp.ok) throw new Error(data.error || 'Error');
+          _brollPreviewSections[toSI].clips[toCI] = data.clip;
+          _brollFlatClips = buildFlatClipList(_brollPreviewSections);
+          _skipPoolReload = true;
+          renderBrollTimeline();
+          const flatIdx = _brollFlatClips.findIndex(f => f.sectionIndex === toSI && f.clipIndex === toCI && !f.isPause);
+          if (flatIdx !== -1) selectBrollClip(flatIdx);
+          showNotification(`Archivo "${file.name}" aplicado`, 'success');
+        } catch (err) {
+          showNotification('Error: ' + err.message, 'error');
+        } finally { clipEl.style.opacity = ''; }
+        return;
+      }
+
+      if (!from) return; // No valid internal drag data
 
       // ── Pool clip drop (from grid panel) ──
       if (from.pool) {
@@ -18169,6 +18218,50 @@ function renderBrollTimeline() {
       } finally {
         clipEl.style.opacity = '';
       }
+    });
+  });
+
+  // ── Drag & Drop from system for pause clips ──
+  container.querySelectorAll('.tl-clip.tl-clip-pause').forEach(clipEl => {
+    clipEl.addEventListener('dragover', (e) => {
+      if (e.dataTransfer.types.includes('Files')) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+        clipEl.classList.add('tl-clip-dragover');
+      }
+    });
+    clipEl.addEventListener('dragleave', () => { clipEl.classList.remove('tl-clip-dragover'); });
+    clipEl.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      clipEl.classList.remove('tl-clip-dragover');
+      if (!e.dataTransfer.files || e.dataTransfer.files.length === 0) return;
+      const file = e.dataTransfer.files[0];
+      const validExts = ['.mp4','.webm','.mkv','.avi','.mov','.jpg','.jpeg','.png','.webp','.gif','.bmp'];
+      const ext = '.' + file.name.split('.').pop().toLowerCase();
+      if (!validExts.includes(ext)) { showNotification('Formato no soportado', 'error'); return; }
+      const si = parseInt(clipEl.dataset.section);
+      const pi = parseInt(clipEl.dataset.pauseclip);
+      if (isNaN(si) || isNaN(pi)) return;
+      clipEl.style.opacity = '0.5';
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('folderName', _brollPreviewFolderName);
+        formData.append('sectionIndex', si);
+        formData.append('clipIndex', pi);
+        formData.append('isPause', 'true');
+        const resp = await fetch('/api/broll-drop-file', { method: 'POST', body: formData });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || 'Error');
+        if (!_brollPreviewSections[si].pauseClips) _brollPreviewSections[si].pauseClips = [];
+        _brollPreviewSections[si].pauseClips[pi] = data.clip;
+        _brollFlatClips = buildFlatClipList(_brollPreviewSections);
+        _skipPoolReload = true;
+        renderBrollTimeline();
+        showNotification(`Archivo "${file.name}" aplicado a pausa`, 'success');
+      } catch (err) {
+        showNotification('Error: ' + err.message, 'error');
+      } finally { clipEl.style.opacity = ''; }
     });
   });
 

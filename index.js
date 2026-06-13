@@ -157,6 +157,23 @@ process.on('uncaughtException', (error) => {
   // Don't exit the process, just log the error
 });
 
+// Cooldown per-key: cuando una key da 429, se marca temporalmente para no reintentar
+const apiKeyCooldowns = new Map(); // key name → timestamp hasta cuándo esperar
+
+function markKeyCooldown(keyName, seconds = 30) {
+  apiKeyCooldowns.set(keyName, Date.now() + seconds * 1000);
+}
+
+function isKeyOnCooldown(keyName) {
+  const until = apiKeyCooldowns.get(keyName);
+  if (!until) return false;
+  if (Date.now() > until) {
+    apiKeyCooldowns.delete(keyName);
+    return false;
+  }
+  return true;
+}
+
 // Función para obtener una instancia de GoogleGenerativeAI con fallback controlado
 async function getGoogleAI(model = GEMINI_TEXT_MODEL, options = {}) {
   const { context = 'general', forcePrimary = false } = options;
@@ -195,17 +212,21 @@ async function getGoogleAI(model = GEMINI_TEXT_MODEL, options = {}) {
     const genAI = new GoogleGenerativeAI(entry.key);
     const aiModel = genAI.getGenerativeModel({ model });
 
-    // Usar countTokens en lugar de generateContent para ahorrar cuota
-    // Esto valida que la key funciona y el modelo es accesible sin gastar una generación
-    await aiModel.countTokens("test");
+    // No validar con countTokens — no detecta rate limits de generateContent
+    // y gasta tiempo innecesariamente. Si la key falla, el retry se encarga.
 
-    console.log(`✅ API ${apiName} lista para usarse (${contextLabel})`);
+    console.log(`✅ API ${apiName} seleccionada (${contextLabel})`);
 
     return { genAI, model: aiModel, apiKeyName: apiName, keyType };
   };
 
   if (freeApiEntries.length) {
     for (const entry of freeApiEntries) {
+      // Saltar keys en cooldown por 429 reciente
+      if (isKeyOnCooldown(entry.name)) {
+        console.log(`⏸️ API ${entry.name} en cooldown, saltando...`);
+        continue;
+      }
       try {
         return await attemptWithEntry(entry, 'free');
       } catch (error) {
@@ -2009,6 +2030,8 @@ async function generateUniversalContent(model, promptOrHistory, systemInstructio
   
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
   let currentApiKeyType = null;
+  let currentApiKeyName = null;
+  let forceUsePrimary = false;
 
     try {
       console.log(`🔄 Intento ${attempt}/${maxRetries} con ${providerLabel}...`);
@@ -2110,8 +2133,9 @@ async function generateUniversalContent(model, promptOrHistory, systemInstructio
         
       } else {
         // Usar Google AI con sistema de fallback
-  const { model: model_instance, keyType } = await getGoogleAI(model, { context: 'llm' });
+  const { model: model_instance, keyType, apiKeyName } = await getGoogleAI(model, { context: 'llm', forcePrimary: forceUsePrimary });
   currentApiKeyType = keyType || null;
+  currentApiKeyName = apiKeyName || null;
 
         // Si promptOrHistory es un array (historial de conversación)
         if (Array.isArray(promptOrHistory)) {
@@ -2142,10 +2166,23 @@ async function generateUniversalContent(model, promptOrHistory, systemInstructio
 
       if (isGoogle) {
         const is429 = error.status === 429 || error.message?.includes('429') || error.message?.includes('Too Many Requests');
-        if (currentApiKeyType === 'free' && !is429) {
+        if (is429 && currentApiKeyName) {
+          // Extraer retryDelay del error si existe (ej: "retryDelay":"10s")
+          const delayMatch = (error.message || '').match(/retryDelay[":]+(\d+)/); 
+          const cooldownSecs = delayMatch ? Math.max(parseInt(delayMatch[1]), 15) : 30;
+          markKeyCooldown(currentApiKeyName, cooldownSecs);
+          console.log(`⏸️ Key ${currentApiKeyName} en cooldown ${cooldownSecs}s por 429`);
+        }
+        if (is429 && currentApiKeyType === 'free') {
+          // 429 en gratis: forzar primary en el siguiente intento
+          forceUsePrimary = true;
+          console.log(`💰 Siguiente intento irá directo a API principal`);
+        } else if (currentApiKeyType === 'free' && !is429) {
           // Solo marcar fallo permanente si NO es rate limit (429 es temporal)
-          markFreeApiFailure(context || 'llm', error);
+          markFreeApiFailure('llm', error);
         } else if (currentApiKeyType === 'primary') {
+          // Si primary también falla, resetear para volver a intentar gratis
+          forceUsePrimary = false;
           try {
             markPrimaryFailure('llm', error);
           } catch (criticalError) {
@@ -2167,10 +2204,17 @@ async function generateUniversalContent(model, promptOrHistory, systemInstructio
       }
       
       if (isRetryableError && attempt < maxRetries) {
-        const baseDelay = error.status === 429
-          ? 5000 * Math.pow(2, attempt - 1)   // 429: 5s, 10s, 20s
-          : 2000 * Math.pow(1.5, attempt - 1);
-        const delay = (isGoogle && currentApiKeyType === 'free' && error.status !== 429) ? 250 : baseDelay;
+        let delay;
+        if (error.status === 429 && isGoogle && currentApiKeyType === 'free') {
+          // 429 en key gratis: la key ya está en cooldown, solo esperar 1s antes de probar otra
+          delay = 1000;
+        } else if (error.status === 429) {
+          delay = 5000 * Math.pow(2, attempt - 1); // 429 en primary: 5s, 10s, 20s
+        } else if (isGoogle && currentApiKeyType === 'free') {
+          delay = 250; // Error no-429 en gratis: retry rápido
+        } else {
+          delay = 2000 * Math.pow(1.5, attempt - 1);
+        }
         console.log(`⏳ Esperando ${delay}ms antes del siguiente intento... (status: ${error.status || 'unknown'})`);
         await new Promise(resolve => setTimeout(resolve, delay));
       } else {
@@ -16062,6 +16106,25 @@ async function scanProjectSections(projectPath, cfg) {
   const items = fs.readdirSync(projectPath);
   const audioExts = ['.mp3', '.wav', '.m4a', '.aac', '.ogg'];
 
+  // Scan global broll folder (shared across all sections)
+  const globalBrollPath = path.join(projectPath, 'broll_global');
+  if (!fs.existsSync(globalBrollPath)) fs.mkdirSync(globalBrollPath, { recursive: true });
+  const videoExtsGlobal = ['.mp4', '.webm', '.mkv', '.avi', '.mov'];
+  const imageExtsGlobal = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp'];
+  const globalBrollFiles = fs.existsSync(globalBrollPath) ? fs.readdirSync(globalBrollPath) : [];
+  const globalVideoFiles = globalBrollFiles.filter(f => {
+    const lower = f.toLowerCase();
+    if (lower.includes('.temp.') || lower.includes('.part')) return false;
+    if (/\.f\d+\.(mp4|webm|m4a|mkv)$/.test(lower)) return false;
+    if (!videoExtsGlobal.includes(path.extname(lower))) return false;
+    try { return fs.statSync(path.join(globalBrollPath, f)).size > 10000; } catch { return false; }
+  }).map(f => path.join(globalBrollPath, f));
+  const globalImageFiles = globalBrollFiles.filter(f => imageExtsGlobal.includes(path.extname(f).toLowerCase())).map(f => path.join(globalBrollPath, f));
+
+  if (globalVideoFiles.length > 0 || globalImageFiles.length > 0) {
+    console.log(`🌐 B-Roll global: ${globalVideoFiles.length} videos, ${globalImageFiles.length} imágenes`);
+  }
+
   for (const item of items) {
     const itemPath = path.join(projectPath, item);
     if (!fs.statSync(itemPath).isDirectory() || !item.startsWith('seccion_')) continue;
@@ -16159,6 +16222,11 @@ async function scanProjectSections(projectPath, cfg) {
     if (videoFiles.length === 0 && imageFiles.length === 0) {
       imageFiles = (seccion.imagenes || []).map(img => img.path).filter(p => fs.existsSync(p));
     }
+
+    // Merge global broll files into every section's pool
+    videoFiles = [...videoFiles, ...globalVideoFiles];
+    imageFiles = [...imageFiles, ...globalImageFiles];
+
     if (videoFiles.length === 0 && imageFiles.length === 0) continue;
 
     sections.push({
@@ -16398,6 +16466,37 @@ app.get('/api/broll-pool/:folderName', async (req, res) => {
       }
     }
 
+    // Include global broll folder
+    const globalBrollPath = path.join(projectPath, 'broll_global');
+    if (fs.existsSync(globalBrollPath)) {
+      const globalFiles = fs.readdirSync(globalBrollPath);
+      const globalVids = globalFiles.filter(f => {
+        const lower = f.toLowerCase();
+        if (lower.includes('.temp.') || lower.includes('.part')) return false;
+        if (/\.f\d+\.(mp4|webm|m4a|mkv)$/.test(lower)) return false;
+        if (!videoExts.includes(path.extname(lower))) return false;
+        try { return fs.statSync(path.join(globalBrollPath, f)).size > 10000; } catch { return false; }
+      });
+      const globalImgs = globalFiles.filter(f => imageExts.includes(path.extname(f).toLowerCase()));
+      const globalAll = [
+        ...globalVids.map(f => ({ file: f, type: 'video' })),
+        ...(videoOnly ? [] : globalImgs.map(f => ({ file: f, type: 'image' })))
+      ];
+      for (const item of globalAll) {
+        const fullPath = path.join(globalBrollPath, item.file);
+        const isUsed = usedSources.has(fullPath);
+        poolClips.push({
+          secNum: 0, // 0 = global
+          sectionIndex: -1,
+          type: item.type,
+          sourceFile: item.file,
+          sourcePath: fullPath,
+          isUsed,
+          isGlobal: true,
+        });
+      }
+    }
+
     // Shuffle all clips (no priority — same clip can appear with different random cut points)
     for (let i = poolClips.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [poolClips[i], poolClips[j]] = [poolClips[j], poolClips[i]]; }
     // If fewer clips than limit, duplicate with different entries to fill
@@ -16467,23 +16566,29 @@ app.post('/api/broll-apply-pool-clip', async (req, res) => {
     if (!targetClip) return res.status(400).json({ error: 'Clip destino no encontrado' });
 
     // Find the source file on disk
-    const sourceSec = preview.sections.find(s => s.secNum === sourceSecNum);
-    if (!sourceSec) return res.status(400).json({ error: 'Sección fuente no encontrada' });
-    const secNum = sourceSec.secNum;
-    const brollPath = (() => {
-      const newPath = path.join(projectPath, `seccion_${secNum}`, 'broll');
-      if (fs.existsSync(newPath)) return newPath;
-      const legacyDir = path.join(projectPath, 'broll');
-      if (fs.existsSync(legacyDir)) {
-        const match = fs.readdirSync(legacyDir).find(f => {
-          const num = parseInt(f.split(' - ')[0]);
-          return num === secNum && fs.statSync(path.join(legacyDir, f)).isDirectory();
-        });
-        if (match) return path.join(legacyDir, match);
-      }
-      return null;
-    })();
-    if (!brollPath) return res.status(400).json({ error: 'Carpeta broll no encontrada' });
+    let brollPath;
+    if (sourceSecNum === 0) {
+      // Global broll folder
+      brollPath = path.join(projectPath, 'broll_global');
+    } else {
+      const sourceSec = preview.sections.find(s => s.secNum === sourceSecNum);
+      if (!sourceSec) return res.status(400).json({ error: 'Sección fuente no encontrada' });
+      const secNum = sourceSec.secNum;
+      brollPath = (() => {
+        const newPath = path.join(projectPath, `seccion_${secNum}`, 'broll');
+        if (fs.existsSync(newPath)) return newPath;
+        const legacyDir = path.join(projectPath, 'broll');
+        if (fs.existsSync(legacyDir)) {
+          const match = fs.readdirSync(legacyDir).find(f => {
+            const num = parseInt(f.split(' - ')[0]);
+            return num === secNum && fs.statSync(path.join(legacyDir, f)).isDirectory();
+          });
+          if (match) return path.join(legacyDir, match);
+        }
+        return null;
+      })();
+    }
+    if (!brollPath || !fs.existsSync(brollPath)) return res.status(400).json({ error: 'Carpeta broll no encontrada' });
 
     const fullSourcePath = path.join(brollPath, sourceFile);
     if (!fs.existsSync(fullSourcePath)) return res.status(404).json({ error: 'Archivo fuente no encontrado' });
@@ -16543,6 +16648,102 @@ app.post('/api/broll-apply-pool-clip', async (req, res) => {
     res.json({ success: true, clip: targetClip });
   } catch (error) {
     console.error('Error broll-apply-pool-clip:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/broll-drop-file — Drop a file from the system onto a timeline clip
+app.post('/api/broll-drop-file', multer({ dest: path.join(process.cwd(), 'temp', 'broll_assets') }).single('file'), async (req, res) => {
+  try {
+    const { folderName, sectionIndex, clipIndex, isPause } = req.body;
+    if (!req.file) return res.status(400).json({ error: 'Archivo requerido' });
+    if (!folderName) return res.status(400).json({ error: 'folderName requerido' });
+
+    const projectPath = resolveProjectPath(folderName);
+    if (!projectPath) { try { fs.unlinkSync(req.file.path); } catch {} return res.status(404).json({ error: 'Proyecto no encontrado' }); }
+
+    const previewJsonPath = path.join(projectPath, 'broll_preview.json');
+    let preview;
+    try { preview = JSON.parse(fs.readFileSync(previewJsonPath, 'utf8')); } catch { try { fs.unlinkSync(req.file.path); } catch {} return res.status(404).json({ error: 'Preview no encontrado' }); }
+
+    const targetSectionIndex = parseInt(sectionIndex);
+    const targetClipIndex = parseInt(clipIndex);
+    const targetSection = preview.sections[targetSectionIndex];
+    if (!targetSection) { try { fs.unlinkSync(req.file.path); } catch {} return res.status(400).json({ error: 'Sección no encontrada' }); }
+    const clipArray = isPause === 'true' ? (targetSection.pauseClips || []) : targetSection.clips;
+    const targetClip = clipArray[targetClipIndex];
+    if (!targetClip) { try { fs.unlinkSync(req.file.path); } catch {} return res.status(400).json({ error: 'Clip no encontrado' }); }
+
+    // Move file to broll_global
+    const globalBrollPath = path.join(projectPath, 'broll_global');
+    if (!fs.existsSync(globalBrollPath)) fs.mkdirSync(globalBrollPath, { recursive: true });
+
+    const originalName = req.file.originalname.replace(/[^a-zA-Z0-9._\-()[\] ]/g, '_');
+    let destPath = path.join(globalBrollPath, originalName);
+    // Avoid overwriting
+    if (fs.existsSync(destPath)) {
+      const ext = path.extname(originalName);
+      const base = path.basename(originalName, ext);
+      destPath = path.join(globalBrollPath, `${base}_${Date.now()}${ext}`);
+    }
+    fs.copyFileSync(req.file.path, destPath);
+    try { fs.unlinkSync(req.file.path); } catch {}
+
+    const videoExts = ['.mp4', '.webm', '.mkv', '.avi', '.mov'];
+    const ext = path.extname(destPath).toLowerCase();
+    const isVideo = videoExts.includes(ext);
+
+    // Calculate cut point for video
+    let newCutFrom = 0;
+    if (isVideo) {
+      let videoDuration;
+      try { videoDuration = await getAudioDuration(destPath); } catch { videoDuration = 30; }
+      const skipMargin = 10;
+      const safeStart = Math.min(skipMargin, videoDuration * 0.15);
+      const safeEnd = Math.max(videoDuration - skipMargin, videoDuration * 0.85);
+      const usableRange = safeEnd - targetClip.duration - safeStart;
+      if (usableRange > 0) {
+        newCutFrom = safeStart + Math.random() * usableRange;
+      } else {
+        newCutFrom = Math.random() * Math.max(0, videoDuration - targetClip.duration);
+      }
+    }
+
+    // Generate thumbnail
+    const thumbsDir = path.join(projectPath, 'broll_thumbs');
+    if (!fs.existsSync(thumbsDir)) fs.mkdirSync(thumbsDir, { recursive: true });
+    const thumbPrefix = isPause === 'true' ? 'pause_' : '';
+    const thumbName = `${thumbPrefix}sec${targetSection.secNum}_clip${targetClipIndex}.jpg`;
+    const thumbPath = path.join(thumbsDir, thumbName);
+
+    let thumbOk = false;
+    if (isVideo) {
+      thumbOk = await generateVideoThumbnail(destPath, newCutFrom, thumbPath);
+    } else {
+      thumbOk = await generateImageThumbnail(destPath, thumbPath);
+    }
+
+    // Update clip data
+    targetClip.type = isVideo ? 'video' : 'image';
+    targetClip.sourcePath = destPath;
+    targetClip.sourceFile = path.basename(destPath);
+    targetClip.cutFrom = newCutFrom;
+    targetClip.thumbnail = thumbOk ? thumbName : null;
+    targetClip.zoomEffect = isVideo ? undefined : true;
+
+    // Delete cached video preview
+    const cachedPreview = path.join(thumbsDir, `${thumbPrefix}preview_sec${targetSection.secNum}_clip${targetClipIndex}.mp4`);
+    try { if (fs.existsSync(cachedPreview)) fs.unlinkSync(cachedPreview); } catch {}
+
+    // Save
+    fs.writeFileSync(previewJsonPath, JSON.stringify(preview, null, 2), 'utf8');
+    brollPreviewData.set(preview.previewId, preview);
+
+    console.log(`📂 Archivo externo aplicado: ${path.basename(destPath)} → sec${targetSection.secNum} clip${targetClipIndex}`);
+    res.json({ success: true, clip: targetClip });
+  } catch (error) {
+    console.error('Error broll-drop-file:', error);
+    if (req.file?.path) try { fs.unlinkSync(req.file.path); } catch {}
     res.status(500).json({ error: error.message });
   }
 });
