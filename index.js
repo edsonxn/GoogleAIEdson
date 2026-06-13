@@ -2582,11 +2582,8 @@ REGLAS ESTRICTAS:
 `;
 
     // Llamar a la IA para generar metadatos
-  const { model } = await getGoogleAI('gemini-3.1-flash-lite', { context: 'llm' });
-    
     console.log(`🤖 Enviando request a Gemini para generar metadatos...`);
-    const result = await model.generateContent([{ text: prompt }]);
-    const generatedMetadata = result.response.text();
+    const generatedMetadata = await generateUniversalContent('gemini-3.1-flash-lite', prompt, null, 4);
     
     console.log(`✅ Metadatos generados exitosamente`);
     
@@ -14421,23 +14418,7 @@ app.post('/generate-youtube-metadata', async (req, res) => {
       chaptersTimestamps
     });
 
-  const { model } = await getGoogleAI("gemini-3.1-flash-lite", { context: 'llm' });
-    
-    let response;
-    try {
-      response = await model.generateContent([{ text: prompt }]);
-    } catch (genErr) {
-      const isRateLimit = genErr.message.includes('429') || (genErr.status === 429) || genErr.message.includes('Too Many Requests') || genErr.message.includes('Quota exceeded');
-      const isOverloaded = genErr.message.includes('503') || (genErr.status === 503) || genErr.message.includes('overloaded');
-      if (isRateLimit || isOverloaded) {
-        console.warn(`⚠️ API gratuita saturada en metadata. Reintentando con API principal...`);
-        const { model: primaryModel } = await getGoogleAI("gemini-3.1-flash-lite", { context: 'llm', forcePrimary: true });
-        response = await primaryModel.generateContent([{ text: prompt }]);
-      } else {
-        throw genErr;
-      }
-    }
-    const responseText = response.response.text();
+    const responseText = await generateUniversalContent('gemini-3.1-flash-lite', prompt, null, 4);
 
     // Validar que los prompts de miniatura no estén incompletos
     const thumbnailSection = responseText.match(/\*\*PROMPTS PARA MINIATURAS:\*\*([\s\S]*?)(?=\n\n|$)/);
@@ -14463,13 +14444,7 @@ app.post('/generate-youtube-metadata', async (req, res) => {
           targetLanguage
         });
         
-  const { model: regenerateModel } = await getGoogleAI(GEMINI_TEXT_MODEL, { context: 'llm' });
-        const regenerateResponse = await regenerateModel.generateContent([
-          { text: regeneratePrompt }
-        ]);
-        
-        // Reemplazar la sección de prompts en la respuesta original
-        const newThumbnailPrompts = regenerateResponse.response.text().trim();
+        const newThumbnailPrompts = (await generateUniversalContent('gemini-3.1-flash-lite', regeneratePrompt, null, 3)).trim();
         const updatedResponse = responseText.replace(
           /(\*\*PROMPTS PARA MINIATURAS:\*\*)([\s\S]*?)(?=\n\n|$)/,
           `$1\n${newThumbnailPrompts}`
