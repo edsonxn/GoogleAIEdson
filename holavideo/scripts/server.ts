@@ -48,9 +48,7 @@ REGLAS ESTRICTAS:
 - PROHIBIDO usar Img, staticFile, o cualquier imagen/archivo externo. No existen imágenes en el proyecto.
 - Dibuja TODO con divs, CSS (bordes, degradados, border-radius, box-shadow), SVG inline o emojis.
 - Para representar objetos, animales o personas usa emojis grandes, formas geométricas o SVG paths simples.
-- CRÍTICO: el primer argumento de interpolate() (inputRange) DEBE ser estrictamente creciente: cada valor mayor que el anterior. NUNCA decreciente.
-  CORRECTO:   interpolate(frame, [0, 30, 60], [0, 1, 0])
-  INCORRECTO: interpolate(frame, [60, 30, 0], [0, 1, 0])  ← ESTO ROMPE EL RENDER
+- CRÍTICO: NUNCA uses interpolate() directamente. Usa siempre el helper si() que defines al inicio del componente — ordena y deduplica el inputRange automáticamente para evitar errores fatales de render.
 
 PATRONES DE ANIMACIÓN — úsalos según lo que pida el prompt:
 
@@ -117,6 +115,39 @@ PATRONES DE ANIMACIÓN — úsalos según lo que pida el prompt:
   <div style={{opacity:gOp, transform:\`translateX(\${gX}px)\`, filter:frame<20?'hue-rotate(90deg)':'none'}}>
     {/* contenido */}
   </div>
+
+▸ ESCENAS EN MÚLTIPLES ACTOS (cuando el prompt empieza con "ACTOS: N"):
+  El prompt indica el número de actos con el prefijo "ACTOS: N" (N = 1, 2 o 3).
+  Lee N del prompt y divide durationInFrames en N zonas iguales con transiciones suaves.
+
+  SIEMPRE usa este helper al inicio del componente para evitar errores de interpolate con rangos inválidos:
+  const si = (f: number, inp: number[], out: number[], opts?: any) => {
+    const pairs = inp.map((v, i) => [v, out[i]] as [number, number]);
+    pairs.sort((a, b) => a[0] - b[0]);
+    const deduped = pairs.filter((p, i) => i === 0 || p[0] > pairs[i-1][0]);
+    return interpolate(f, deduped.map(p => p[0]), deduped.map(p => p[1]), opts);
+  };
+
+  // Para N=1 (un solo acto): anima todo el clip sin zonas
+  // Para N=2:
+  const T = 18;
+  const z1 = Math.floor(durationInFrames / 2);
+  const act1Op = si(frame, [0, T, Math.max(T+1, z1-T), z1], [0,1,1,0], { extrapolateRight:'clamp' });
+  const act2Op = si(frame, [z1, z1+T, Math.max(z1+T+1, durationInFrames-8), durationInFrames], [0,1,1,0], { extrapolateRight:'clamp' });
+  // Para N=3:
+  const z1_3 = Math.floor(durationInFrames / 3);
+  const z2_3 = Math.floor(2 * durationInFrames / 3);
+  const act1Op3 = si(frame, [0, T, Math.max(T+1, z1_3-T), z1_3], [0,1,1,0], { extrapolateRight:'clamp' });
+  const act2Op3 = si(frame, [z1_3, z1_3+T, Math.max(z1_3+T+1, z2_3-T), z2_3], [0,1,1,0], { extrapolateRight:'clamp' });
+  const act3Op3 = si(frame, [z2_3, z2_3+T, Math.max(z2_3+T+1, durationInFrames-8), durationInFrames], [0,1,1,0], { extrapolateRight:'clamp' });
+  // Cada acto es un <div style={{position:'absolute',inset:0,opacity:actXOp}}> con su propio contenido.
+  // Las animaciones internas de cada acto TAMBIÉN usan si() en lugar de interpolate() para evitar el error.
+  // NUNCA uses interpolate() directamente — siempre si() que garantiza inputRange creciente.
+
+TEXTOS — REGLA OBLIGATORIA:
+- Todos los textos visibles en la animación DEBEN estar en ESPAÑOL
+- Labels, títulos, subtítulos y fechas siempre en español (ej: "ALIANZA ROTA", "MUERTA EN 24 HORAS", no "ALLIANCE DISSOLVED")
+- Si el prompt dice un texto en inglés, tradúcelo al español en el código
 
 EJEMPLOS COMPLETOS — modela tu código según estos:
 
@@ -217,12 +248,11 @@ REGLAS CRÍTICAS — ERRORES QUE DEBES EVITAR:
    CORRECTO:   {items.map((_, i) => <div key={i}>contenido</div>)}
    INCORRECTO: {items.map((_, i) => <div key={i}>contenido)}
 
-3. interpolate() inputRange DEBE ser estrictamente creciente (cada valor mayor que el anterior):
-   CORRECTO:   interpolate(frame, [0, 30, 60], [0, 1, 0], { extrapolateRight: 'clamp' })
-   INCORRECTO: interpolate(frame, [60, 30, 0], [0, 1, 0])  ← rompe el render con error fatal
+3. NUNCA uses interpolate() directamente — usa siempre el helper si() definido en el componente.
+   si() garantiza que el inputRange sea creciente incluso si los valores calculados se solapan.
+   CORRECTO:   si(frame, [0, 30, 60], [0, 1, 0], { extrapolateRight: 'clamp' })
+   INCORRECTO: interpolate(frame, [z2, z2+T, dur-T, dur], ...)  ← puede romper si z2+T > dur-T
    Solo acepta estas opciones: extrapolateLeft, extrapolateRight, easing.
-   CORRECTO:   interpolate(frame, [0, 30], [0, 1], { extrapolateRight: 'clamp' })
-   INCORRECTO: interpolate(frame, [0, 30], [0, 1], { boundaryBehavior: 'clamp' })
 
 4. Easing: Solo usa Easing.bezier(x1,y1,x2,y2), Easing.linear, Easing.ease, Easing.in(Easing.quad), Easing.out(Easing.quad), Easing.inOut(Easing.quad).
    CORRECTO:   Easing.out(Easing.quad)
@@ -967,8 +997,8 @@ app.post("/api/generate", async (req, res) => {
 
   const durationSeconds = Math.min(Math.max(parseInt(duration) || 10, 3), 120);
 
-  if (prompt.length > 1000) {
-    res.status(400).json({ error: "El prompt es demasiado largo (máx 1000 caracteres)" });
+  if (prompt.length > 1200) {
+    res.status(400).json({ error: "El prompt es demasiado largo (máx 1200 caracteres)" });
     return;
   }
 
@@ -1021,14 +1051,23 @@ app.post("/api/generate", async (req, res) => {
         ? 'Pon un div semitransparente encima (background: "rgba(0,0,0,0.4)") para que el texto sea legible.'
         : a.use === 'icon'
         ? 'Tamaño compacto (120-200px). Si es PNG con fondo transparente se integra directamente.'
-        : 'Es el elemento protagonista. Puede tener sombra (filter: "drop-shadow(0 4px 16px rgba(0,0,0,0.6))") y combinarse con texto.';
+        : `Es el elemento protagonista (foto real de persona). CSS OBLIGATORIO para el <Img>: objectFit: "contain", height: "auto", maxHeight: "85%", maxWidth: "${a.size || '38%'}", width: "auto" — NUNCA uses overflow:"hidden" en el contenedor de la imagen. Añade sombra con filter: "drop-shadow(0 0 18px rgba(0,200,255,0.5))".`;
       return `ASSET ${i + 1}: staticFile('${a.filename}') — "${a.label}"
-  Rol: ${a.use} | CSS base: { ${pos}${sizeStyle ? ', ' + sizeStyle : ''}, opacity: ${a.opacity ?? 1} }
+  Rol: ${a.use} | Posición: { ${pos} }
   Animación: ${anim}
   ${overlayNote}`;
     }).join('\n\n');
 
-    imageNote = `\n\nTIENES ${assetList.length} IMAGEN(ES) REAL(ES) — DEBES USARLAS TODAS EN LA ANIMACIÓN:
+    const elementAssets = assetList.filter((a: any) => a.use === 'element');
+    const hasRealImage = elementAssets.length > 0;
+    let overrideNote = '';
+    if (elementAssets.length >= 2) {
+      const names = elementAssets.map((a: any) => `"${a.filename}"`).join(' y ');
+      overrideNote = `\n\n🚨 REGLA ABSOLUTA — 2 IMÁGENES REALES DISPONIBLES: ${names}. USA AMBAS — primera a la izquierda, segunda a la derecha. Entre ellas puedes poner un símbolo de su relación (alianza "+", vs "⚔", flecha, etc.) animado en el centro. NUNCA ignores una de las dos. NO dibujes siluetas ni reemplaces con SVG.\n`;
+    } else if (hasRealImage) {
+      overrideNote = `\n\n🚨 REGLA ABSOLUTA — IMAGEN REAL DISPONIBLE: Aunque el prompt mencione "silueta", "SVG", "figura abstracta" o "ícono" para representar al sujeto, DEBES mostrar la IMAGEN REAL con <Img src={staticFile('...')} />. Esto aplica a personas, logos de marcas e imágenes de productos. NO dibujes siluetas ni formas geométricas como sustituto — usa el asset real.\n`;
+    }
+    imageNote = `\n\n${overrideNote}TIENES ${assetList.length} IMAGEN(ES) REAL(ES) — DEBES USARLAS TODAS EN LA ANIMACIÓN:
 
 ${descriptions}
 

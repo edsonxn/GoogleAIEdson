@@ -16182,9 +16182,10 @@ async function scanProjectSections(projectPath, cfg) {
       const videoExts = ['.mp4', '.webm', '.mkv', '.avi', '.mov'];
       const imageExtsB = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp'];
       
-      // Filter out temp files, fragments, and part files from yt-dlp
+      // Filter out temp files, fragments, part files, and Remotion AI clips
       const isValidVideoFile = (f) => {
         const lower = f.toLowerCase();
+        if (lower.startsWith('ai_clip_')) return false; // excluir clips de Remotion
         // Skip yt-dlp temp/fragment files
         if (lower.includes('.temp.') || lower.includes('.part')) return false;
         if (/\.f\d+\.(mp4|webm|m4a|mkv)$/.test(lower)) return false; // fragment like .f399.mp4
@@ -16521,6 +16522,7 @@ app.get('/api/broll-pool/:folderName', async (req, res) => {
       const files = fs.readdirSync(brollPath);
       const vids = files.filter(f => {
         const lower = f.toLowerCase();
+        if (lower.startsWith('ai_clip_')) return false; // excluir clips generados por Remotion
         if (lower.includes('.temp.') || lower.includes('.part')) return false;
         if (/\.f\d+\.(mp4|webm|m4a|mkv)$/.test(lower)) return false;
         if (!videoExts.includes(path.extname(lower))) return false;
@@ -16890,6 +16892,7 @@ app.post('/api/regenerate-broll-clip', async (req, res) => {
     const imageExts = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp'];
     const videoFiles = brollFiles.filter(f => {
       const lower = f.toLowerCase();
+      if (lower.startsWith('ai_clip_')) return false; // excluir clips de Remotion
       if (lower.includes('.temp.') || lower.includes('.part')) return false;
       if (/\.f\d+\.(mp4|webm|m4a|mkv)$/.test(lower)) return false;
       if (!videoExts.includes(path.extname(lower))) return false;
@@ -18302,6 +18305,47 @@ app.post('/api/generate-ai-clip', async (req, res) => {
       }
     }
 
+    // Si no hay asset local, detectar entidades notables (hasta 2 con relación) y buscar imágenes
+    if (!imageAsset && transcription) {
+      try {
+        const entities = await detectNotableEntity(transcription);
+        if (entities.length > 0) {
+          const collectedAssets = [];
+
+          // Posicionamiento según cantidad de entidades detectadas
+          const posConfigs = entities.length === 2
+            ? [
+                { position: 'left',  size: '32%', animation: 'slide-from-left',  suggestedUse: 'element' },
+                { position: 'right', size: '32%', animation: 'slide-from-right', suggestedUse: 'element' }
+              ]
+            : [null]; // null = usar config por defecto de searchWikipediaImage
+
+          for (let i = 0; i < entities.length; i++) {
+            const entity = entities[i];
+            const icon = entity.type === 'persona' ? '👤' : entity.type === 'marca' ? '🏢' : '📦';
+            console.log(`${icon} Entidad ${i + 1}/${entities.length}: "${entity.name}" (${entity.type}) — buscando imagen...`);
+
+            const wikiAsset = await searchWikipediaImage(entity.name, entity.type, holavideoPublic);
+            if (wikiAsset) {
+              // Sobreescribir posición si tenemos 2 entidades
+              const posConfig = posConfigs[i];
+              const finalAsset = posConfig ? { ...wikiAsset, ...posConfig } : wikiAsset;
+              collectedAssets.push(finalAsset);
+              console.log(`✅ Imagen de "${entity.name}" (${entity.type}) lista para Remotion`);
+            } else {
+              console.log(`ℹ️ No se encontró imagen de "${entity.name}"`);
+            }
+          }
+
+          if (collectedAssets.length > 0) {
+            imageAsset = { assets: collectedAssets };
+          }
+        }
+      } catch (err) {
+        console.warn(`⚠️ Error buscando imagen de entidad: ${err.message}`);
+      }
+    }
+
     let visualPrompt = '';
     let generatedCode = '';
     try {
@@ -19314,26 +19358,59 @@ except Exception as e:
 /**
  * Use Gemini to analyze transcription and generate a smart visual prompt for HolaVideo
  */
-async function generateVisualPromptFromTranscription(transcription, styleInstructions = '') {
+async function generateVisualPromptFromTranscription(transcription, styleInstructions = '', entityInfo = null) {
+  // Si hay imagen(es) real(es) descargada(s), avisar a Gemini para que las use
+  let entityNote = '';
+  if (Array.isArray(entityInfo) && entityInfo.length === 2) {
+    // Dos entidades con relación (alianza, vs, acuerdo…)
+    const [e1, e2] = entityInfo;
+    const label1 = e1.type === 'persona' ? `foto real de "${e1.name}"` : `logo de "${e1.name}"`;
+    const label2 = e2.type === 'persona' ? `foto real de "${e2.name}"` : `logo de "${e2.name}"`;
+    entityNote = `\n\nDISPONIBLE: DOS imágenes reales — ${label1} (izquierda) y ${label2} (derecha). Muestra AMBAS en la animación: logo/foto de "${e1.name}" a la izquierda, logo/foto de "${e2.name}" a la derecha. En el centro puedes poner un símbolo de la relación entre ellas (alianza, vs, flecha, etc.). NO los dibujes con SVG ni los ignores.`;
+  } else if (entityInfo?.name) {
+    const { name, type } = entityInfo;
+    if (type === 'persona') {
+      entityNote = `\n\nDISPONIBLE: foto real de "${name}". Describe la escena con "foto real de ${name}" a la izquierda entrando con slide, NO silueta ni figura abstracta. Texto animado al lado derecho.`;
+    } else if (type === 'marca') {
+      entityNote = `\n\nDISPONIBLE: imagen/logo real de la marca "${name}". Describe la escena con el logo de "${name}" visible a la izquierda, sin dibujarlo con SVG. Texto y datos al lado derecho.`;
+    } else if (type === 'producto') {
+      entityNote = `\n\nDISPONIBLE: imagen real del producto "${name}". Describe la escena con la imagen real de "${name}" como elemento central o a la izquierda, sin dibujarlo con formas abstractas.`;
+    }
+  }
+
   // Build the user style instruction section
-  const styleSection = styleInstructions 
-    ? `\n\nIMPORTANTE: El usuario quiere este ESTILO VISUAL específico: "${styleInstructions}". Incorpora estos elementos en tu prompt.`
-    : '';
+  const styleSection = styleInstructions
+    ? `\n\nIMPORTANTE: El usuario quiere este ESTILO VISUAL específico: "${styleInstructions}". Incorpora estos elementos en tu prompt.${entityNote}`
+    : entityNote;
 
-  // Few-shot prompt más directo - el modelo tiende a seguir el patrón establecido
-  const inputPrompt = `Convierte esta narración en UN prompt visual corto (1-2 oraciones) para una animación. Solo responde con el prompt, nada más.${styleSection}
+  // El LLM primero decide cuántos actos necesita la narración, luego los describe
+  const inputPrompt = `Analiza la narración y decide cuántos actos visuales necesita (1, 2 o 3 según su complejidad narrativa). Luego describe cada acto. Todos los textos EN ESPAÑOL.${styleSection}
 
-Narración: "El 15 de noviembre de 2019 ocurrió el evento"
-Prompt: Fecha '15 de noviembre de 2019' apareciendo con efecto typewriter sobre fondo negro con partículas brillantes
+CRITERIOS para decidir:
+- 1 acto: un solo hecho, dato o imagen (ej: una fecha, un número, una persona)
+- 2 actos: dos momentos distintos (causa→efecto, personaje→acción, antes→después)
+- 3 actos: historia con inicio, giro y desenlace (múltiples hechos encadenados)
 
-Narración: "Un hombre misterioso encapuchado apareció en la plaza"
-Prompt: Silueta oscura encapuchada emergiendo de sombras púrpuras con niebla y destellos rojos
+Responde SOLO en este formato (sin explicaciones, sin markdown):
+ACTOS: [número]
+[Acto 1: descripción visual con texto EN ESPAÑOL entre comillas.] [Acto 2: descripción.] [Acto 3: solo si aplica.]
 
-Narración: "El precio del bitcoin llegó a 50000 dólares"
-Prompt: Gráfico de línea verde subiendo dramáticamente con monedas doradas de bitcoin flotando
+---
+Narración: "El precio del bitcoin llegó a 50000 dólares en tiempo récord."
+ACTOS: 1
+Acto 1: Gráfico de línea verde subiendo dramáticamente con monedas doradas flotando y texto "BITCOIN $50,000".
 
+Narración: "El detective encontró las pistas ocultas y en 48 horas resolvió el caso más oscuro de su carrera."
+ACTOS: 2
+Acto 1: Spotlight sobre documentos con lupa animada y texto "EL DETECTIVE". Acto 2: Silueta revelada con radar ping y texto "CASO RESUELTO EN 48H".
+
+Narración: "Mientras los ejecutivos de Sony celebran el éxito del prototipo, la noticia se filtra por los altavoces: la alianza prometía dominar el mercado pero murió en menos de 24 horas."
+ACTOS: 3
+Acto 1: Siluetas de ejecutivos celebrando con brillo neon y texto "CELEBRACIÓN EN SONY". Acto 2: Altavoz con ondas rojas pulsando y texto "ALIANZA ROTA". Acto 3: Ícono de circuito quebrado con texto "MUERTA EN 24 HORAS".
+
+---
 Narración: "${transcription.slice(0, 300)}"
-Prompt:`;
+`;
   
   // LOG: Mostrar transcripción completa
   console.log(`\n📝 ═══ TRANSCRIPCIÓN WHISPER ═══`);
@@ -19359,96 +19436,88 @@ Prompt:`;
     console.log(result);
     console.log(`═══ FIN RESPUESTA (${result.length} chars) ═══\n`);
     
-    // Aggressive cleanup - el modelo a veces devuelve respuestas largas
-    result = result.trim();
-    
-    // Si la respuesta es muy larga (>400 chars), probablemente ignoró el few-shot
-    // En ese caso, intentar extraer algo útil
-    if (result.length > 400) {
-      // Buscar la primera línea que parezca un prompt visual (no empieza con palabras de preámbulo)
-      const lines = result.split('\n').map(l => l.trim()).filter(l => l.length > 20);
-      for (const line of lines) {
-        const lowerLine = line.toLowerCase();
-        // Saltar líneas que son claramente explicaciones
-        if (lowerLine.startsWith('aquí') || lowerLine.startsWith('para') || 
-            lowerLine.startsWith('la imagen') || lowerLine.startsWith('descripción') ||
-            lowerLine.startsWith('**') || lowerLine.startsWith('*') ||
-            lowerLine.includes('propuesta') || lowerLine.includes('indicación')) {
-          continue;
-        }
-        // Esta línea parece ser contenido útil
-        result = line;
-        break;
+    // Limpieza de markdown básica
+    result = result.trim()
+      .replace(/\*\*/g, '')
+      .replace(/###?\s*[^\n]*/g, '')
+      .replace(/^>\s*/gm, '')
+      .replace(/`/g, '');
+
+    // ── Detectar formato multi-acto generado por el nuevo prompt ──
+    // Formato esperado: "ACTOS: N\nActo 1: ...\nActo 2: ..." (N = 1, 2 o 3)
+    const actosNumMatch = result.match(/ACTOS:\s*([123])/i);
+    if (actosNumMatch) {
+      const numActos = actosNumMatch[1];
+      const actLines = result.match(/Acto\s+\d+\s*:[^\n]+/gi) || [];
+      if (actLines.length > 0) {
+        result = `ACTOS: ${numActos} ` + actLines.map(l => l.trim()).join(' ');
+        console.log(`🎬 Formato multi-acto detectado: ${numActos} acto(s)`);
       }
-    }
-    
-    // Remove markdown formatting
-    result = result.replace(/\*\*/g, '');
-    result = result.replace(/###?\s*[^\n]*/g, '');
-    result = result.replace(/^>\s*/gm, '');
-    result = result.replace(/`/g, '');
-    
-    // If the entire result is a quoted string, unwrap it
-    const promptMatch = result.match(/^"([^"]{20,490})"\.?\s*$/);
-    if (promptMatch) {
-      result = promptMatch[1];
     } else {
-      // Remove common preambles
-      const preambles = [
-        /^(prompt:\s*)/gi,
-        /^(aquí tienes|aquí está|este es|el prompt|prompt:?|output:?|opci[oó]n \d+:?|descripci[oó]n visual:?)\s*/gi,
-        /^(para (generar|capturar|crear|representar|visualizar)[^.]*[.,]?\s*)/gi,
-        /^(una imagen|un video|una animación) (que|de)\s*/gi,
-        /^(varias opciones[^:]*:?\s*)/gi,
-        /^(estilo[^:]*:?\s*)/gi,
-        /^(una propuesta[^:]*:?\s*)/gi,
-      ];
-      for (const re of preambles) {
-        result = result.replace(re, '');
+      // ── Fallback: limpieza de respuesta de un solo bloque ──
+      if (result.length > 400) {
+        const lines = result.split('\n').map(l => l.trim()).filter(l => l.length > 20);
+        for (const line of lines) {
+          const lowerLine = line.toLowerCase();
+          if (lowerLine.startsWith('aquí') || lowerLine.startsWith('para') ||
+              lowerLine.startsWith('la imagen') || lowerLine.startsWith('descripción') ||
+              lowerLine.startsWith('**') || lowerLine.startsWith('*') ||
+              lowerLine.includes('propuesta') || lowerLine.includes('indicación')) {
+            continue;
+          }
+          result = line;
+          break;
+        }
       }
-      
-      // If still too long, the model probably ignored the few-shot completely
-      // Create a simple fallback prompt from the transcription
-      if (result.length > 700) {
-        console.log(`⚠️ Respuesta de Gemini demasiado larga, usando fallback basado en transcripción`);
-        // Extract key elements from transcription for a basic prompt
-        const transLower = transcription.toLowerCase();
-        let fallbackPrompt = '';
-        
-        // Detect dates
-        const dateMatch = transcription.match(/(\d{1,2}\s+de\s+\w+\s+(del?\s+)?\d{4}|\d{4})/i);
-        if (dateMatch) {
-          fallbackPrompt = `Fecha '${dateMatch[0]}' apareciendo con efecto typewriter sobre fondo negro oscuro`;
+
+      // Unwrap quoted string
+      const promptMatch = result.match(/^"([^"]{20,950})"\.?\s*$/);
+      if (promptMatch) {
+        result = promptMatch[1];
+      } else {
+        // Remove common preambles
+        const preambles = [
+          /^(prompt:\s*)/gi,
+          /^(aquí tienes|aquí está|este es|el prompt|prompt:?|output:?|opci[oó]n \d+:?|descripci[oó]n visual:?)\s*/gi,
+          /^(para (generar|capturar|crear|representar|visualizar)[^.]*[.,]?\s*)/gi,
+          /^(una imagen|un video|una animación) (que|de)\s*/gi,
+          /^(varias opciones[^:]*:?\s*)/gi,
+          /^(estilo[^:]*:?\s*)/gi,
+          /^(una propuesta[^:]*:?\s*)/gi,
+        ];
+        for (const re of preambles) {
+          result = result.replace(re, '');
         }
-        // Detect names/usernames
-        else if (transLower.includes('usuario') || transLower.includes('seudónimo')) {
-          const nameMatch = transcription.match(/(?:usuario|seudónimo|nombre)[^a-z]*([A-Z][a-zA-Z0-9\s]+)/i);
-          fallbackPrompt = `Pantalla de computadora retro mostrando el texto '${nameMatch ? nameMatch[1].trim() : 'usuario'}' en un foro de internet antiguo, luz azul en cuarto oscuro`;
+
+        if (result.length > 1200) {
+          console.log(`⚠️ Respuesta de Gemini demasiado larga, usando fallback basado en transcripción`);
+          const transLower = transcription.toLowerCase();
+          let fallbackPrompt = '';
+          const dateMatch = transcription.match(/(\d{1,2}\s+de\s+\w+\s+(del?\s+)?\d{4}|\d{4})/i);
+          if (dateMatch) {
+            fallbackPrompt = `Fecha '${dateMatch[0]}' apareciendo con efecto typewriter sobre fondo negro oscuro`;
+          } else if (transLower.includes('usuario') || transLower.includes('seudónimo')) {
+            const nameMatch = transcription.match(/(?:usuario|seudónimo|nombre)[^a-z]*([A-Z][a-zA-Z0-9\s]+)/i);
+            fallbackPrompt = `Pantalla de computadora retro mostrando el texto '${nameMatch ? nameMatch[1].trim() : 'usuario'}' en un foro de internet antiguo, luz azul en cuarto oscuro`;
+          } else if (transLower.includes('florida') || transLower.includes('estados unidos') || transLower.includes('ciudad')) {
+            fallbackPrompt = `Escena nocturna urbana con luces de ciudad, atmósfera misteriosa con tonos azules y naranjas`;
+          } else {
+            fallbackPrompt = `Escena atmosférica con tonos azules y púrpuras, elementos abstractos flotando, ambiente misterioso`;
+          }
+          result = fallbackPrompt;
         }
-        // Detect locations
-        else if (transLower.includes('florida') || transLower.includes('estados unidos') || transLower.includes('ciudad')) {
-          fallbackPrompt = `Escena nocturna urbana con luces de ciudad, atmósfera misteriosa con tonos azules y naranjas`;
-        }
-        // Generic fallback
-        else {
-          fallbackPrompt = `Escena atmosférica con tonos azules y púrpuras, elementos abstractos flotando, ambiente misterioso`;
-        }
-        
-        result = fallbackPrompt;
+      }
+
+      // Normalize whitespace and capitalize
+      result = result.replace(/\s+/g, ' ').trim();
+      if (result.length > 0) {
+        result = result.charAt(0).toUpperCase() + result.slice(1);
       }
     }
-    
-    // Clean up extra whitespace
-    result = result.replace(/\s+/g, ' ').trim();
-    
-    // Capitalize first letter
-    if (result.length > 0) {
-      result = result.charAt(0).toUpperCase() + result.slice(1);
-    }
-    
-    // Truncate to max 500 chars for cleaner prompts
-    if (result.length > 500) {
-      result = result.slice(0, 497) + '...';
+
+    // Truncate to max 950 chars
+    if (result.length > 950) {
+      result = result.slice(0, 947) + '...';
     }
     
     // LOG: Mostrar prompt final limpio
@@ -19511,6 +19580,354 @@ Sé estricto con isRelevant: false si la imagen no tiene relación real con el t
 }
 
 /**
+ * Use Gemini to detect up to 2 notable entities in a transcription.
+ * Returns array of { name, type } — 1 or 2 items — or empty array.
+ * When 2 entities have a RELATIONSHIP (alianza, acuerdo, vs, adquisición, rivalidad), returns both.
+ */
+async function detectNotableEntity(transcription) {
+  const prompt = `Extrae hasta 2 entidades notables del texto (personas famosas, empresas/marcas, o productos icónicos) que tengan imagen en Wikipedia.
+
+REGLA CLAVE: Si el texto describe una RELACIÓN entre dos entidades (alianza, acuerdo, vs, adquisición, colaboración, rivalidad, unión), devuelve AMBAS.
+Si solo hay una entidad notable, devuelve solo una.
+Si no hay entidades notables: responde "none"
+
+Formato si hay UNA entidad: NOMBRE | TIPO
+Formato si hay DOS con relación: NOMBRE1 | TIPO1 || NOMBRE2 | TIPO2
+TIPO: persona, marca, o producto
+
+Texto: "Ken Kutaragi lidera el proyecto en Sony"
+Respuesta: Ken Kutaragi | persona
+
+Texto: "Nintendo anuncia alianza estratégica con Philips para desarrollar su consola"
+Respuesta: Nintendo | marca || Philips | marca
+
+Texto: "Apple adquirió Beats Electronics por 3 mil millones"
+Respuesta: Apple | marca || Beats | marca
+
+Texto: "Sony y Nintendo firmaron un acuerdo para el CD-ROM"
+Respuesta: Sony | marca || Nintendo | marca
+
+Texto: "Nintendo lanzó la NES, su primera consola"
+Respuesta: Nintendo Entertainment System | producto
+
+Texto: "Steve Jobs presentó el Macintosh"
+Respuesta: Steve Jobs | persona
+
+Texto: "El precio del bitcoin llegó a 50000 dólares"
+Respuesta: none
+
+Texto: "${transcription.slice(0, 300)}"
+Respuesta:`;
+
+  try {
+    const result = await generateTextWithLLM(prompt, { provider: 'gemini', model: 'gemini-3.1-flash-lite', retries: 2, forcePrimary: false });
+    const raw = result.trim();
+    if (!raw || raw.toLowerCase() === 'none') return [];
+
+    const VALID_TYPES = ['persona', 'marca', 'producto'];
+    const parseEntity = (str) => {
+      const parts = str.split('|').map(p => p.trim().replace(/["'.]/g, '').trim());
+      if (parts.length < 2) return null;
+      const [name, rawType] = parts;
+      if (!name || name.length < 2 || name.length > 80) return null;
+      if (name.toLowerCase() === 'none') return null;
+      const type = VALID_TYPES.includes(rawType.toLowerCase()) ? rawType.toLowerCase() : 'marca';
+      return { name, type };
+    };
+
+    if (raw.includes('||')) {
+      const halves = raw.split('||').map(s => s.trim());
+      const entities = halves.map(parseEntity).filter(Boolean);
+      return entities.slice(0, 2);
+    }
+
+    const single = parseEntity(raw);
+    return single ? [single] : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Verify a downloaded image with Gemini vision.
+ * Returns true if the image is relevant for entityName+entityType, false if it should be discarded.
+ */
+async function verifyEntityImage(imagePath, entityName, entityType) {
+  try {
+    const buffer = fs.readFileSync(imagePath);
+    const base64Data = buffer.toString('base64');
+    const ext = path.extname(imagePath).toLowerCase();
+    const mimeType = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+
+    let prompt;
+    if (entityType === 'marca') {
+      prompt = `Necesito el LOGOTIPO o símbolo de la marca "${entityName}". ¿Esta imagen ES el logotipo/logo/símbolo tipográfico de "${entityName}"? Responde SOLO con JSON: {"relevant": true/false, "score": 1-10, "desc": "qué muestra en 5 palabras"}. IMPORTANTE: si la imagen es un edificio, sede corporativa, persona, producto, evento, foto de empleados, o cualquier cosa que NO sea el logotipo en sí mismo, relevant DEBE ser false independientemente de si tiene relación con la marca.`;
+    } else if (entityType === 'persona') {
+      prompt = `¿Esta imagen es un retrato o foto de la persona "${entityName}"? Responde SOLO con JSON: {"relevant": true/false, "score": 1-10, "desc": "qué muestra en 5 palabras"}. Si es un edificio, objeto, paisaje o grupo de personas, relevant debe ser false.`;
+    } else {
+      prompt = `¿Esta imagen muestra claramente el producto "${entityName}"? Responde SOLO con JSON: {"relevant": true/false, "score": 1-10, "desc": "qué muestra en 5 palabras"}. Si es un edificio, persona, mapa o imagen genérica sin mostrar el producto, relevant debe ser false.`;
+    }
+
+    const { model: aiModel } = await getGoogleAI('gemini-3.1-flash-lite', { context: 'llm' });
+    const result = await aiModel.generateContent([{ inlineData: { mimeType, data: base64Data } }, prompt]);
+    const text = result.response.text().trim().replace(/^```json?\n?/m, '').replace(/```$/m, '').trim();
+    const analysis = JSON.parse(text);
+    console.log(`🔍 Verificación imagen "${entityName}": relevant=${analysis.relevant} (${analysis.score}/10) — ${analysis.desc}`);
+    return analysis.relevant === true && analysis.score >= 5;
+  } catch (err) {
+    console.warn(`⚠️ Verificación de imagen falló: ${err.message?.slice(0, 60)} — usando imagen de todas formas`);
+    return true; // En caso de error, aceptar la imagen
+  }
+}
+
+/**
+ * Try to get a brand logo from Clearbit (free, no key needed).
+ * Returns downloaded asset or null.
+ */
+async function tryGetBrandLogoFromClearbit(brandName, holavideoPublicDir, assetConfig) {
+  const domain = brandName.toLowerCase().replace(/\s+/g, '').replace(/[^a-z0-9]/g, '') + '.com';
+  try {
+    const url = `https://logo.clearbit.com/${domain}?size=400`;
+    const res = await fetch(url, { headers: { 'User-Agent': 'GoogleImagenes-BrollBot/1.0' }, signal: AbortSignal.timeout(8000) });
+    if (!res.ok) return null;
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('image')) return null;
+
+    const buffer = Buffer.from(await res.arrayBuffer());
+    if (buffer.length < 2000) return null; // demasiado pequeño, probablemente imagen de error
+
+    const safeLabel = brandName.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase().slice(0, 40);
+    const filename = `entity_${safeLabel}.png`;
+    const destPath = path.join(holavideoPublicDir, filename);
+    if (!fs.existsSync(holavideoPublicDir)) fs.mkdirSync(holavideoPublicDir, { recursive: true });
+    fs.writeFileSync(destPath, buffer);
+
+    console.log(`🏷️ Logo Clearbit descargado: ${filename} (${Math.round(buffer.length / 1024)}KB) — ${domain}`);
+    return { filename, publicFilename: filename, label: brandName, entityType: 'marca', relativePath: filename, ...assetConfig, opacity: 1, absPath: destPath };
+  } catch (err) {
+    console.warn(`⚠️ Clearbit falló para "${brandName}" (${domain}): ${err.message?.slice(0, 60)}`);
+    return null;
+  }
+}
+
+/**
+ * Search Wikipedia article image list for a logo file (contains "logo" in filename).
+ * Returns downloaded asset or null.
+ */
+async function searchLogoOnWikipedia(brandName, holavideoPublicDir, assetConfig) {
+  try {
+    const safeName = brandName.replace(/ /g, '_');
+    // Get list of all images in the Wikipedia article
+    const imagesUrl = `https://en.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(safeName)}&prop=images&format=json&imlimit=30`;
+    const res = await fetch(imagesUrl, { headers: { 'User-Agent': 'GoogleImagenes-BrollBot/1.0' }, signal: AbortSignal.timeout(8000) });
+    if (!res.ok) return null;
+
+    const data = await res.json();
+    const pages = Object.values(data.query?.pages || {});
+    if (!pages.length) return null;
+
+    const images = (pages[0].images || []);
+    const lowerBrand = brandName.toLowerCase().replace(/\s/g, '');
+
+    // Solo PNG/JPG/WEBP — SVG no funciona con Remotion <Img> (EncodingError)
+    const RASTER_ONLY = /\.(png|jpe?g|webp)$/i;
+
+    // Buscar: SOLO archivos con "logo" Y nombre de marca en formato raster (sin fallback amplio)
+    const logoFile = images.find(img => {
+      const lower = img.title.toLowerCase().replace(/[_\s]/g, '');
+      return lower.includes('logo') && lower.includes(lowerBrand) && RASTER_ONLY.test(img.title);
+    });
+
+    if (!logoFile) return null;
+
+    const fileTitle = logoFile.title.replace(/^File:/i, '');
+    const fileUrl = `https://en.wikipedia.org/wiki/Special:FilePath/${encodeURIComponent(fileTitle)}?width=400`;
+    const imgRes = await fetch(fileUrl, { signal: AbortSignal.timeout(12000) });
+    if (!imgRes.ok) return null;
+
+    const buffer = Buffer.from(await imgRes.arrayBuffer());
+    if (buffer.length < 500) return null;
+
+    const rawExt = (fileTitle.match(/\.(png|jpe?g|webp)$/i)?.[1] || 'png').toLowerCase().replace('jpeg', 'jpg');
+    const safeLabel = brandName.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase().slice(0, 40);
+    const filename = `entity_${safeLabel}.${rawExt}`;
+    const destPath = path.join(holavideoPublicDir, filename);
+    if (!fs.existsSync(holavideoPublicDir)) fs.mkdirSync(holavideoPublicDir, { recursive: true });
+    fs.writeFileSync(destPath, buffer);
+
+    console.log(`🏷️ Logo Wikipedia encontrado: ${filename} (${Math.round(buffer.length / 1024)}KB) — "${fileTitle}"`);
+
+    // Verificar con Gemini que es realmente el logo
+    const ok = await verifyEntityImage(destPath, brandName, 'marca');
+    if (!ok) {
+      console.log(`❌ Imagen rechazada por Gemini: no es el logo de "${brandName}"`);
+      try { fs.unlinkSync(destPath); } catch {}
+      return null;
+    }
+
+    return { filename, publicFilename: filename, label: brandName, entityType: 'marca', relativePath: filename, ...assetConfig, opacity: 1, absPath: destPath };
+  } catch (err) {
+    console.warn(`⚠️ Wikipedia logo search falló para "${brandName}": ${err.message?.slice(0, 80)}`);
+    return null;
+  }
+}
+
+/**
+ * Try Logo.dev for a brand logo (free public token, returns PNG).
+ */
+async function tryLogoDevLogo(brandName, holavideoPublicDir, assetConfig) {
+  const domain = brandName.toLowerCase().replace(/\s+/g, '').replace(/[^a-z0-9.]/g, '') + '.com';
+  try {
+    const url = `https://img.logo.dev/${domain}?token=pk_public&size=400&format=png`;
+    const res = await fetch(url, { headers: { 'User-Agent': 'GoogleImagenes-BrollBot/1.0' }, signal: AbortSignal.timeout(8000) });
+    if (!res.ok) return null;
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('image')) return null;
+
+    const buffer = Buffer.from(await res.arrayBuffer());
+    if (buffer.length < 1000) return null;
+
+    const safeLabel = brandName.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase().slice(0, 40);
+    const filename = `entity_${safeLabel}.png`;
+    const destPath = path.join(holavideoPublicDir, filename);
+    if (!fs.existsSync(holavideoPublicDir)) fs.mkdirSync(holavideoPublicDir, { recursive: true });
+    fs.writeFileSync(destPath, buffer);
+
+    console.log(`🏷️ Logo Logo.dev descargado: ${filename} (${Math.round(buffer.length / 1024)}KB) — ${domain}`);
+    return { filename, publicFilename: filename, label: brandName, entityType: 'marca', relativePath: filename, ...assetConfig, opacity: 1, absPath: destPath };
+  } catch (err) {
+    console.warn(`⚠️ Logo.dev falló para "${brandName}" (${domain}): ${err.message?.slice(0, 60)}`);
+    return null;
+  }
+}
+
+/**
+ * Try Wikidata P154 (logo image property). SVGs se convierten a PNG via thumbnail API de Commons.
+ */
+async function tryWikidataLogo(brandName, holavideoPublicDir, assetConfig) {
+  try {
+    const searchUrl = `https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(brandName)}&language=en&format=json&limit=1&type=item`;
+    const searchRes = await fetch(searchUrl, { headers: { 'User-Agent': 'GoogleImagenes-BrollBot/1.0' }, signal: AbortSignal.timeout(8000) });
+    if (!searchRes.ok) return null;
+    const searchData = await searchRes.json();
+    const entityId = searchData.search?.[0]?.id;
+    if (!entityId) return null;
+
+    const claimsUrl = `https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${entityId}&props=claims&format=json`;
+    const claimsRes = await fetch(claimsUrl, { headers: { 'User-Agent': 'GoogleImagenes-BrollBot/1.0' }, signal: AbortSignal.timeout(8000) });
+    if (!claimsRes.ok) return null;
+    const claimsData = await claimsRes.json();
+
+    const logoFilename = claimsData.entities?.[entityId]?.claims?.P154?.[0]?.mainsnak?.datavalue?.value;
+    if (!logoFilename) return null;
+
+    // Usar thumbnail API de Commons: convierte SVG → PNG automáticamente
+    const thumbApiUrl = `https://commons.wikimedia.org/w/api.php?action=query&titles=File:${encodeURIComponent(logoFilename)}&prop=imageinfo&iiprop=url|thumburl&iiurlwidth=400&format=json`;
+    const thumbRes = await fetch(thumbApiUrl, { headers: { 'User-Agent': 'GoogleImagenes-BrollBot/1.0' }, signal: AbortSignal.timeout(10000) });
+    if (!thumbRes.ok) return null;
+    const thumbData = await thumbRes.json();
+    const imageinfo = Object.values(thumbData.query?.pages || {})[0]?.imageinfo?.[0];
+    // thumburl es PNG incluso si el original es SVG; url es el original
+    const imageUrl = imageinfo?.thumburl || imageinfo?.url;
+    if (!imageUrl) return null;
+    if (/\.svg(\?|$)/i.test(imageUrl)) return null; // thumburl tampoco convirtió
+
+    const imgRes = await fetch(imageUrl, { signal: AbortSignal.timeout(12000) });
+    if (!imgRes.ok) return null;
+
+    const buffer = Buffer.from(await imgRes.arrayBuffer());
+    if (buffer.length < 500) return null;
+
+    const ext = (imageUrl.match(/\.(png|jpe?g|webp)/i)?.[1] || 'png').toLowerCase().replace('jpeg', 'jpg');
+    const safeLabel = brandName.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase().slice(0, 40);
+    const filename = `entity_${safeLabel}.${ext}`;
+    const destPath = path.join(holavideoPublicDir, filename);
+    if (!fs.existsSync(holavideoPublicDir)) fs.mkdirSync(holavideoPublicDir, { recursive: true });
+    fs.writeFileSync(destPath, buffer);
+
+    const isSvgConverted = /\.svg/i.test(logoFilename) && !/\.svg/i.test(imageUrl);
+    console.log(`🏷️ Logo Wikidata P154 descargado: ${filename} (${Math.round(buffer.length / 1024)}KB)${isSvgConverted ? ' [SVG→PNG]' : ''} — "${logoFilename}"`);
+    return { filename, publicFilename: filename, label: brandName, entityType: 'marca', relativePath: filename, ...assetConfig, opacity: 1, absPath: destPath };
+  } catch (err) {
+    console.warn(`⚠️ Wikidata logo falló para "${brandName}": ${err.message?.slice(0, 80)}`);
+    return null;
+  }
+}
+
+/**
+ * Search for an entity image: Clearbit (brands only) → Wikipedia → Gemini vision verify.
+ * entityType: 'persona' | 'marca' | 'producto'
+ * Returns an asset descriptor compatible with imageAsset.assets[], or null on failure.
+ */
+async function searchWikipediaImage(entityName, entityType = 'persona', holavideoPublicDir) {
+  const langs = ['en', 'es'];
+  const wikiName = entityName.trim().replace(/ /g, '_');
+
+  const assetConfig = {
+    persona:  { suggestedUse: 'element', position: 'left',   size: '38%', animation: 'slide-from-left'   },
+    marca:    { suggestedUse: 'element', position: 'left',   size: '40%', animation: 'slide-from-left'   },
+    producto: { suggestedUse: 'element', position: 'center', size: '55%', animation: 'slide-from-bottom' },
+  }[entityType] || { suggestedUse: 'element', position: 'center', size: '50%', animation: 'fade-in' };
+
+  // Para marcas: Logo.dev → Wikidata P154 (con SVG→PNG) → Wikipedia logo search → Wikipedia summary+verify
+  if (entityType === 'marca') {
+    const logodevResult = await tryLogoDevLogo(entityName, holavideoPublicDir, assetConfig);
+    if (logodevResult) return logodevResult;
+
+    const wikidataResult = await tryWikidataLogo(entityName, holavideoPublicDir, assetConfig);
+    if (wikidataResult) return wikidataResult;
+
+    const wikiLogoResult = await searchLogoOnWikipedia(entityName, holavideoPublicDir, assetConfig);
+    if (wikiLogoResult) return wikiLogoResult;
+
+    console.log(`ℹ️ No se encontró logo para "${entityName}", usando imagen del artículo con verificación estricta...`);
+  }
+
+  // Wikipedia fallback
+  for (const lang of langs) {
+    try {
+      const summaryUrl = `https://${lang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(wikiName)}`;
+      const summaryRes = await fetch(summaryUrl, { headers: { 'User-Agent': 'GoogleImagenes-BrollBot/1.0' }, signal: AbortSignal.timeout(8000) });
+      if (!summaryRes.ok) continue;
+
+      const data = await summaryRes.json();
+      const imageUrl = data.originalimage?.source || data.thumbnail?.source;
+      if (!imageUrl) continue;
+      if (/\.svg(\?|$)/i.test(imageUrl)) continue; // SVG no compatible con Remotion <Img>
+
+      const imgRes = await fetch(imageUrl, { signal: AbortSignal.timeout(15000) });
+      if (!imgRes.ok) continue;
+
+      const buffer = Buffer.from(await imgRes.arrayBuffer());
+      const ext = (imageUrl.match(/\.(jpe?g|png|webp)/i)?.[1] || 'jpg').toLowerCase().replace('jpeg', 'jpg');
+      const safeLabel = entityName.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase().slice(0, 40);
+      const prefix = entityType === 'persona' ? 'person' : 'entity';
+      const filename = `${prefix}_${safeLabel}.${ext}`;
+      const destPath = path.join(holavideoPublicDir, filename);
+      if (!fs.existsSync(holavideoPublicDir)) fs.mkdirSync(holavideoPublicDir, { recursive: true });
+      fs.writeFileSync(destPath, buffer);
+
+      console.log(`🌐 Imagen Wikipedia [${lang}] (${entityType}): ${filename} (${Math.round(buffer.length / 1024)}KB)`);
+
+      // Verificar con Gemini vision (personas: solo si son muy grandes/sospechosas; marcas/productos: siempre)
+      if (entityType !== 'persona' || buffer.length > 500 * 1024) {
+        const ok = await verifyEntityImage(destPath, entityName, entityType);
+        if (!ok) {
+          console.log(`❌ Imagen de Wikipedia rechazada para "${entityName}" — no es lo esperado`);
+          try { fs.unlinkSync(destPath); } catch {}
+          continue; // intentar siguiente idioma
+        }
+      }
+
+      return { filename, publicFilename: filename, label: entityName, entityType, relativePath: filename, ...assetConfig, opacity: 1, absPath: destPath };
+    } catch (err) {
+      console.warn(`⚠️ Wikipedia ${lang} falló para "${entityName}": ${err.message?.slice(0, 80)}`);
+    }
+  }
+  return null;
+}
+
+/**
  * Call HolaVideo server to generate an AI video clip
  */
 async function generateRemotionClip(transcription, durationSeconds, outputPath, styleInstructions = '', model = '', styleContext = '', isVertical = false, imageAsset = null) {
@@ -19518,7 +19935,15 @@ async function generateRemotionClip(transcription, durationSeconds, outputPath, 
   const vidWidth = isVertical ? 720 : 1280;
   const vidHeight = isVertical ? 1280 : 720;
 
-  const visualPrompt = await generateVisualPromptFromTranscription(transcription, styleInstructions);
+  // Si hay imágenes de entidades reales, pasarlas al generador de prompt
+  const entityAssets = (imageAsset?.assets || []).filter(a => a.filename?.startsWith('person_') || a.filename?.startsWith('entity_'));
+  let entityInfo = null;
+  if (entityAssets.length >= 2) {
+    entityInfo = entityAssets.slice(0, 2).map(a => ({ name: a.label, type: a.entityType || 'marca' }));
+  } else if (entityAssets.length === 1) {
+    entityInfo = { name: entityAssets[0].label, type: entityAssets[0].entityType || 'persona' };
+  }
+  const visualPrompt = await generateVisualPromptFromTranscription(transcription, styleInstructions, entityInfo);
 
   const modelLabel = model === 'flash' ? 'Flash' : model === 'ollama' ? 'Ollama/local' : 'Lite';
   console.log(`🎬 Llamando a HolaVideo [${modelLabel}]: "${visualPrompt.slice(0, 80)}..." (${durationSeconds}s)`);

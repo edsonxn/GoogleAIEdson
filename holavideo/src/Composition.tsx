@@ -1,205 +1,72 @@
 import React from 'react';
-import { AbsoluteFill, useCurrentFrame, useVideoConfig, interpolate, Easing } from 'remotion';
+import { AbsoluteFill, Img, Sequence, staticFile, useCurrentFrame, useVideoConfig, interpolate, Easing } from 'remotion';
 
 export const MyComposition = () => {
   const frame = useCurrentFrame();
   const { durationInFrames } = useVideoConfig();
 
-  // Color Palette - Childish Crayon Primary Colors
-  const COLOR_BG = '#fffbf0'; // Cream paper
-  const COLOR_RED = '#ff3f34';
-  const COLOR_BLUE = '#1e90ff';
-  const COLOR_YELLOW = '#ffd32a';
-  const COLOR_GREEN = '#05c46b';
-  const COLOR_PURPLE = '#a55eea';
-  const COLOR_INK = '#2f3542'; // Dark crayon outline
+  const si = (f: number, inp: number[], out: number[], opts?: any) => {
+    const pairs = inp.map((v, i) => [v, out[i]] as [number, number]);
+    pairs.sort((a, b) => a[0] - b[0]);
+    const deduped = pairs.filter((p, i) => i === 0 || p[0] > pairs[i - 1][0]);
+    return interpolate(f, deduped.map(p => p[0]), deduped.map(p => p[1]), opts);
+  };
 
-  // Main Fades & Transitions
-  const fadeIn = interpolate(frame, [0, 15], [0, 1], { extrapolateRight: 'clamp' });
-  const fadeOut = interpolate(frame, [250, 269], [1, 0], { extrapolateRight: 'clamp' });
+  const T = 20;
+  const z1 = Math.floor(durationInFrames / 2);
 
-  // Custom elastic bezier curve for bouncy childlike pop transitions
-  const elasticBounce = Easing.bezier(0.175, 0.885, 0.32, 1.275);
+  const act1Op = si(frame, [0, T, z1 - T, z1], [0, 1, 1, 0], { extrapolateRight: 'clamp' });
+  const act2Op = si(frame, [z1, z1 + T, durationInFrames - T, durationInFrames], [0, 1, 1, 0], { extrapolateRight: 'clamp' });
 
-  // Crayon "Boiling/Wobbling" Loop Effect (recalculates every 4 frames)
-  const boil = Math.floor(frame / 4);
-  const bx = Math.sin(boil * 1.5) * 2.5;
-  const by = Math.cos(boil * 1.1) * 2.5;
-  const brot = Math.sin(boil * 0.8) * 1.5;
-
-  const bx2 = Math.cos(boil * 1.9) * 2;
-  const by2 = Math.sin(boil * 1.4) * 2;
-
-  // Man / Dad Scale Transition
-  const manScale = interpolate(frame, [15, 45], [0, 1], { extrapolateRight: 'clamp', easing: elasticBounce });
-
-  // Screen Entrance Scales
-  const screen1Scale = interpolate(frame, [35, 55], [0, 1], { extrapolateRight: 'clamp', easing: elasticBounce });
-  const screen2Scale = interpolate(frame, [60, 80], [0, 1], { extrapolateRight: 'clamp', easing: elasticBounce });
-  const screen3Scale = interpolate(frame, [85, 105], [0, 1], { extrapolateRight: 'clamp', easing: elasticBounce });
-  const screen4Scale = interpolate(frame, [110, 130], [0, 1], { extrapolateRight: 'clamp', easing: elasticBounce });
-
-  // Connecting line drawing progresses (strictly increasing input ranges)
-  const line1Progress = interpolate(frame, [45, 70], [0, 1], { extrapolateRight: 'clamp', easing: Easing.out(Easing.quad) });
-  const line2Progress = interpolate(frame, [70, 95], [0, 1], { extrapolateRight: 'clamp', easing: Easing.out(Easing.quad) });
-  const line3Progress = interpolate(frame, [95, 120], [0, 1], { extrapolateRight: 'clamp', easing: Easing.out(Easing.quad) });
-  const line4Progress = interpolate(frame, [120, 145], [0, 1], { extrapolateRight: 'clamp', easing: Easing.out(Easing.quad) });
-
-  // Radar Ping Waves (Crayon signals expanding outwards)
-  const ping1 = interpolate(frame % 50, [0, 50], [0, 1], { extrapolateRight: 'clamp' });
-  const ping2 = interpolate((frame + 25) % 50, [0, 50], [0, 1], { extrapolateRight: 'clamp' });
-
-  // Numeric Counter values for screen stats
-  const megaDataCounter = Math.floor(interpolate(frame, [90, 250], [100, 9999], { extrapolateRight: 'clamp' }));
-
-  // Main Caption typewriter
-  const captionText = "¡Este es papá trabajando en su súper oficina!";
-  const charsVisible = Math.floor(interpolate(frame, [15, 140], [0, captionText.length], { extrapolateRight: 'clamp' }));
+  const nintendoX = si(frame, [0, 25], [-400, 20], { easing: Easing.out(Easing.cubic) });
+  const nintendoOp = si(frame, [0, 15], [0, 1], { extrapolateRight: 'clamp' });
+  
+  const lineP = si(frame, [20, 80], [0, 1], { extrapolateRight: 'clamp' });
+  const text1Len = Math.floor(si(frame, [30, 90], [0, 28], { extrapolateRight: 'clamp' }));
+  const text2Len = Math.floor(si(frame, [z1 + 20, z1 + 90], [0, 31], { extrapolateRight: 'clamp' }));
 
   return (
-    <AbsoluteFill style={{ backgroundColor: COLOR_BG, opacity: fadeIn * fadeOut, fontFamily: 'sans-serif', overflow: 'hidden' }}>
-      {/* Paper texture overlay */}
-      <div style={{ position: 'absolute', inset: 0, opacity: 0.08, backgroundImage: 'radial-gradient(#2f3542 1px, transparent 1px)', backgroundSize: '24px 24px', pointerEvents: 'none' }} />
+    <AbsoluteFill style={{ backgroundColor: '#0a0a0a' }}>
+      <div style={{ position: 'absolute', inset: 0, background: 'repeating-radial-gradient(circle at 50% 50%, #1a0505 0%, #000 50%)' }} />
       
-      {/* SVG lines and pings */}
-      <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', overflow: 'visible', pointerEvents: 'none' }}>
-        {/* Radar wave signals under Dad */}
-        <circle cx={640} cy={360} r={ping1 * 130} fill="none" stroke={COLOR_YELLOW} strokeWidth={4} strokeLinecap="round" strokeDasharray="6,6" opacity={1 - ping1} />
-        <circle cx={640} cy={360} r={ping2 * 130} fill="none" stroke={COLOR_GREEN} strokeWidth={4} strokeLinecap="round" strokeDasharray="6,6" opacity={1 - ping2} />
-        
-        {/* Curved connecting crayon lines from Dad to each office screen */}
-        <path d="M 640,360 Q 480,240 320,200" fill="none" stroke={COLOR_INK} strokeWidth={5} strokeLinecap="round" strokeDasharray={400} strokeDashoffset={400 * (1 - line1Progress)} />
-        <path d="M 640,360 Q 800,240 960,200" fill="none" stroke={COLOR_INK} strokeWidth={5} strokeLinecap="round" strokeDasharray={400} strokeDashoffset={400 * (1 - line2Progress)} />
-        <path d="M 640,360 Q 480,480 320,520" fill="none" stroke={COLOR_INK} strokeWidth={5} strokeLinecap="round" strokeDasharray={400} strokeDashoffset={400 * (1 - line3Progress)} />
-        <path d="M 640,360 Q 800,480 960,520" fill="none" stroke={COLOR_INK} strokeWidth={5} strokeLinecap="round" strokeDasharray={400} strokeDashoffset={400 * (1 - line4Progress)} />
-      </svg>
+      <Img 
+        src={staticFile('entity_nintendo.png')} 
+        style={{
+          position: 'absolute',
+          top: '50%',
+          left: nintendoX,
+          transform: 'translateY(-50%)',
+          objectFit: 'contain',
+          maxHeight: '85%',
+          maxWidth: '40%',
+          opacity: nintendoOp,
+          filter: 'drop-shadow(0 0 18px rgba(0,200,255,0.5))'
+        }} 
+      />
 
-      {/* Dad (Center Character) */}
-      <div style={{
-        position: 'absolute',
-        left: 640 - 90,
-        top: 360 - 90,
-        width: 180,
-        height: 180,
-        backgroundColor: COLOR_YELLOW,
-        border: `6px solid ${COLOR_INK}`,
-        borderRadius: '50%',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        boxShadow: '8px 8px 0px rgba(47, 53, 66, 0.15)',
-        transform: `scale(${manScale}) translate(${bx}px, ${by}px) rotate(${brot}deg)`,
-      }}>
-        <span style={{ fontSize: 90 }}>👨‍💻</span>
-      </div>
-
-      {/* Screen 1 (Top Left) */}
-      <div style={{
-        position: 'absolute',
-        left: 220,
-        top: 100,
-        width: 200,
-        height: 150,
-        backgroundColor: COLOR_BLUE,
-        border: `5px solid ${COLOR_INK}`,
-        borderRadius: '16px',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        boxShadow: '6px 6px 0px rgba(47, 53, 66, 0.15)',
-        transform: `scale(${screen1Scale}) translate(${bx2}px, ${by2}px)`,
-      }}>
-        <span style={{ fontSize: 45 }}>💻</span>
-        <span style={{ color: '#fff', fontWeight: 'bold', marginTop: 5, fontSize: 16 }}>SÚPER PC</span>
-      </div>
-
-      {/* Screen 2 (Top Right) */}
-      <div style={{
-        position: 'absolute',
-        left: 820,
-        top: 100,
-        width: 200,
-        height: 150,
-        backgroundColor: COLOR_RED,
-        border: `5px solid ${COLOR_INK}`,
-        borderRadius: '16px',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        boxShadow: '6px 6px 0px rgba(47, 53, 66, 0.15)',
-        transform: `scale(${screen2Scale}) translate(${bx}px, ${by2}px)`,
-      }}>
-        <span style={{ fontSize: 35 }}>📊</span>
-        <span style={{ color: '#fff', fontWeight: 'bold', fontSize: 24, fontVariantNumeric: 'tabular-nums' }}>
-          {megaDataCounter}
-        </span>
-        <span style={{ color: '#fff', fontSize: 11, fontWeight: 'bold' }}>DATOS PROCESADOS</span>
-      </div>
-
-      {/* Screen 3 (Bottom Left) */}
-      <div style={{
-        position: 'absolute',
-        left: 220,
-        top: 470,
-        width: 200,
-        height: 150,
-        backgroundColor: COLOR_GREEN,
-        border: `5px solid ${COLOR_INK}`,
-        borderRadius: '16px',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        boxShadow: '6px 6px 0px rgba(47, 53, 66, 0.15)',
-        transform: `scale(${screen3Scale}) translate(${bx2}px, ${by}px)`,
-      }}>
-        <span style={{ fontSize: 45 }}>☕</span>
-        <span style={{ color: '#fff', fontWeight: 'bold', marginTop: 5, fontSize: 16 }}>CAFÉ: 100%</span>
-      </div>
-
-      {/* Screen 4 (Bottom Right) */}
-      <div style={{
-        position: 'absolute',
-        left: 820,
-        top: 470,
-        width: 200,
-        height: 150,
-        backgroundColor: COLOR_PURPLE,
-        border: `5px solid ${COLOR_INK}`,
-        borderRadius: '16px',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        boxShadow: '6px 6px 0px rgba(47, 53, 66, 0.15)',
-        transform: `scale(${screen4Scale}) translate(${bx}px, ${by}px)`,
-      }}>
-        <span style={{ fontSize: 45 }}>🚀</span>
-        <span style={{ color: '#fff', fontWeight: 'bold', marginTop: 5, fontSize: 16 }}>SÚPER VELOZ</span>
-      </div>
-
-      {/* Bottom Caption Typewriter */}
-      <div style={{
-        position: 'absolute',
-        bottom: 40,
-        left: '5%',
-        right: '5%',
-        height: 80,
-        backgroundColor: '#fff',
-        border: `5px solid ${COLOR_INK}`,
-        borderRadius: '20px',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '0 20px',
-        boxShadow: '8px 8px 0px rgba(47, 53, 66, 0.15)',
-      }}>
-        <div style={{ fontFamily: 'monospace', fontSize: 28, fontWeight: 'bold', color: COLOR_INK, textAlign: 'center' }}>
-          {captionText.slice(0, charsVisible)}
-          <span style={{ opacity: frame % 20 < 10 ? 1 : 0, color: COLOR_RED }}>|</span>
+      <div style={{ position: 'absolute', inset: 0, opacity: act1Op }}>
+        <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
+          <path d="M 400,100 Q 640,360 800,600" fill="none" stroke="#fff" strokeWidth={1} strokeDasharray={1000} strokeDashoffset={1000 * (1 - lineP)} />
+        </svg>
+        <div style={{ position: 'absolute', right: 50, top: 200, color: '#ff0000', fontSize: 36, fontWeight: 'bold', fontFamily: 'monospace' }}>
+          {"PLANOS TÉCNICOS: ¿PERMITIREMOS ESTO?".slice(0, text1Len)}
         </div>
+        <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(circle at 70% 30%, rgba(255,0,0,0.2), transparent 50%)' }} />
+      </div>
+
+      <div style={{ position: 'absolute', inset: 0, opacity: act2Op }}>
+        <div style={{ position: 'absolute', inset: 0, background: 'rgba(255,0,0,0.1)' }} />
+        <div style={{ position: 'absolute', right: 50, top: 400, color: '#ccff00', fontSize: 36, fontWeight: 'bold', fontFamily: 'monospace', textShadow: '2px 2px 4px #000' }}>
+          {"LA SOMBRA DE NINTENDO SE EXPANDE".slice(0, text2Len)}
+        </div>
+        {new Array(20).fill(0).map((_, i) => (
+          <div key={i} style={{ 
+            position: 'absolute', 
+            left: Math.random() * 1280, 
+            top: (frame * (i + 1)) % 720, 
+            width: 4, height: 4, background: '#fff', borderRadius: '50%', opacity: 0.3 
+          }} />
+        ))}
       </div>
     </AbsoluteFill>
   );
