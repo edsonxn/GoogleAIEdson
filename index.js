@@ -90,14 +90,22 @@ async function generateTextWithLLM(prompt, options = {}) {
     // Default: Gemini API
     const selectedModel = model || GEMINI_TEXT_MODEL;
     let lastErr;
+    let lastApiKeyName = null;
     for (let attempt = 0; attempt < retries; attempt++) {
         try {
             const fp = forcePrimary || (attempt === retries - 1);
             const aiResult = await getGoogleAI(selectedModel, { context, forcePrimary: fp });
+            lastApiKeyName = aiResult.apiKeyName;
             const result = await aiResult.model.generateContent(prompt);
             return result.response.text().trim();
         } catch (err) {
             lastErr = err;
+            const is429 = err.message?.includes('429') || err.message?.includes('Too Many Requests') || err.message?.includes('Quota');
+            if (is429) {
+                console.warn(`⚠️ API ${lastApiKeyName || 'desconocida'} falló con 429 (rate limit). Reintentando...`);
+            } else {
+                console.warn(`⚠️ Error en intento ${attempt + 1}/${retries}: ${err.message?.slice(0, 100)}`);
+            }
             if (attempt < retries - 1) await new Promise(r => setTimeout(r, (attempt + 1) * 2000));
         }
     }
@@ -2926,14 +2934,17 @@ function analyzeProjectFiles(folderName) {
     // Contar total de audios en todo el proyecto
     const allFiles = [];
     function getAllFiles(dirPath) {
-      const files = fs.readdirSync(dirPath);
+      let files;
+      try { files = fs.readdirSync(dirPath); } catch { return; }
       for (const file of files) {
         const filePath = path.join(dirPath, file);
-        if (fs.statSync(filePath).isDirectory()) {
-          getAllFiles(filePath);
-        } else {
-          allFiles.push(file);
-        }
+        try {
+          if (fs.statSync(filePath).isDirectory()) {
+            getAllFiles(filePath);
+          } else {
+            allFiles.push(file);
+          }
+        } catch { /* skip inaccessible entries */ }
       }
     }
     getAllFiles(projectDir);
@@ -3396,11 +3407,13 @@ function createSafeFolderName(topic) {
   
   const safeName = topic
     .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // Convertir acentos: á→a, é→e, ñ→n, etc.
     .replace(/[^a-z0-9\s_]/g, '') // Remover caracteres especiales, mantener guiones bajos
     .replace(/\s+/g, '_') // Reemplazar espacios con guiones bajos
+    .replace(/_+/g, '_') // Evitar guiones bajos dobles
+    .replace(/^_|_$/g, '') // Quitar guiones al inicio/final
     .substring(0, 50); // Limitar longitud
     
-  console.log(`📁 createSafeFolderName: "${shortTopic(topic)}" → "${safeName}"`);
   return safeName;
 }
 
@@ -3410,21 +3423,33 @@ function createSafeFolderName(topic) {
  */
 async function generateShortProjectName(topic) {
   try {
-    const prompt = `Genera UN nombre corto y creativo (máximo 4 palabras en español) para un proyecto de video cuyo tema es:
-"${topic}"
+    const topicSnippet = topic.slice(0, 600);
+    const prompt = `Inventa UN nombre corto y CREATIVO para un proyecto de video basado en el siguiente tema.
 
 REGLAS ESTRICTAS:
-- Solo responde con el nombre, NADA MÁS
-- Máximo 4 palabras
-- Que sea memorable y relacionado al tema
-- Sin comillas, sin puntuación, sin explicaciones
-- En español
-- Ejemplos del formato esperado: "misterios del cable", "secretos wow clasico", "leyendas oscuras norte"`;
+- Exactamente 2 a 4 palabras en español
+- PROHIBIDO copiar las primeras palabras del tema textualmente. Debes RESUMIR la idea central con palabras propias
+- Que sea memorable, descriptivo y creativo
+- Sin comillas, sin puntuación, sin explicaciones, sin prefijos
+- Responde SOLO con el nombre, nada más
+- Convierte acentos: á→a, é→e, í→i, ó→o, ú→u, ñ→n
+
+EJEMPLOS:
+- Tema sobre juegos tristes olvidados de PS1 → juegos oscuros ps1
+- Tema sobre la historia de Link en Zelda → lore link zelda
+- Tema sobre monturas eliminadas de WoW → monturas perdidas wow
+- Tema sobre secretos ocultos de Dark Souls → secretos dark souls
+- Tema sobre la caída de Flappy Bird → auge caida flappy bird
+- Tema sobre fotos increíbles como complemento → fotos complemento perfecto
+- Tema sobre combinar personajes raros → combinaciones locas personajes
+
+TEMA:
+${topicSnippet}`;
 
     const shortName = await generateTextWithLLM(prompt, {
       provider: 'gemini',
       model: 'gemini-2.5-flash',
-      retries: 2,
+      retries: 3,
     });
 
     const cleaned = shortName
@@ -16075,6 +16100,8 @@ function resolveProjectPath(folderName) {
   return projectPath;
 }
 
+// ═══ TEXT CLIPS FUNCTIONS REMOVED — Feature deprecated ═══
+
 // Helper: scan sections and gather B-Roll material for a project
 async function scanProjectSections(projectPath, cfg) {
   const seccionesConAudio = [];
@@ -16269,7 +16296,7 @@ app.get('/api/broll-preview/:folderName', (req, res) => {
 // POST /api/generate-broll-preview
 app.post('/api/generate-broll-preview', async (req, res) => {
   try {
-    const { folderName, videoConfig = {} } = req.body;
+    const { folderName, videoConfig = {}, keepSegments = false, useTransitions = true } = req.body;
     if (!folderName) return res.status(400).json({ error: 'Nombre de carpeta requerido' });
 
     const projectPath = resolveProjectPath(folderName);
@@ -16279,39 +16306,121 @@ app.post('/api/generate-broll-preview', async (req, res) => {
     const thumbsDir = path.join(projectPath, 'broll_thumbs');
     if (!fs.existsSync(thumbsDir)) fs.mkdirSync(thumbsDir, { recursive: true });
 
+    // Load existing preview to re-use segments when requested
+    let existingPreview = null;
+    if (keepSegments) {
+      const previewJsonPath = path.join(projectPath, 'broll_preview.json');
+      if (fs.existsSync(previewJsonPath)) {
+        try { existingPreview = JSON.parse(fs.readFileSync(previewJsonPath, 'utf8')); } catch {}
+      }
+    }
+
     // Scan sections
     const sections = await scanProjectSections(projectPath, cfg);
     if (sections.length === 0) {
       return res.status(400).json({ error: 'No hay secciones con audio y material visual' });
     }
 
-    // Generate sequences and thumbnails
+    const _videoExts = ['.mp4', '.webm', '.mkv', '.avi', '.mov'];
+
+    // Generate clips per section using Whisper segments
     const previewSections = [];
     for (const sec of sections) {
-      const secuencia = await generarSecuenciaAleatoriaBroll(sec.videoFiles, sec.imageFiles, sec.audioDuration, cfg);
+      const allMedia = [...sec.videoFiles, ...sec.imageFiles];
+      const shuffledMedia = [...allMedia].sort(() => Math.random() - 0.5);
+
+      let segments = null;
+
+      // 1. Re-use existing Whisper segments if keepSegments and they exist
+      if (keepSegments && existingPreview) {
+        const existingSec = existingPreview.sections?.find(s => s.secNum === sec.secNum);
+        if (existingSec?.clips?.some(c => typeof c.audioStart === 'number')) {
+          segments = existingSec.clips
+            .filter(c => typeof c.audioStart === 'number')
+            .map(c => ({ start: c.audioStart, end: c.audioEnd, text: c.phraseText || '' }));
+          console.log(`♻️  Sección ${sec.secNum}: reutilizando ${segments.length} segmentos de Whisper`);
+        }
+      }
+
+      // 2. Run Whisper transcription if no segments yet
+      if (!segments) {
+        console.log(`🎙️  Sección ${sec.secNum}: transcribiendo con Whisper...`);
+        try {
+          const result = await transcribeAudioWithSegments(sec.audioPath, 'es');
+          const segs = (result.segments || []).filter(s => (s.end - s.start) >= 0.5);
+          if (segs.length > 0) {
+            segments = segs;
+            console.log(`✅ Sección ${sec.secNum}: Whisper detectó ${segments.length} segmentos`);
+          }
+        } catch (e) {
+          console.error(`⚠️  Whisper falló para sección ${sec.secNum}:`, e.message);
+        }
+      }
 
       const clips = [];
-      for (let j = 0; j < secuencia.length; j++) {
-        const clip = secuencia[j];
-        const thumbName = `sec${sec.secNum}_clip${j}.jpg`;
-        const thumbPath = path.join(thumbsDir, thumbName);
 
-        let thumbOk = false;
-        if (clip.type === 'video') {
-          thumbOk = await generateVideoThumbnail(clip.path, clip.cutFrom, thumbPath);
-        } else {
-          thumbOk = await generateImageThumbnail(clip.path, thumbPath);
+      if (segments && segments.length > 0 && allMedia.length > 0) {
+        // Build clips from Whisper segments (one clip per phrase)
+        let mi = 0;
+        for (const seg of segments) {
+          const duration = seg.end - seg.start;
+          if (duration < 0.5) continue;
+
+          const mediaPath = shuffledMedia[mi % shuffledMedia.length];
+          mi++;
+          const ext = path.extname(mediaPath).toLowerCase();
+          const isVideo = _videoExts.includes(ext);
+          const cutFrom = isVideo ? Math.random() * 10 : 0;
+
+          const thumbName = `sec${sec.secNum}_clip${clips.length}.jpg`;
+          const thumbPath = path.join(thumbsDir, thumbName);
+          let thumbOk = false;
+          if (isVideo) {
+            thumbOk = await generateVideoThumbnail(mediaPath, cutFrom, thumbPath);
+          } else {
+            thumbOk = await generateImageThumbnail(mediaPath, thumbPath);
+          }
+
+          clips.push({
+            index: clips.length,
+            type: isVideo ? 'video' : 'image',
+            sourcePath: mediaPath,
+            sourceFile: path.basename(mediaPath),
+            cutFrom,
+            duration,
+            thumbnail: thumbOk ? thumbName : null,
+            phraseText: seg.text,
+            audioStart: seg.start,
+            audioEnd: seg.end,
+            transitionOut: useTransitions ? randomXfadeTransition() : null
+          });
         }
-
-        clips.push({
-          index: j,
-          type: clip.type,
-          sourcePath: clip.path,
-          sourceFile: path.basename(clip.path),
-          cutFrom: clip.cutFrom || 0,
-          duration: clip.duration,
-          thumbnail: thumbOk ? thumbName : null
-        });
+        console.log(`✅ Sección ${sec.secNum}: ${clips.length} clips por frases`);
+      } else {
+        // Fallback: random sequence (Whisper not available or no media)
+        console.log(`⚠️  Sección ${sec.secNum}: usando distribución aleatoria (sin segmentos Whisper)`);
+        const secuencia = await generarSecuenciaAleatoriaBroll(sec.videoFiles, sec.imageFiles, sec.audioDuration, cfg);
+        for (let j = 0; j < secuencia.length; j++) {
+          const clip = secuencia[j];
+          const thumbName = `sec${sec.secNum}_clip${j}.jpg`;
+          const thumbPath = path.join(thumbsDir, thumbName);
+          let thumbOk = false;
+          if (clip.type === 'video') {
+            thumbOk = await generateVideoThumbnail(clip.path, clip.cutFrom, thumbPath);
+          } else {
+            thumbOk = await generateImageThumbnail(clip.path, thumbPath);
+          }
+          clips.push({
+            index: j,
+            type: clip.type,
+            sourcePath: clip.path,
+            sourceFile: path.basename(clip.path),
+            cutFrom: clip.cutFrom || 0,
+            duration: clip.duration,
+            thumbnail: thumbOk ? thumbName : null,
+            transitionOut: useTransitions ? randomXfadeTransition() : null
+          });
+        }
       }
 
       previewSections.push({
@@ -16327,21 +16436,19 @@ app.post('/api/generate-broll-preview', async (req, res) => {
 
     // Save preview data
     const previewId = `preview-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const [pW, pH] = (cfg.resolution || '1920:1080').split(':').map(Number);
     const previewPayload = {
       previewId,
       folderName,
       projectPath,
-      config: cfg,
+      config: { ...cfg, isVertical: pH > pW },
       sections: previewSections,
       createdAt: new Date().toISOString()
     };
 
-    // Save to disk and memory
     const previewJsonPath = path.join(projectPath, 'broll_preview.json');
     fs.writeFileSync(previewJsonPath, JSON.stringify(previewPayload, null, 2), 'utf8');
     brollPreviewData.set(previewId, previewPayload);
-
-    // Cleanup old previews from memory after 30 min
     setTimeout(() => brollPreviewData.delete(previewId), 1800000);
 
     console.log(`🎬 Preview generado: ${previewSections.length} secciones, ${previewSections.reduce((a, s) => a + s.clips.length, 0)} clips`);
@@ -16946,6 +17053,127 @@ app.post('/api/replace-broll-clip-with-image', async (req, res) => {
   }
 });
 
+// POST /api/set-clip-transition — set or clear the transition between clip[i] and clip[i+1]
+app.post('/api/set-clip-transition', async (req, res) => {
+  try {
+    const { previewId, folderName, sectionIndex, clipIndex, transition } = req.body;
+    // transition: string (xfade type) | null (hard cut)
+    if (transition !== null && !XFADE_TRANSITIONS.includes(transition)) {
+      return res.status(400).json({ error: `Transición no válida: ${transition}` });
+    }
+    let preview = brollPreviewData.get(previewId);
+    if (!preview) {
+      const pp = resolveProjectPath(folderName);
+      if (!pp) return res.status(404).json({ error: 'Proyecto no encontrado' });
+      const pjp = path.join(pp, 'broll_preview.json');
+      if (!fs.existsSync(pjp)) return res.status(404).json({ error: 'Preview no encontrado' });
+      preview = JSON.parse(fs.readFileSync(pjp, 'utf8'));
+      brollPreviewData.set(preview.previewId, preview);
+    }
+    const section = preview.sections[sectionIndex];
+    if (!section) return res.status(400).json({ error: 'Sección no encontrada' });
+    const clip = section.clips[clipIndex];
+    if (!clip) return res.status(400).json({ error: 'Clip no encontrado' });
+
+    clip.transitionOut = transition;
+
+    const pjPath = path.join(preview.projectPath, 'broll_preview.json');
+    fs.writeFileSync(pjPath, JSON.stringify(preview, null, 2));
+    res.json({ success: true, transitionOut: clip.transitionOut });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/xfade-transitions — list of available transitions
+app.get('/api/xfade-transitions', (_req, res) => {
+  res.json({ transitions: XFADE_TRANSITIONS });
+});
+
+// ─── Global Assets ─────────────────────────────────────────────────────────────
+
+const GLOBAL_ASSETS_DIR = path.join(__dirname, 'assets');
+if (!fs.existsSync(GLOBAL_ASSETS_DIR)) fs.mkdirSync(GLOBAL_ASSETS_DIR, { recursive: true });
+
+function getProjectAssets() {
+  const IMAGE_EXT = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
+  const results = [];
+  function walk(dir, rel = '') {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const relPath = rel ? `${rel}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) { walk(path.join(dir, entry.name), relPath); continue; }
+      if (IMAGE_EXT.has(path.extname(entry.name).toLowerCase())) {
+        const stem = path.basename(entry.name, path.extname(entry.name)).replace(/[-_]/g, ' ');
+        results.push({ filename: entry.name, relativePath: relPath, absPath: path.join(GLOBAL_ASSETS_DIR, relPath), label: stem });
+      }
+    }
+  }
+  walk(GLOBAL_ASSETS_DIR);
+  return results;
+}
+
+function selectAssetsByKeyword(assets, transcription) {
+  const text = transcription.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  const scored = assets.map(asset => {
+    const label = asset.label.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    const words = label.split(/\s+/).filter(w => w.length > 2);
+    const score = words.reduce((s, w) => s + (text.includes(w) ? w.length : 0), 0);
+    return { asset, score };
+  }).filter(x => x.score >= 3).sort((a, b) => b.score - a.score).slice(0, 3);
+
+  if (!scored.length) return [];
+  return scored.map(({ asset }) => {
+    const isBg = /fondo|mapa|paisaje|escena|bosque|ciudad|costa|mar|tierra|cielo/i.test(asset.label);
+    return { ...asset, suggestedUse: isBg ? 'background' : 'element', position: 'auto', animation: 'auto', integrationNotes: 'keyword match' };
+  });
+}
+
+const ASSET_RELEVANCE_MIN = 7; // 1-10: assets below this score are discarded
+
+async function selectAssetsForClip(assets, transcription) {
+  if (!assets.length) return [];
+  const list = assets.map((a, i) => `${i + 1}. ${a.relativePath}`).join('\n');
+  const prompt = `Tienes estos assets disponibles (PNG/JPG con fondo transparente o imagen completa):\n${list}\n\nEl clip de video narra: "${transcription.slice(0, 350)}"\n\nEvalúa cada asset y selecciona SOLO los que tengan una conexión clara y directa con lo narrado. Para cada asset seleccionado asigna un score de relevancia del 1 al 10 siendo 10 una conexión perfecta y 1 algo sin relación. NO incluyas assets con score menor a 7. Es mejor devolver array vacío que forzar assets poco relevantes.\n\nResponde SOLO con JSON válido (array, sin markdown):\n[\n  {\n    "index": 2,\n    "relevance": 9,\n    "use": "background",\n    "position": "fullscreen",\n    "size": "cover",\n    "animation": "slow-zoom-in",\n    "opacity": 0.9\n  },\n  {\n    "index": 5,\n    "relevance": 8,\n    "use": "element",\n    "position": "bottom-right",\n    "size": "40%",\n    "animation": "slide-from-right",\n    "opacity": 1.0\n  }\n]\n\nValores de "use": "background" (fondo de escena/mapa/paisaje), "element" (personaje/objeto en primer plano), "icon" (símbolo/ícono pequeño flotante)\nValores de "position": "fullscreen", "center", "bottom-left", "bottom-right", "bottom-center", "top-left", "top-right", "left", "right"\nValores de "size": "cover", "20%", "30%", "40%", "50%", "60%"\nValores de "animation": "slow-zoom-in", "fade-in", "slide-from-left", "slide-from-right", "slide-from-bottom", "float", "scale-pulse", "parallax", "none"\n\nSi ningún asset supera relevancia 7 responde: []\nEl nombre del archivo ES la descripción semántica del asset.`;
+  try {
+    const raw = await generateUniversalContent('gemini-3.1-flash-lite', prompt, null, 3);
+    const text = (typeof raw === 'string' ? raw : JSON.stringify(raw)).trim().replace(/^```json?\n?/m, '').replace(/```$/m, '').trim();
+    const parsed = JSON.parse(text);
+    if (!Array.isArray(parsed) || !parsed.length) {
+      console.log(`ℹ️ LLM: sin assets relevantes para este clip`);
+      return [];
+    }
+    const allItems = parsed.map(item => {
+      const asset = assets[item.index - 1];
+      if (!asset) return null;
+      return { ...asset, suggestedUse: item.use || 'element', position: item.position || 'center', size: item.size || '40%', animation: item.animation || 'fade-in', opacity: item.opacity ?? 1.0, relevance: item.relevance ?? 0 };
+    }).filter(Boolean);
+    const rejected = allItems.filter(a => a.relevance < ASSET_RELEVANCE_MIN);
+    const selected = allItems.filter(a => a.relevance >= ASSET_RELEVANCE_MIN);
+    if (rejected.length) console.log(`🚫 Assets descartados (relevancia < ${ASSET_RELEVANCE_MIN}): ${rejected.map(a => `"${a.relativePath}" (${a.relevance}/10)`).join(', ')}`);
+    if (!selected.length) {
+      console.log(`ℹ️ Ningún asset superó el umbral de relevancia`);
+      return [];
+    }
+    console.log(`🗂️ Assets elegidos por LLM: ${selected.map(a => `"${a.relativePath}" (${a.suggestedUse}, ${a.relevance}/10)`).join(', ')}`);
+    return selected;
+  } catch (err) {
+    console.warn(`⚠️ selectAssetsForClip LLM falló: ${err.message?.slice(0, 80)} — usando keyword match`);
+    return selectAssetsByKeyword(assets, transcription);
+  }
+}
+
+// GET /api/project-assets
+app.get('/api/project-assets', (_req, res) => {
+  const assets = getProjectAssets();
+  res.json({ assets, assetsDir: GLOBAL_ASSETS_DIR });
+});
+
+// POST /api/open-assets-folder
+app.post('/api/open-assets-folder', (_req, res) => {
+  exec(`explorer "${GLOBAL_ASSETS_DIR.replace(/\//g, '\\')}"`);
+  res.json({ ok: true, assetsDir: GLOBAL_ASSETS_DIR });
+});
+
 // POST /api/shift-broll-clip
 app.post('/api/shift-broll-clip', async (req, res) => {
   try {
@@ -17456,6 +17684,7 @@ app.post('/api/render-broll-video', async (req, res) => {
     if (!preview) return res.status(404).json({ error: 'Preview no encontrado' });
 
     const cfg = parseBrollVideoConfig(videoConfig);
+    console.log(`🎬 Render config: resolution=${cfg.resolution}, preset=${cfg.preset}, crf=${cfg.crf}`);
 
     const sessionId = `broll-render-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     brollVideoProgress.set(sessionId, {
@@ -17500,6 +17729,12 @@ async function renderFromPreview(preview, projectPath, projectName, sessionId, c
       const progressBase = 5 + (i / totalSections) * 80;
       updateProgress(Math.round(progressBase), `Renderizando sección ${sec.secNum}/${sections[sections.length - 1].secNum}...`);
 
+      // Pre-compute section audio duration once (needed for last-clip slot)
+      let secAudioDur = null;
+      if (sec.audioPath && fs.existsSync(sec.audioPath)) {
+        secAudioDur = await getMediaDuration(sec.audioPath);
+      }
+
       const clipPaths = [];
       for (let j = 0; j < sec.clips.length; j++) {
         const clip = sec.clips[j];
@@ -17508,21 +17743,51 @@ async function renderFromPreview(preview, projectPath, projectName, sessionId, c
         updateProgress(
           Math.round(progressBase + (j / sec.clips.length) * (80 / totalSections)),
           `Sección ${sec.secNum}: clip ${j + 1}/${sec.clips.length}`,
-          `${clip.type === 'video' ? 'Video' : 'Imagen'}: ${clip.sourceFile}`
+          `${clip.type === 'video' ? 'Video' : clip.type === 'text' ? 'Texto' : 'Imagen'}: ${clip.sourceFile || clip.textContent || ''}`
         );
 
+        // Compute slot duration: phrase speech + silence gap to next phrase.
+        // Uses Whisper audioStart timestamps when available so clips fill their
+        // true slot in the TTS audio (not just the voiced portion).
+        const XFADE_D = 0.4; // must match concatenarClipsConTransiciones default
+        let renderDur = clip.duration;
+        if (typeof clip.audioStart === 'number') {
+          const next = sec.clips[j + 1];
+          if (next && typeof next.audioStart === 'number') {
+            renderDur = next.audioStart - clip.audioStart;
+          } else if (secAudioDur !== null) {
+            renderDur = secAudioDur - clip.audioStart;
+          }
+          renderDur = Math.max(renderDur, clip.duration); // never shorter than speech
+        }
+        // Each clip with an outgoing xfade must be extended by D so the transition
+        // overlap does not shorten the final video relative to the TTS audio.
+        if (clip.transitionOut && j < sec.clips.length - 1) {
+          renderDur += XFADE_D;
+        }
+
         if (clip.type === 'video') {
-          await crearClipDesdeVideo(clip.sourcePath, clip.cutFrom, clip.duration, clipPath, cfg);
+          await crearClipDesdeVideo(clip.sourcePath, clip.cutFrom, renderDur, clipPath, cfg);
+        } else if (clip.type === 'text') {
+          // Text clip: if pre-rendered file exists use it, otherwise generate on the fly
+          if (clip.sourcePath && fs.existsSync(clip.sourcePath)) {
+            // Copy/re-encode pre-rendered text clip to match resolution
+            await crearClipDesdeVideo(clip.sourcePath, 0, renderDur, clipPath, cfg);
+          } else {
+            await crearClipDesdeTexto(clip.textConfig || { text: clip.textContent || '', duration: renderDur }, clipPath, cfg);
+          }
         } else {
-          await crearClipDesdeImagen(clip.sourcePath, clip.duration, clipPath, cfg, clip.zoomEffect === true);
+          await crearClipDesdeImagen(clip.sourcePath, renderDur, clipPath, cfg, clip.zoomEffect === true);
         }
         if (fs.existsSync(clipPath)) clipPaths.push(clipPath);
       }
 
       if (clipPaths.length === 0) continue;
 
+      // Build transitions array: clip[j].transitionOut = transition to clip[j+1] (last clip has none)
+      const sectionTransitions = sec.clips.slice(0, -1).map(c => c.transitionOut || null);
       const sectionVideoPath = path.join(tempDir, `seccion_${sec.secNum}_visual.mp4`);
-      await concatenarClipsBroll(clipPaths, sectionVideoPath);
+      await concatenarClipsConTransiciones(clipPaths, sectionTransitions, sectionVideoPath, cfg);
 
       if (fs.existsSync(sectionVideoPath)) {
         sectionVideos.push({ numero: sec.secNum, videoPath: sectionVideoPath, audioPath: sec.audioPath, pauseAfter: sec.pauseAfter || 0 });
@@ -17570,6 +17835,22 @@ async function renderFromPreview(preview, projectPath, projectName, sessionId, c
     }
 
     if (sectionVideos.length === 0) throw new Error('No se pudo generar ningún video de sección');
+
+    // Fix sync: Whisper timestamps don't include inter-phrase silences, so section videos
+    // are shorter than their TTS audio. Extend short videos by freezing the last frame.
+    updateProgress(86, 'Sincronizando duraciones audio/video...');
+    for (let svi = 0; svi < sectionVideos.length; svi++) {
+      const sv = sectionVideos[svi];
+      if (sv.isPause || !sv.audioPath || !fs.existsSync(sv.audioPath)) continue;
+      const videoDur = await getMediaDuration(sv.videoPath);
+      const audioDur = await getMediaDuration(sv.audioPath);
+      if (audioDur > videoDur + 0.1) {
+        console.log(`🔧 Sec ${sv.numero}: extendiendo video ${videoDur.toFixed(2)}s → ${audioDur.toFixed(2)}s (TTS más largo por silencios entre frases)`);
+        const extPath = path.join(tempDir, `seccion_${sv.numero}_visual_ext.mp4`);
+        await extendVideoFreezeFrame(sv.videoPath, audioDur, extPath, cfg);
+        sv.videoPath = extPath;
+      }
+    }
 
     updateProgress(87, 'Uniendo secciones de video...');
     const visualMasterPath = path.join(tempDir, 'visual_master.mp4');
@@ -17875,10 +18156,10 @@ app.get('/api/broll-clip-preview/:folderName/:sectionIndex/:clipIndex', async (r
       return res.sendFile(previewFile);
     }
 
-    // Determine if vertical mode from preview config
+    // Determine if vertical mode — check preview config OR detect from section's actual source video
     const cfgRes = preview.config?.resolution || '1920:1080';
     const [cfgW, cfgH] = cfgRes.split(':').map(Number);
-    const isVerticalPreview = cfgH > cfgW;
+    const isVerticalPreview = cfgH > cfgW || (preview.config?.isVertical === true);
 
     // Generate quick preview: low-res, ultrafast, low quality
     if (!fs.existsSync(clip.sourcePath)) return res.status(404).send('Source video not found');
@@ -17914,6 +18195,399 @@ app.get('/api/broll-clip-preview/:folderName/:sectionIndex/:clipIndex', async (r
   } catch (error) {
     console.error('Error broll-clip-preview:', error.message);
     res.status(500).send('Error: ' + error.message);
+  }
+});
+
+// ═══ TEXT CLIP ENDPOINTS REMOVED — Feature deprecated ═══
+
+// POST /api/generate-ai-clip — Generate AI video clip using Whisper + HolaVideo/Remotion
+app.post('/api/generate-ai-clip', async (req, res) => {
+  try {
+    const { folderName, previewId, sectionIndex, clipIndex, styleInstructions, model, styleContext, useRealImages, useAssets, isVertical: isVerticalReq } = req.body;
+    
+    // Load preview
+    let preview = brollPreviewData.get(previewId);
+    if (!preview) {
+      const projectPath = resolveProjectPath(folderName);
+      if (!projectPath) return res.status(404).json({ error: 'Proyecto no encontrado' });
+      const previewJsonPath = path.join(projectPath, 'broll_preview.json');
+      if (!fs.existsSync(previewJsonPath)) return res.status(404).json({ error: 'Preview no encontrado' });
+      preview = JSON.parse(fs.readFileSync(previewJsonPath, 'utf8'));
+      brollPreviewData.set(preview.previewId, preview);
+    }
+
+    const section = preview.sections[sectionIndex];
+    if (!section) return res.status(400).json({ error: 'Sección no encontrada' });
+    const clip = section.clips[clipIndex];
+    if (!clip) return res.status(400).json({ error: 'Clip no encontrado' });
+
+    // Calculate timestamps for this clip
+    const { startTime, duration } = calculateClipTimestamps(section.clips, clipIndex);
+    console.log(`🤖 Generando AI clip: sección ${section.secNum}, clip ${clipIndex} (${startTime.toFixed(1)}s - ${(startTime + duration).toFixed(1)}s)`);
+    if (styleInstructions) {
+      console.log(`🎨 Instrucciones de estilo: "${styleInstructions}"`);
+    }
+
+    // Extract audio fragment from section's TTS audio
+    const tempDir = path.join(preview.projectPath, 'temp');
+    if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+    const audioFragmentPath = path.join(tempDir, `ai_clip_audio_${Date.now()}.mp3`);
+
+    try {
+      await extractAudioFragment(section.audioPath, startTime, duration, audioFragmentPath);
+    } catch (err) {
+      return res.status(500).json({ error: `Error extrayendo audio: ${err.message}` });
+    }
+
+    // Transcribe with Whisper
+    let transcription = '';
+    try {
+      transcription = await transcribeAudioFragment(audioFragmentPath, 'es');
+      console.log(`📝 Transcripción: "${transcription.slice(0, 100)}..."`);
+    } catch (err) {
+      console.warn(`⚠️ Whisper falló, usando texto genérico: ${err.message}`);
+      transcription = 'animación abstracta de colores vibrantes';
+    }
+
+    // Clean up audio fragment
+    try { fs.unlinkSync(audioFragmentPath); } catch {}
+
+    // Generate AI video with HolaVideo
+    const aiClipsDir = path.join(preview.projectPath, 'broll_ai_clips');
+    if (!fs.existsSync(aiClipsDir)) fs.mkdirSync(aiClipsDir, { recursive: true });
+    const outputFileName = `ai_clip_sec${section.secNum}_${clipIndex}_${Date.now()}.mp4`;
+    const outputPath = path.join(aiClipsDir, outputFileName);
+
+    // Detect vertical (Shorts) mode — prefer explicit flag from request, fall back to preview config
+    let isVertical;
+    if (typeof isVerticalReq === 'boolean') {
+      isVertical = isVerticalReq;
+    } else {
+      const cfgRes = preview.config?.resolution || '1920:1080';
+      const [cfgW, cfgH] = cfgRes.split(':').map(Number);
+      isVertical = cfgH > cfgW;
+    }
+    console.log(`📐 AI clip mode: ${isVertical ? 'vertical (Shorts 720×1280)' : 'horizontal (1280×720)'}`);
+
+    // Optionally pick an asset from the project's assets/ folder
+    let imageAsset = null;
+    const holavideoPublic = path.join(__dirname, 'holavideo', 'public');
+    if ((useAssets || useRealImages) && transcription) {
+      try {
+        const assets = getProjectAssets();
+        if (assets.length) {
+          console.log(`🗂️ ${assets.length} assets disponibles, seleccionando para: "${transcription.slice(0, 80)}..."`);
+          const selected = await selectAssetsForClip(assets, transcription);
+          if (selected.length) {
+            if (!fs.existsSync(holavideoPublic)) fs.mkdirSync(holavideoPublic, { recursive: true });
+            const copiedAssets = selected.map(s => {
+              const ext = path.extname(s.filename);
+              // Deterministic name: same source → same dest → no stale filename in generated code
+              const safeLabel = s.label.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase().slice(0, 40);
+              const assetFilename = `ra_${safeLabel}${ext}`;
+              const destPath = path.join(holavideoPublic, assetFilename);
+              fs.copyFileSync(s.absPath, destPath);
+              return { ...s, publicFilename: assetFilename };
+            });
+            imageAsset = { assets: copiedAssets };
+            console.log(`✅ ${copiedAssets.length} asset(s) seleccionados: ${copiedAssets.map(a => `"${a.relativePath}"`).join(', ')}`);
+          } else {
+            console.log(`ℹ️ Ningún asset relevante para este clip, continuando sin imagen`);
+          }
+        } else {
+          console.log(`ℹ️ Carpeta assets/ vacía, continuando sin imagen`);
+        }
+      } catch (imgErr) {
+        console.warn(`⚠️ Error con assets: ${imgErr.message}`);
+      }
+    }
+
+    let visualPrompt = '';
+    let generatedCode = '';
+    try {
+      const result = await generateRemotionClip(transcription, duration, outputPath, styleInstructions, model, styleContext, isVertical, imageAsset);
+      visualPrompt = result.visualPrompt || '';
+      generatedCode = result.generatedCode || '';
+    } catch (err) {
+      return res.status(500).json({ error: `Error generando video: ${err.message}. ¿Está corriendo HolaVideo (npm run web)?` });
+    }
+
+    // Update clip in preview
+    clip.type = 'video';
+    clip.sourcePath = outputPath;
+    clip.sourceFile = outputFileName;
+    clip.cutFrom = 0;
+    clip.aiGenerated = true;
+    clip.transcription = transcription;
+    clip.visualPrompt = visualPrompt;
+
+    // Clean up downloaded image asset after render
+    if (imageAsset?.path) {
+      try { fs.unlinkSync(imageAsset.path); } catch {}
+    }
+
+    // Generate thumbnail from the new video
+    const thumbsDir = path.join(preview.projectPath, 'broll_thumbs');
+    const thumbName = `sec${section.secNum}_clip${clipIndex}.jpg`;
+    const thumbPath = path.join(thumbsDir, thumbName);
+    const thumbOk = await generateVideoThumbnail(outputPath, 0, thumbPath);
+    clip.thumbnail = thumbOk ? thumbName : null;
+
+    // IMPORTANT: Delete cached preview video so it regenerates with the new source
+    const cachedPreviewPath = path.join(thumbsDir, `preview_sec${section.secNum}_clip${clipIndex}.mp4`);
+    if (fs.existsSync(cachedPreviewPath)) {
+      try { fs.unlinkSync(cachedPreviewPath); console.log(`🗑️ Cache de preview eliminado: ${cachedPreviewPath}`); } catch {}
+    }
+
+    // Save preview
+    const previewJsonPath = path.join(preview.projectPath, 'broll_preview.json');
+    fs.writeFileSync(previewJsonPath, JSON.stringify(preview, null, 2));
+
+    // Copiar el clip generado al broll de la sección para reutilizarlo
+    try {
+      const sectionBrollDir = path.join(preview.projectPath, `seccion_${section.secNum}`, 'broll');
+      if (!fs.existsSync(sectionBrollDir)) fs.mkdirSync(sectionBrollDir, { recursive: true });
+      const brollCopyPath = path.join(sectionBrollDir, outputFileName);
+      fs.copyFileSync(outputPath, brollCopyPath);
+      console.log(`📁 AI clip copiado al broll de sección ${section.secNum}: ${outputFileName}`);
+    } catch (copyErr) {
+      console.warn(`⚠️ No se pudo copiar al broll de sección: ${copyErr.message}`);
+    }
+
+    console.log(`✅ AI clip reemplazó clip ${clipIndex} en sección ${section.secNum}`);
+    res.json({
+      success: true,
+      clip,
+      sectionIndex: parseInt(sectionIndex),
+      clipIndex: parseInt(clipIndex),
+      transcription,
+      visualPrompt,
+      generatedCode
+    });
+
+  } catch (error) {
+    console.error('Error generate-ai-clip:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/regenerate-section-by-phrases — Regenerate section clips based on narrator phrases
+app.post('/api/regenerate-section-by-phrases', async (req, res) => {
+  try {
+    const { folderName, previewId, sectionIndex } = req.body;
+    
+    // Load preview
+    let preview = brollPreviewData.get(previewId);
+    if (!preview) {
+      const projectPath = resolveProjectPath(folderName);
+      if (!projectPath) return res.status(404).json({ error: 'Proyecto no encontrado' });
+      const previewJsonPath = path.join(projectPath, 'broll_preview.json');
+      if (!fs.existsSync(previewJsonPath)) return res.status(404).json({ error: 'Preview no encontrado' });
+      preview = JSON.parse(fs.readFileSync(previewJsonPath, 'utf8'));
+      brollPreviewData.set(preview.previewId, preview);
+    }
+
+    const section = preview.sections[sectionIndex];
+    if (!section) return res.status(400).json({ error: 'Sección no encontrada' });
+    if (!section.audioPath || !fs.existsSync(section.audioPath)) {
+      return res.status(400).json({ error: 'Audio de sección no encontrado' });
+    }
+
+    console.log(`\n🎯 ═══ REGENERANDO SECCIÓN ${section.secNum} POR FRASES ═══`);
+    console.log(`📂 Audio: ${section.audioPath}`);
+
+    // Transcribe the entire section audio with segments
+    let segments = [];
+    try {
+      const result = await transcribeAudioWithSegments(section.audioPath, 'es');
+      segments = result.segments || [];
+      console.log(`📝 Whisper detectó ${segments.length} frases/segmentos`);
+      segments.forEach((seg, i) => {
+        console.log(`   [${i}] ${seg.start.toFixed(1)}s - ${seg.end.toFixed(1)}s (${(seg.end - seg.start).toFixed(1)}s): "${seg.text.slice(0, 50)}..."`);
+      });
+    } catch (err) {
+      console.error('⚠️ Error transcribiendo audio:', err.message);
+      return res.status(500).json({ error: `Error transcribiendo audio: ${err.message}` });
+    }
+
+    if (segments.length === 0) {
+      return res.status(400).json({ error: 'No se detectaron frases en el audio' });
+    }
+
+    // Get available B-roll material from multiple sources
+    const videoExts = ['.mp4', '.webm', '.mkv', '.avi', '.mov'];
+    const imageExts = ['.jpg', '.jpeg', '.png', '.webp', '.gif'];
+
+    const availableMedia = new Set(); // Use Set to avoid duplicates
+
+    // Source 1: Current section's existing clips (from preview)
+    if (section.clips && section.clips.length > 0) {
+      for (const clip of section.clips) {
+        if (clip.sourcePath && fs.existsSync(clip.sourcePath)) {
+          availableMedia.add(clip.sourcePath);
+        }
+      }
+      console.log(`   📌 Clips existentes en sección: ${section.clips.length}`);
+    }
+
+    // Source 2: All other sections' clips (from preview)
+    for (const otherSec of preview.sections) {
+      if (otherSec.secNum === section.secNum) continue;
+      if (otherSec.clips) {
+        for (const clip of otherSec.clips) {
+          if (clip.sourcePath && fs.existsSync(clip.sourcePath)) {
+            availableMedia.add(clip.sourcePath);
+          }
+        }
+      }
+    }
+    console.log(`   📌 Total de clips de otras secciones: ${availableMedia.size - (section.clips?.length || 0)}`);
+
+    // Source 3: Section folder
+    const sectionDir = path.join(preview.projectPath, `seccion_${section.secNum}`);
+    if (fs.existsSync(sectionDir)) {
+      const scanFolder = (dir) => {
+        const files = fs.readdirSync(dir);
+        for (const f of files) {
+          const fullPath = path.join(dir, f);
+          const stat = fs.statSync(fullPath);
+          if (stat.isDirectory()) {
+            scanFolder(fullPath); // Recursive scan
+          } else {
+            const ext = path.extname(f).toLowerCase();
+            if (videoExts.includes(ext) || imageExts.includes(ext)) {
+              availableMedia.add(fullPath);
+            }
+          }
+        }
+      };
+      scanFolder(sectionDir);
+    }
+
+    // Source 4: Global broll folder
+    const globalBrollDir = path.join(preview.projectPath, 'broll_global');
+    if (fs.existsSync(globalBrollDir)) {
+      const files = fs.readdirSync(globalBrollDir);
+      for (const f of files) {
+        const ext = path.extname(f).toLowerCase();
+        const fullPath = path.join(globalBrollDir, f);
+        if (videoExts.includes(ext) || imageExts.includes(ext)) {
+          availableMedia.add(fullPath);
+        }
+      }
+    }
+
+    // Source 5: Search all section folders for media
+    const projectItems = fs.readdirSync(preview.projectPath);
+    for (const item of projectItems) {
+      if (item.startsWith('seccion_')) {
+        const secPath = path.join(preview.projectPath, item);
+        if (fs.statSync(secPath).isDirectory()) {
+          const files = fs.readdirSync(secPath);
+          for (const f of files) {
+            const ext = path.extname(f).toLowerCase();
+            const fullPath = path.join(secPath, f);
+            if (videoExts.includes(ext) || imageExts.includes(ext)) {
+              availableMedia.add(fullPath);
+            }
+          }
+        }
+      }
+    }
+
+    const allMedia = Array.from(availableMedia);
+    if (allMedia.length === 0) {
+      return res.status(400).json({ error: 'No hay material B-roll disponible para esta sección' });
+    }
+
+    // Count videos vs images
+    const videoCount = allMedia.filter(p => videoExts.includes(path.extname(p).toLowerCase())).length;
+    const imageCount = allMedia.length - videoCount;
+    console.log(`🎬 Material disponible: ${videoCount} videos, ${imageCount} imágenes (total: ${allMedia.length})`);
+
+    // Build new clips array based on segments
+    const newClips = [];
+    const thumbsDir = path.join(preview.projectPath, 'broll_thumbs');
+    if (!fs.existsSync(thumbsDir)) fs.mkdirSync(thumbsDir, { recursive: true });
+
+    // Shuffle media to get variety
+    const shuffledMedia = [...allMedia].sort(() => Math.random() - 0.5);
+    let mediaIndex = 0;
+
+    for (let i = 0; i < segments.length; i++) {
+      const seg = segments[i];
+      const duration = seg.end - seg.start;
+      
+      // Skip very short segments (less than 0.5s)
+      if (duration < 0.5) continue;
+
+      // Pick next media file (cycle through)
+      const mediaPath = shuffledMedia[mediaIndex % shuffledMedia.length];
+      mediaIndex++;
+
+      const ext = path.extname(mediaPath).toLowerCase();
+      const isVideo = videoExts.includes(ext);
+      const sourceFile = path.basename(mediaPath);
+
+      // Create clip object
+      const clip = {
+        index: newClips.length,
+        type: isVideo ? 'video' : 'image',
+        sourcePath: mediaPath,
+        sourceFile: sourceFile,
+        duration: duration,
+        cutFrom: isVideo ? Math.random() * 10 : 0,
+        thumbnail: null,
+        phraseText: seg.text,
+        audioStart: seg.start, // timestamp real en el audio de la sección
+        audioEnd: seg.end
+      };
+
+      // Generate thumbnail
+      const thumbName = `sec${section.secNum}_clip${clip.index}.jpg`;
+      const thumbPath = path.join(thumbsDir, thumbName);
+      
+      if (isVideo) {
+        const thumbOk = await generateVideoThumbnail(mediaPath, clip.cutFrom, thumbPath);
+        clip.thumbnail = thumbOk ? thumbName : null;
+      } else {
+        // For images, copy/resize as thumbnail
+        try {
+          await new Promise((resolve, reject) => {
+            const args = ['-y', '-i', mediaPath, '-vf', 'scale=320:-1', '-q:v', '5', thumbPath];
+            const proc = spawn('ffmpeg', args);
+            proc.on('close', code => code === 0 ? resolve() : reject());
+            proc.on('error', reject);
+          });
+          clip.thumbnail = thumbName;
+        } catch { clip.thumbnail = null; }
+      }
+
+      newClips.push(clip);
+    }
+
+    console.log(`✅ Generados ${newClips.length} clips basados en frases`);
+
+    // Update section clips
+    section.clips = newClips;
+
+    // Save updated preview
+    const previewJsonPath = path.join(preview.projectPath, 'broll_preview.json');
+    fs.writeFileSync(previewJsonPath, JSON.stringify(preview, null, 2));
+
+    console.log(`💾 Preview guardado\n`);
+
+    res.json({
+      success: true,
+      sectionIndex,
+      clips: newClips,
+      segmentsCount: segments.length,
+      clipsCount: newClips.length
+    });
+
+  } catch (error) {
+    console.error('Error regenerate-section-by-phrases:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -18172,10 +18846,14 @@ async function generarVideoConBroll(projectPath, projectName, sessionId, config 
           clip.type === 'video' ? `Video: ${path.basename(clip.path)}` : `Imagen: ${path.basename(clip.path)}`
         );
 
+        const XFADE_D = 0.4;
+        // All clips except the last will get a random transition → extend by D so xfade doesn't shorten video
+        const hasOutTransition = j < secuencia.length - 1;
+        const clipDur = hasOutTransition ? clip.duration + XFADE_D : clip.duration;
         if (clip.type === 'video') {
-          await crearClipDesdeVideo(clip.path, clip.cutFrom, clip.duration, clipPath, cfg);
+          await crearClipDesdeVideo(clip.path, clip.cutFrom, clipDur, clipPath, cfg);
         } else {
-          await crearClipDesdeImagen(clip.path, clip.duration, clipPath, cfg);
+          await crearClipDesdeImagen(clip.path, clipDur, clipPath, cfg);
         }
 
         if (fs.existsSync(clipPath)) {
@@ -18188,9 +18866,10 @@ async function generarVideoConBroll(projectPath, projectName, sessionId, config 
         continue;
       }
 
-      // Concatenar clips de esta sección
+      // Concatenar clips de esta sección con transiciones aleatorias
+      const legacyTransitions = clipPaths.slice(0, -1).map(() => randomXfadeTransition());
       const sectionVideoPath = path.join(tempDir, `seccion_${secNum}_visual.mp4`);
-      await concatenarClipsBroll(clipPaths, sectionVideoPath);
+      await concatenarClipsConTransiciones(clipPaths, legacyTransitions, sectionVideoPath, cfg);
 
       if (fs.existsSync(sectionVideoPath)) {
         sectionVideos.push({
@@ -18484,6 +19163,727 @@ function crearClipDesdeImagen(imagePath, duration, outputPath, cfg = {}, zoomEff
   });
 }
 
+// ═══ AI VIDEO CLIP GENERATION (Remotion/HolaVideo Integration) ═══
+
+/**
+ * Extrae un fragmento de audio de un archivo
+ */
+function extractAudioFragment(inputPath, startTime, duration, outputPath) {
+  return new Promise((resolve, reject) => {
+    const args = [
+      '-y', '-i', inputPath,
+      '-ss', String(startTime),
+      '-t', String(duration),
+      '-acodec', 'libmp3lame', '-ab', '192k',
+      outputPath
+    ];
+    const proc = spawn('ffmpeg', args);
+    let stderr = '';
+    proc.stderr.on('data', d => stderr += d.toString());
+    proc.on('close', code => {
+      if (code === 0 && fs.existsSync(outputPath)) {
+        resolve(outputPath);
+      } else {
+        reject(new Error(`FFmpeg extract failed: ${stderr.slice(-200)}`));
+      }
+    });
+    proc.on('error', reject);
+  });
+}
+
+/**
+ * Transcribe audio fragment using local Whisper
+ */
+async function transcribeAudioFragment(audioPath, language = 'es') {
+  return new Promise((resolve, reject) => {
+    const pythonScript = `
+# -*- coding: utf-8 -*-
+import sys, json, os
+if sys.platform == 'win32':
+    import codecs
+    sys.stdout = codecs.getwriter('utf-8')(sys.stdout.detach())
+sys.path.append('${process.cwd().replace(/\\/g, '/')}')
+from whisper_local import whisper_local
+
+try:
+    if not whisper_local.is_loaded:
+        whisper_local.load_model('medium')
+    result = whisper_local.transcribe_audio(r'${audioPath.replace(/\\/g, '/')}', '${language}')
+    if result['success']:
+        print(json.dumps({'success': True, 'text': result['transcript']}, ensure_ascii=False))
+    else:
+        print(json.dumps({'success': False, 'error': result['error']}, ensure_ascii=False))
+except Exception as e:
+    print(json.dumps({'success': False, 'error': str(e)}, ensure_ascii=False))
+`;
+    const tempScript = path.join(process.cwd(), 'temp', `whisper_frag_${Date.now()}.py`);
+    fs.mkdirSync(path.dirname(tempScript), { recursive: true });
+    fs.writeFileSync(tempScript, pythonScript, 'utf8');
+
+    const proc = spawn('python', [tempScript], {
+      env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' }
+    });
+    let stdout = '';
+    proc.stdout.on('data', d => stdout += d.toString());
+    proc.stderr.on('data', () => {});
+    proc.on('close', () => {
+      try { fs.unlinkSync(tempScript); } catch {}
+      try {
+        // Find the JSON line in output
+        const lines = stdout.split('\n').filter(l => l.trim().startsWith('{'));
+        if (lines.length > 0) {
+          const result = JSON.parse(lines[lines.length - 1]);
+          if (result.success) {
+            resolve(result.text);
+          } else {
+            reject(new Error(result.error || 'Whisper failed'));
+          }
+        } else {
+          reject(new Error('No JSON output from Whisper'));
+        }
+      } catch (e) {
+        reject(new Error(`Parse error: ${e.message}`));
+      }
+    });
+    proc.on('error', reject);
+  });
+}
+
+/**
+ * Transcribe audio with segment timestamps using local Whisper
+ * Returns array of segments with start, end, text
+ */
+async function transcribeAudioWithSegments(audioPath, language = 'es') {
+  return new Promise((resolve, reject) => {
+    const pythonScript = `
+# -*- coding: utf-8 -*-
+import sys, json, os
+if sys.platform == 'win32':
+    import codecs
+    sys.stdout = codecs.getwriter('utf-8')(sys.stdout.detach())
+sys.path.append('${process.cwd().replace(/\\/g, '/')}')
+from whisper_local import whisper_local
+
+try:
+    if not whisper_local.is_loaded:
+        whisper_local.load_model('medium')
+    result = whisper_local.transcribe_audio(r'${audioPath.replace(/\\/g, '/')}', '${language}')
+    if result['success']:
+        print(json.dumps({
+            'success': True, 
+            'segments': result.get('segments', []),
+            'transcript': result.get('transcript', '')
+        }, ensure_ascii=False))
+    else:
+        print(json.dumps({'success': False, 'error': result['error']}, ensure_ascii=False))
+except Exception as e:
+    print(json.dumps({'success': False, 'error': str(e)}, ensure_ascii=False))
+`;
+    const tempScript = path.join(process.cwd(), 'temp', `whisper_seg_${Date.now()}.py`);
+    fs.mkdirSync(path.dirname(tempScript), { recursive: true });
+    fs.writeFileSync(tempScript, pythonScript, 'utf8');
+
+    const proc = spawn('python', [tempScript], {
+      env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' }
+    });
+    let stdout = '';
+    proc.stdout.on('data', d => stdout += d.toString());
+    proc.stderr.on('data', () => {});
+    proc.on('close', () => {
+      try { fs.unlinkSync(tempScript); } catch {}
+      try {
+        const lines = stdout.split('\n').filter(l => l.trim().startsWith('{'));
+        if (lines.length > 0) {
+          const result = JSON.parse(lines[lines.length - 1]);
+          if (result.success) {
+            resolve({ segments: result.segments || [], transcript: result.transcript || '' });
+          } else {
+            reject(new Error(result.error || 'Whisper failed'));
+          }
+        } else {
+          reject(new Error('No JSON output from Whisper'));
+        }
+      } catch (e) {
+        reject(new Error(`Parse error: ${e.message}`));
+      }
+    });
+    proc.on('error', reject);
+  });
+}
+
+/**
+ * Use Gemini to analyze transcription and generate a smart visual prompt for HolaVideo
+ */
+async function generateVisualPromptFromTranscription(transcription, styleInstructions = '') {
+  // Build the user style instruction section
+  const styleSection = styleInstructions 
+    ? `\n\nIMPORTANTE: El usuario quiere este ESTILO VISUAL específico: "${styleInstructions}". Incorpora estos elementos en tu prompt.`
+    : '';
+
+  // Few-shot prompt más directo - el modelo tiende a seguir el patrón establecido
+  const inputPrompt = `Convierte esta narración en UN prompt visual corto (1-2 oraciones) para una animación. Solo responde con el prompt, nada más.${styleSection}
+
+Narración: "El 15 de noviembre de 2019 ocurrió el evento"
+Prompt: Fecha '15 de noviembre de 2019' apareciendo con efecto typewriter sobre fondo negro con partículas brillantes
+
+Narración: "Un hombre misterioso encapuchado apareció en la plaza"
+Prompt: Silueta oscura encapuchada emergiendo de sombras púrpuras con niebla y destellos rojos
+
+Narración: "El precio del bitcoin llegó a 50000 dólares"
+Prompt: Gráfico de línea verde subiendo dramáticamente con monedas doradas de bitcoin flotando
+
+Narración: "${transcription.slice(0, 300)}"
+Prompt:`;
+  
+  // LOG: Mostrar transcripción completa
+  console.log(`\n📝 ═══ TRANSCRIPCIÓN WHISPER ═══`);
+  console.log(transcription);
+  console.log(`═══ FIN TRANSCRIPCIÓN (${transcription.length} chars) ═══\n`);
+  
+  if (styleInstructions) {
+    console.log(`🎨 ═══ INSTRUCCIONES DE ESTILO ═══`);
+    console.log(styleInstructions);
+    console.log(`═══ FIN INSTRUCCIONES ═══\n`);
+  }
+
+  try {
+    let result = await generateTextWithLLM(inputPrompt, {
+      provider: 'gemini',
+      model: 'gemini-3.1-flash-lite',
+      retries: 4,
+      forcePrimary: false
+    });
+    
+    // LOG: Mostrar respuesta cruda de Gemini
+    console.log(`\n🤖 ═══ RESPUESTA CRUDA GEMINI ═══`);
+    console.log(result);
+    console.log(`═══ FIN RESPUESTA (${result.length} chars) ═══\n`);
+    
+    // Aggressive cleanup - el modelo a veces devuelve respuestas largas
+    result = result.trim();
+    
+    // Si la respuesta es muy larga (>400 chars), probablemente ignoró el few-shot
+    // En ese caso, intentar extraer algo útil
+    if (result.length > 400) {
+      // Buscar la primera línea que parezca un prompt visual (no empieza con palabras de preámbulo)
+      const lines = result.split('\n').map(l => l.trim()).filter(l => l.length > 20);
+      for (const line of lines) {
+        const lowerLine = line.toLowerCase();
+        // Saltar líneas que son claramente explicaciones
+        if (lowerLine.startsWith('aquí') || lowerLine.startsWith('para') || 
+            lowerLine.startsWith('la imagen') || lowerLine.startsWith('descripción') ||
+            lowerLine.startsWith('**') || lowerLine.startsWith('*') ||
+            lowerLine.includes('propuesta') || lowerLine.includes('indicación')) {
+          continue;
+        }
+        // Esta línea parece ser contenido útil
+        result = line;
+        break;
+      }
+    }
+    
+    // Remove markdown formatting
+    result = result.replace(/\*\*/g, '');
+    result = result.replace(/###?\s*[^\n]*/g, '');
+    result = result.replace(/^>\s*/gm, '');
+    result = result.replace(/`/g, '');
+    
+    // If the entire result is a quoted string, unwrap it
+    const promptMatch = result.match(/^"([^"]{20,490})"\.?\s*$/);
+    if (promptMatch) {
+      result = promptMatch[1];
+    } else {
+      // Remove common preambles
+      const preambles = [
+        /^(prompt:\s*)/gi,
+        /^(aquí tienes|aquí está|este es|el prompt|prompt:?|output:?|opci[oó]n \d+:?|descripci[oó]n visual:?)\s*/gi,
+        /^(para (generar|capturar|crear|representar|visualizar)[^.]*[.,]?\s*)/gi,
+        /^(una imagen|un video|una animación) (que|de)\s*/gi,
+        /^(varias opciones[^:]*:?\s*)/gi,
+        /^(estilo[^:]*:?\s*)/gi,
+        /^(una propuesta[^:]*:?\s*)/gi,
+      ];
+      for (const re of preambles) {
+        result = result.replace(re, '');
+      }
+      
+      // If still too long, the model probably ignored the few-shot completely
+      // Create a simple fallback prompt from the transcription
+      if (result.length > 700) {
+        console.log(`⚠️ Respuesta de Gemini demasiado larga, usando fallback basado en transcripción`);
+        // Extract key elements from transcription for a basic prompt
+        const transLower = transcription.toLowerCase();
+        let fallbackPrompt = '';
+        
+        // Detect dates
+        const dateMatch = transcription.match(/(\d{1,2}\s+de\s+\w+\s+(del?\s+)?\d{4}|\d{4})/i);
+        if (dateMatch) {
+          fallbackPrompt = `Fecha '${dateMatch[0]}' apareciendo con efecto typewriter sobre fondo negro oscuro`;
+        }
+        // Detect names/usernames
+        else if (transLower.includes('usuario') || transLower.includes('seudónimo')) {
+          const nameMatch = transcription.match(/(?:usuario|seudónimo|nombre)[^a-z]*([A-Z][a-zA-Z0-9\s]+)/i);
+          fallbackPrompt = `Pantalla de computadora retro mostrando el texto '${nameMatch ? nameMatch[1].trim() : 'usuario'}' en un foro de internet antiguo, luz azul en cuarto oscuro`;
+        }
+        // Detect locations
+        else if (transLower.includes('florida') || transLower.includes('estados unidos') || transLower.includes('ciudad')) {
+          fallbackPrompt = `Escena nocturna urbana con luces de ciudad, atmósfera misteriosa con tonos azules y naranjas`;
+        }
+        // Generic fallback
+        else {
+          fallbackPrompt = `Escena atmosférica con tonos azules y púrpuras, elementos abstractos flotando, ambiente misterioso`;
+        }
+        
+        result = fallbackPrompt;
+      }
+    }
+    
+    // Clean up extra whitespace
+    result = result.replace(/\s+/g, ' ').trim();
+    
+    // Capitalize first letter
+    if (result.length > 0) {
+      result = result.charAt(0).toUpperCase() + result.slice(1);
+    }
+    
+    // Truncate to max 500 chars for cleaner prompts
+    if (result.length > 500) {
+      result = result.slice(0, 497) + '...';
+    }
+    
+    // LOG: Mostrar prompt final limpio
+    console.log(`\n✨ ═══ PROMPT FINAL PARA HOLAVIDEO ═══`);
+    console.log(result);
+    console.log(`═══ FIN PROMPT (${result.length} chars) ═══\n`);
+    
+    return result.trim();
+  } catch (err) {
+    console.warn(`⚠️ Error generando prompt visual con LLM, usando fallback: ${err.message}`);
+    // Fallback: prompt genérico corto
+    return `Animación abstracta con formas geométricas y colores vibrantes representando el tema narrado.`;
+  }
+}
+
+/**
+ * Analyze a downloaded image with Gemini vision to decide relevance and integration approach.
+ * Returns null if analysis fails or all free keys exhausted.
+ */
+async function analyzeImageForClip(imagePath, transcription) {
+  let imageBuffer;
+  try { imageBuffer = fs.readFileSync(imagePath); } catch { return null; }
+  const base64Data = imageBuffer.toString('base64');
+  const ext = path.extname(imagePath).toLowerCase();
+  const mimeType = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+
+  const textPrompt = `Transcripción del clip de video: "${transcription.slice(0, 200)}"
+
+Analiza esta imagen y responde SOLO con JSON válido (sin markdown ni código fences):
+{
+  "isRelevant": true,
+  "relevanceScore": 8,
+  "description": "descripción breve de qué muestra la imagen (1-2 oraciones en español)",
+  "suggestedUse": "element",
+  "integrationNotes": "cómo integrar visualmente en animación Remotion (ej: aparece desde abajo con fade-in, flota en esquina, ocupa fondo con blur...)"
+}
+
+Valores de suggestedUse:
+- "background": foto de escena, paisaje, ciudad, lugar — úsala como fondo completo
+- "element": objeto, persona, animal, vehículo reconocible — colócala como elemento protagonista con animación
+- "icon": ícono, logo, símbolo, gráfico simple — colócala flotando con animación de escala/giro
+
+Sé estricto con isRelevant: false si la imagen no tiene relación real con el tema del clip.`;
+
+  try {
+    const { model: aiModel } = await getGoogleAI('gemini-3.1-flash-lite', { context: 'llm' });
+    const result = await aiModel.generateContent([
+      { inlineData: { mimeType, data: base64Data } },
+      textPrompt
+    ]);
+    const response = await result.response;
+    const text = response.text().trim().replace(/^```json?\n?/m, '').replace(/```$/m, '').trim();
+    const analysis = JSON.parse(text);
+    console.log(`🔍 Análisis imagen: relevante=${analysis.isRelevant} (${analysis.relevanceScore}/10), uso=${analysis.suggestedUse} — ${analysis.description}`);
+    return analysis;
+  } catch (err) {
+    console.warn(`⚠️ analyzeImageForClip falló: ${err.message?.slice(0, 100)}`);
+    return null;
+  }
+}
+
+/**
+ * Call HolaVideo server to generate an AI video clip
+ */
+async function generateRemotionClip(transcription, durationSeconds, outputPath, styleInstructions = '', model = '', styleContext = '', isVertical = false, imageAsset = null) {
+  const HOLAVIDEO_URL = process.env.HOLAVIDEO_URL || 'http://localhost:4000';
+  const vidWidth = isVertical ? 720 : 1280;
+  const vidHeight = isVertical ? 1280 : 720;
+
+  const visualPrompt = await generateVisualPromptFromTranscription(transcription, styleInstructions);
+
+  const modelLabel = model === 'flash' ? 'Flash' : model === 'ollama' ? 'Ollama/local' : 'Lite';
+  console.log(`🎬 Llamando a HolaVideo [${modelLabel}]: "${visualPrompt.slice(0, 80)}..." (${durationSeconds}s)`);
+  const assetList = imageAsset?.assets || [];
+  if (assetList.length) console.log(`🖼️ Con ${assetList.length} asset(s): ${assetList.map(a => a.relativePath).join(', ')}`);
+
+  const MAX_ATTEMPTS = 4;
+  const RETRY_DELAYS = [5000, 10000, 20000];
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const response = await fetch(`${HOLAVIDEO_URL}/api/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: visualPrompt, duration: Math.ceil(durationSeconds), model: model || '', styleContext: styleContext || '', width: vidWidth, height: vidHeight, assets: assetList.map(a => ({ filename: a.publicFilename, use: a.suggestedUse, position: a.position, size: a.size, animation: a.animation, opacity: a.opacity, label: a.label })) })
+      });
+
+      if (response.status === 429) {
+        const waitMs = RETRY_DELAYS[attempt - 1] || 20000;
+        console.warn(`⏳ HolaVideo ocupado, reintentando en ${waitMs / 1000}s... (intento ${attempt}/${MAX_ATTEMPTS})`);
+        await new Promise(r => setTimeout(r, waitMs));
+        continue;
+      }
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.error || `HolaVideo respondió ${response.status}`);
+      }
+
+      const data = await response.json();
+      if (!data.success || !data.videoUrl) throw new Error('HolaVideo no devolvió URL de video');
+
+      const videoResponse = await fetch(`${HOLAVIDEO_URL}${data.videoUrl}`);
+      if (!videoResponse.ok) throw new Error('No se pudo descargar el video generado');
+
+      const videoBuffer = Buffer.from(await videoResponse.arrayBuffer());
+      fs.writeFileSync(outputPath, videoBuffer);
+
+      console.log(`✅ AI clip generado: ${path.basename(outputPath)}`);
+      return { success: true, visualPrompt, generatedCode: data.code || '' };
+
+    } catch (err) {
+      // Error de conexión (servidor caído/reiniciando)
+      if (err.code === 'ECONNREFUSED' || err.message?.includes('failed, reason')) {
+        const waitMs = RETRY_DELAYS[attempt - 1] || 20000;
+        console.warn(`⏳ HolaVideo no responde (intento ${attempt}/${MAX_ATTEMPTS}), reintentando en ${waitMs / 1000}s...`);
+        await new Promise(r => setTimeout(r, waitMs));
+        continue;
+      }
+      console.error(`⚠️ Error generando AI clip: ${err.message}`);
+      throw err;
+    }
+  }
+
+  throw new Error('HolaVideo no respondió después de varios intentos. Verifica que esté corriendo.');
+}
+
+/**
+ * Calculate the timestamp range for a clip within its section's audio
+ */
+function calculateClipTimestamps(clips, clipIndex) {
+  const clip = clips[clipIndex];
+  // Si el clip tiene timestamps reales de Whisper, usarlos directamente
+  if (typeof clip.audioStart === 'number') {
+    return { startTime: clip.audioStart, duration: clip.duration };
+  }
+  // Fallback: sumar duraciones anteriores
+  let startTime = 0;
+  for (let i = 0; i < clipIndex; i++) {
+    startTime += clips[i].duration;
+  }
+  return { startTime, duration: clip.duration };
+}
+
+/**
+ * Crea un clip de video con texto animado sobre fondo oscuro.
+ * Efecto: texto aparece con fade-in palabra por palabra (kinetic typography lite).
+ * @param {object} textConfig - { text, duration, fontSize, fontColor, bgColor, animation }
+ * @param {string} outputPath - Ruta del MP4 de salida
+ * @param {object} cfg - { resolution: '1920:1080', crf, preset }
+ */
+function crearClipDesdeTexto(textConfig, outputPath, cfg = {}) {
+  const [w, h] = (cfg.resolution || '1920:1080').split(':');
+  const crf = String(cfg.crf || 23);
+  const preset = cfg.preset || 'fast';
+  const {
+    text = '',
+    duration = 5,
+    fontSize = 64,
+    fontColor = 'white',
+    bgColor = '#0a0a0a',
+    animation = 'fade', // 'fade' | 'typewriter' | 'none'
+    bgImage = null, // optional background image path
+    bgBlur = 20, // blur amount for bg image
+    lineSpacing = 20,
+    fontFile = null // optional .ttf path
+  } = textConfig;
+
+  // Sanitize text for FFmpeg drawtext - escape chars that break filter parsing
+  function escapeDrawtext(str) {
+    return str
+      .replace(/\\/g, '\\\\')
+      .replace(/'/g, '\u2019')
+      .replace(/:/g, '\\:')
+      .replace(/;/g, '\\;')
+      .replace(/,/g, '\\,')
+      .replace(/\[/g, '\\[')
+      .replace(/\]/g, '\\]')
+      .replace(/%/g, '%%')
+      .replace(/\n/g, '\\n');
+  }
+
+  // Normalize fontColor: convert #hex to 0xhex for FFmpeg
+  const ffColor = fontColor.startsWith('#') ? '0x' + fontColor.slice(1) : fontColor;
+
+  // Calculate text wrapping
+  const charsPerLine = Math.floor(parseInt(w) / (fontSize * 0.55));
+  const words = text.split(' ');
+  const wrappedLines = [];
+  let currentLine = '';
+  for (const word of words) {
+    if ((currentLine + ' ' + word).trim().length > charsPerLine) {
+      if (currentLine) wrappedLines.push(currentLine.trim());
+      currentLine = word;
+    } else {
+      currentLine = currentLine ? currentLine + ' ' + word : word;
+    }
+  }
+  if (currentLine) wrappedLines.push(currentLine.trim());
+
+  const wrappedText = wrappedLines.join('\n');
+  const sanitized = escapeDrawtext(wrappedText);
+
+  const fps = 30;
+  const inputs = [];
+  let filterComplex = '';
+
+  if (bgImage && fs.existsSync(bgImage)) {
+    // Input 0: bg image, Input 1: color for overlay
+    inputs.push('-loop', '1', '-t', String(duration), '-i', bgImage);
+    inputs.push('-f', 'lavfi', '-i', `color=black@0.55:s=${w}x${h}:d=${duration}:r=${fps}`);
+    filterComplex += `[0:v]scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},boxblur=${bgBlur}:${bgBlur},colorbalance=bs=-0.3:bm=-0.3:bh=-0.3[bg];`;
+    filterComplex += `[bg][1:v]overlay=0:0[base];`;
+  } else {
+    // Single lavfi color input
+    inputs.push('-f', 'lavfi', '-i', `color=c=${bgColor.replace('#', '0x')}:s=${w}x${h}:d=${duration}:r=${fps}`);
+    filterComplex += `[0:v]copy[base];`;
+  }
+
+  // Build drawtext based on animation
+  if (animation === 'fade') {
+    const fadeInDur = Math.min(1.5, duration * 0.25);
+    // Use alpha option for fade instead of embedded expression in fontcolor
+    let dt = `drawtext=text='${sanitized}'`;
+    dt += `:fontsize=${fontSize}`;
+    dt += `:fontcolor=${ffColor}`;
+    dt += `:alpha='if(lt(t\\,${fadeInDur})\\,t/${fadeInDur}\\,1)'`;
+    dt += `:x=(w-text_w)/2:y=(h-text_h)/2`;
+    dt += `:line_spacing=${lineSpacing}`;
+    if (fontFile && fs.existsSync(fontFile)) {
+      dt += `:fontfile='${fontFile.replace(/\\/g, '/').replace(/:/g, '\\:')}'`;
+    }
+    filterComplex += `[base]${dt}[out]`;
+
+  } else if (animation === 'typewriter') {
+    const wordsArr = text.split(' ');
+    const wordInterval = Math.min(0.4, (duration * 0.7) / wordsArr.length);
+    let chain = '[base]';
+
+    for (let i = 0; i < wordsArr.length; i++) {
+      const partial = wordsArr.slice(0, i + 1).join(' ');
+      // Wrap partial text
+      const pLines = [];
+      let pLine = '';
+      for (const w2 of partial.split(' ')) {
+        if ((pLine + ' ' + w2).trim().length > charsPerLine) {
+          pLines.push(pLine.trim());
+          pLine = w2;
+        } else {
+          pLine = pLine ? pLine + ' ' + w2 : w2;
+        }
+      }
+      if (pLine) pLines.push(pLine.trim());
+      const pSanitized = escapeDrawtext(pLines.join('\n'));
+
+      const tStart = (i * wordInterval).toFixed(3);
+      const tEnd = i === wordsArr.length - 1 ? duration.toFixed(3) : ((i + 1) * wordInterval).toFixed(3);
+
+      let dt = `drawtext=text='${pSanitized}'`;
+      dt += `:fontsize=${fontSize}:fontcolor=${ffColor}`;
+      dt += `:x=(w-text_w)/2:y=(h-text_h)/2`;
+      dt += `:line_spacing=${lineSpacing}`;
+      dt += `:enable='between(t\\,${tStart}\\,${tEnd})'`;
+      if (fontFile && fs.existsSync(fontFile)) {
+        dt += `:fontfile='${fontFile.replace(/\\/g, '/').replace(/:/g, '\\:')}'`;
+      }
+      chain += dt + (i < wordsArr.length - 1 ? ',' : '');
+    }
+    filterComplex += `${chain}[out]`;
+
+  } else {
+    // No animation - static text
+    let dt = `drawtext=text='${sanitized}'`;
+    dt += `:fontsize=${fontSize}:fontcolor=${ffColor}`;
+    dt += `:x=(w-text_w)/2:y=(h-text_h)/2`;
+    dt += `:line_spacing=${lineSpacing}`;
+    if (fontFile && fs.existsSync(fontFile)) {
+      dt += `:fontfile='${fontFile.replace(/\\/g, '/').replace(/:/g, '\\:')}'`;
+    }
+    filterComplex += `[base]${dt}[out]`;
+  }
+
+  return new Promise((resolve, reject) => {
+    const finalArgs = [
+      '-y',
+      ...inputs,
+      '-filter_complex', filterComplex,
+      '-map', '[out]',
+      '-t', String(duration),
+      '-c:v', 'libx264',
+      '-preset', preset,
+      '-crf', crf,
+      '-r', String(fps),
+      '-pix_fmt', 'yuv420p',
+      '-an',
+      outputPath
+    ];
+
+    console.log(`📝 Generando text clip: "${text.slice(0, 50)}..." (${duration}s, ${animation})`);
+    console.log(`📝 Filter: ${filterComplex}`);
+    const proc = spawn('ffmpeg', finalArgs);
+    let stderr = '';
+    proc.stderr.on('data', d => stderr += d.toString());
+    proc.on('close', code => {
+      if (code === 0) {
+        console.log(`✅ Text clip generado: ${path.basename(outputPath)}`);
+        resolve();
+      } else {
+        console.error(`⚠️ ffmpeg text clip falló (code ${code}): ${stderr.slice(-500)}`);
+        resolve(); // Don't reject - let pipeline continue
+      }
+    });
+    proc.on('error', err => {
+      console.error('⚠️ ffmpeg spawn error (text clip):', err.message);
+      resolve();
+    });
+  });
+}
+
+function extendVideoFreezeFrame(inputPath, targetDur, outputPath, cfg = {}) {
+  const crf = String(cfg.crf || 23);
+  const preset = cfg.preset || 'fast';
+  return new Promise((resolve, reject) => {
+    const args = [
+      '-y', '-i', inputPath,
+      '-vf', `tpad=stop_mode=clone:stop_duration=${targetDur}`,
+      '-t', String(targetDur),
+      '-c:v', 'libx264', '-preset', preset, '-crf', crf,
+      '-r', '30', '-pix_fmt', 'yuv420p',
+      '-an', outputPath
+    ];
+    const proc = spawn('ffmpeg', args);
+    let stderr = '';
+    proc.stderr.on('data', d => stderr += d.toString());
+    proc.on('close', code => code === 0 ? resolve() : reject(new Error(`Freeze extend failed: ${stderr.slice(-200)}`)));
+    proc.on('error', reject);
+  });
+}
+
+const XFADE_TRANSITIONS = [
+  'fade', 'fadeblack', 'fadewhite',
+  'wipeleft', 'wiperight', 'wipeup', 'wipedown',
+  'slideleft', 'slideright',
+  'circlecrop', 'radial', 'zoomin',
+  'hblur', 'squeezeh', 'pixelize', 'dissolve'
+];
+
+function randomXfadeTransition() {
+  return XFADE_TRANSITIONS[Math.floor(Math.random() * XFADE_TRANSITIONS.length)];
+}
+
+function applyXfadeTransitions(clipPaths, transitions, outputPath, D = 0.4) {
+  return new Promise(async (resolve, reject) => {
+    if (clipPaths.length < 2) return reject(new Error('applyXfadeTransitions requiere al menos 2 clips'));
+    const durations = [];
+    for (const p of clipPaths) durations.push(await getMediaDuration(p));
+
+    const inputs = clipPaths.flatMap(p => ['-i', p]);
+    const parts = [];
+    let prevLabel = '[0:v]';
+    let offset = 0;
+
+    for (let i = 0; i < transitions.length; i++) {
+      const transition = transitions[i] || 'fade';
+      offset += durations[i] - D;
+      const isLast = i === transitions.length - 1;
+      const outLabel = isLast ? '[vout]' : `[v${i}]`;
+      parts.push(`${prevLabel}[${i + 1}:v]xfade=transition=${transition}:duration=${D}:offset=${offset.toFixed(3)}${outLabel}`);
+      prevLabel = outLabel;
+    }
+
+    const args = [
+      '-y', ...inputs,
+      '-filter_complex', parts.join(';'),
+      '-map', '[vout]',
+      '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+      '-r', '30', '-pix_fmt', 'yuv420p', '-an',
+      outputPath
+    ];
+    const proc = spawn('ffmpeg', args);
+    let stderr = '';
+    proc.stderr.on('data', d => stderr += d.toString());
+    proc.on('close', code => code === 0 ? resolve() : reject(new Error(`xfade falló (${code}): ${stderr.slice(-400)}`)));
+    proc.on('error', reject);
+  });
+}
+
+// Concat clips handling mixed transitions (null = hard cut, string = xfade)
+async function concatenarClipsConTransiciones(clipPaths, transitions, outputPath, cfg = {}, D = 0.4) {
+  if (clipPaths.length === 1) {
+    const args = ['-y', '-i', clipPaths[0], '-c', 'copy', outputPath];
+    return new Promise((res, rej) => {
+      const p = spawn('ffmpeg', args);
+      p.on('close', c => c === 0 ? res() : rej(new Error('copy single clip failed')));
+      p.on('error', rej);
+    });
+  }
+  if (!transitions || !transitions.some(t => t)) return concatenarClipsBroll(clipPaths, outputPath);
+
+  // Split into runs separated by null (hard cut) transitions
+  const runs = [];
+  let cur = [0];
+  for (let i = 0; i < transitions.length; i++) {
+    if (transitions[i]) { cur.push(i + 1); }
+    else { runs.push(cur); cur = [i + 1]; }
+  }
+  runs.push(cur);
+
+  const tempDir = path.dirname(outputPath);
+  const runPaths = [];
+  const tempFiles = [];
+
+  for (const run of runs) {
+    if (run.length === 1) {
+      runPaths.push(clipPaths[run[0]]);
+    } else {
+      const runClips = run.map(i => clipPaths[i]);
+      const runTrans = run.slice(0, -1).map(i => transitions[i]);
+      const runOut = path.join(tempDir, `xfrun_${run[0]}_${Date.now()}.mp4`);
+      await applyXfadeTransitions(runClips, runTrans, runOut, D);
+      runPaths.push(runOut);
+      tempFiles.push(runOut);
+    }
+  }
+
+  if (runPaths.length === 1) {
+    fs.renameSync(runPaths[0], outputPath);
+    tempFiles.splice(tempFiles.indexOf(runPaths[0]), 1);
+  } else {
+    await concatenarClipsBroll(runPaths, outputPath);
+  }
+
+  for (const f of tempFiles) { try { fs.unlinkSync(f); } catch {} }
+}
+
 function concatenarClipsBroll(clipPaths, outputPath) {
   return new Promise((resolve, reject) => {
     const listFile = path.join(path.dirname(outputPath), `concat_${Date.now()}_${Math.random().toString(36).slice(2,6)}.txt`);
@@ -18569,6 +19969,7 @@ function mergeVideoAudioBroll(videoPath, audioPath, outputPath) {
       '-c:v', 'copy',
       '-c:a', 'aac',
       '-b:a', '192k',
+      '-shortest',
       outputPath
     ];
 
@@ -20541,63 +21942,34 @@ app.post('/api/generate-folder-name', async (req, res) => {
   }
 
   try {
-    const { model: aiModel } = await getGoogleAI('gemini-3.1-flash-lite', { context: 'folder-name' });
+    // Generar nombre con LLM usando la función centralizada (gemini-2.5-flash con retries)
+    const topicFallback = createSafeFolderName(topic);
+    const generatedName = await generateShortProjectName(topic);
 
-    const prompt = `Tu tarea es inventar un TÍTULO CORTO y CREATIVO para un proyecto de video basado en el tema descrito abajo.
-
-REGLAS ESTRICTAS:
-- Exactamente 2 a 4 palabras
-- Debe ser un título descriptivo y creativo que resuma el TEMA CENTRAL (NO copies las primeras palabras del texto)
-- Escríbelo en snake_case (palabras separadas por guión bajo)
-- Solo usa letras minúsculas del alfabeto inglés (a-z), números y guiones bajos
-- Convierte acentos a su versión sin acento (á→a, é→e, í→i, ó→o, ú→u, ñ→n)
-- NO incluyas comillas, explicaciones ni nada más, SOLO el nombre
-
-EJEMPLOS:
-- Tema sobre juegos tristes de PS1 → "juegos_oscuros_ps1"
-- Tema sobre la historia de Link en Zelda → "lore_link_zelda"
-- Tema sobre monturas eliminadas de WoW → "monturas_perdidas_wow"
-- Tema sobre secretos de Dark Souls → "secretos_dark_souls"
-
-TEMA:
-${topic.slice(0, 500)}`;
-
-    const result = await aiModel.generateContent(prompt);
-    let name = result.response.text().trim()
-      .toLowerCase()
-      .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // quitar acentos
-      .replace(/[^a-z0-9_\s]/g, '')
-      .replace(/\s+/g, '_')
-      .replace(/_+/g, '_') // evitar doble guión bajo
-      .replace(/^_|_$/g, '') // quitar guiones al inicio/final
-      .slice(0, 50);
-
-    if (!name || name.length < 3) {
-      name = topic.slice(0, 40).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, '_').slice(0, 30);
-    }
+    // Detectar si el LLM realmente generó un nombre creativo o si cayó al fallback del topic
+    const aiGenerated = generatedName !== topicFallback;
 
     // Verificar que no exista ya una carpeta con ese nombre
-    let finalName = name;
+    let finalName = generatedName;
     let suffix = 2;
     while (fs.existsSync(path.join(globalOutputDir, finalName))) {
-      finalName = `${name}_${suffix}`;
+      finalName = `${generatedName}_${suffix}`;
       suffix++;
     }
 
-    console.log(`📁 Nombre de carpeta generado: "${finalName}" (tema: "${topic.slice(0, 50)}...")`);
-    res.json({ name: finalName });
+    console.log(`📁 Nombre de carpeta generado${aiGenerated ? ' (IA)' : ' (fallback)'}: "${finalName}" (tema: "${topic.slice(0, 50)}...")`);
+    res.json({ name: finalName, aiGenerated });
   } catch (err) {
     // Fallback: sanitizar el topic directamente
-    let fallback = topic.slice(0, 40).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, '_').slice(0, 30);
-    // Verificar que no exista
-    let finalFallback = fallback || 'proyecto_nuevo';
+    let fallback = createSafeFolderName(topic) || 'proyecto_nuevo';
+    let finalFallback = fallback;
     let suffix = 2;
     while (fs.existsSync(path.join(globalOutputDir, finalFallback))) {
-      finalFallback = `${fallback || 'proyecto_nuevo'}_${suffix}`;
+      finalFallback = `${fallback}_${suffix}`;
       suffix++;
     }
     console.log(`📁 Fallback nombre de carpeta: "${finalFallback}"`);
-    res.json({ name: finalFallback });
+    res.json({ name: finalFallback, aiGenerated: false });
   }
 });
 
@@ -21500,6 +22872,31 @@ app.listen(PORT, '0.0.0.0', async () => {
     createSafeFolderName,
     brollVideoProgress
   });
+
+  // Iniciar servidor de HolaVideo con auto-restart
+  const holavideoDir = path.join(__dirname, 'holavideo');
+  let _holavideoProc = null;
+  function startHolaVideo() {
+    _holavideoProc = spawn('npx', ['tsx', 'scripts/server.ts'], {
+      cwd: holavideoDir,
+      env: { ...process.env },
+      stdio: 'inherit',
+      shell: true,
+    });
+    _holavideoProc.on('error', (err) => {
+      console.warn('⚠️ HolaVideo no pudo iniciar:', err.message);
+      console.warn('   Asegúrate de haber corrido: cd holavideo && npm install');
+    });
+    _holavideoProc.on('exit', (code) => {
+      if (code !== 0 && code !== null) {
+        console.warn(`⚠️ HolaVideo se cerró (código ${code}), reiniciando en 3s...`);
+        setTimeout(startHolaVideo, 3000);
+      }
+    });
+  }
+  startHolaVideo();
+  console.log('🎬 HolaVideo iniciando en http://localhost:4000');
+  process.on('exit', () => _holavideoProc?.kill());
 });
 
 // Manejadores para cerrar ComfyUI y Applio cuando la aplicación se cierre

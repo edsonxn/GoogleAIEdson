@@ -60,10 +60,10 @@ class WhisperLocal:
             if torch.cuda.is_available():
                 device_name = torch.cuda.get_device_name(0)
                 memory_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3
-                # print(f"GPU detectada: {device_name} ({memory_gb:.1f} GB)") # Comentado para no ensuciar JSON
+                print(f"[Whisper] GPU detectada: {device_name} ({memory_gb:.1f} GB)", file=__import__('sys').stderr)
                 return "cuda"
             else:
-                # print("Usando CPU (GPU no disponible)")
+                print("[Whisper] CUDA no disponible, usando CPU", file=__import__('sys').stderr)
                 return "cpu"
         except Exception:
             return "cpu"
@@ -108,7 +108,7 @@ class WhisperLocal:
             final_device = force_device or settings["device"]
             final_compute_type = settings["compute_type"]
             
-            # print(f"Cargando modelo Whisper '{final_model_size}' en {final_device}...")
+            print(f"[Whisper] Cargando '{final_model_size}' en {final_device} ({final_compute_type})...", file=__import__('sys').stderr)
             start_time = time.time()
             
             # Cargar modelo
@@ -120,7 +120,7 @@ class WhisperLocal:
             )
             
             load_time = time.time() - start_time
-            # print(f"Modelo cargado en {load_time:.2f} segundos")
+            print(f"[Whisper] Modelo cargado en {load_time:.1f}s", file=__import__('sys').stderr)
             
             # Guardar configuración actual
             self.model_size = final_model_size

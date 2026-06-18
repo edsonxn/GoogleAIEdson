@@ -766,90 +766,93 @@
             <input type="number" id="brollValidations" class="field-input" value="0" min="0" max="5">
           </div>
 
-
         </div>
 
-        <!-- Columna 4: Video Final -->
+        <!-- Columna 4: Remotion IA -->
         <div class="config-column">
-          <h3 class="column-title"><i class="fas fa-clapperboard"></i> Video Final</h3>
+          <!-- Hidden inputs keeping Video Final defaults so JS reads them without errors -->
+          <input type="hidden" id="videoMaxImagesPerSection" value="0">
+          <input type="hidden" id="videoImageDuration" value="5">
+          <input type="hidden" id="videoMinClipDuration" value="4">
+          <input type="hidden" id="videoMaxClipDuration" value="10">
+          <input type="hidden" id="videoMinResolution" value="720">
+          <input type="hidden" id="videoOutputResolution" value="1920:1080">
+          <input type="hidden" id="videoCRF" value="23">
+          <input type="hidden" id="videoPreset" value="slow">
+          <input type="hidden" id="autoGenerateBrollVideo">
+
+          <h3 class="column-title"><i class="fas fa-robot"></i> Remotion IA</h3>
 
           <div class="field-group">
-            <label for="videoMaxImagesPerSection" class="field-label">
-              <i class="fas fa-images"></i> Máx imágenes/sección
-            </label>
-            <input type="number" id="videoMaxImagesPerSection" class="field-input" value="0" min="0" max="5">
+            <div style="display:flex; align-items:center; justify-content:space-between;">
+              <label class="field-label" style="margin-bottom:0;">
+                <i class="fas fa-film"></i> Transiciones entre clips
+              </label>
+              <label class="tl-style-toggle" title="Agrega transiciones aleatorias entre clips al generar el preview">
+                <input type="checkbox" id="brollUseTransitionsToggle" checked>
+                <span class="tl-style-toggle-track"><span class="tl-style-toggle-thumb"></span></span>
+                <span class="tl-style-toggle-label">Activar</span>
+              </label>
+            </div>
           </div>
 
           <div class="field-group">
-            <label for="videoImageDuration" class="field-label">
-              <i class="fas fa-hourglass-half"></i> Duración imagen (s)
+            <label for="brollRemotionEvery" class="field-label">
+              <i class="fas fa-robot"></i> Clips Remotion IA
             </label>
-            <input type="number" id="videoImageDuration" class="field-input" value="5" min="2" max="10">
-          </div>
-
-          <div class="field-group">
-            <label for="videoMinClipDuration" class="field-label">
-              <i class="fas fa-backward"></i> Duración mín clip (s)
-            </label>
-            <input type="number" id="videoMinClipDuration" class="field-input" value="4" min="2" max="10">
-          </div>
-
-          <div class="field-group">
-            <label for="videoMaxClipDuration" class="field-label">
-              <i class="fas fa-forward"></i> Duración máx clip (s)
-            </label>
-            <input type="number" id="videoMaxClipDuration" class="field-input" value="10" min="5" max="30">
-          </div>
-
-          <div class="field-group">
-            <label for="videoMinResolution" class="field-label">
-              <i class="fas fa-filter"></i> Resolución mínima B-Roll
-            </label>
-            <select id="videoMinResolution" class="field-select">
-              <option value="0">Sin filtro</option>
-              <option value="480">480p</option>
-              <option value="720" selected>720p</option>
-              <option value="1080">1080p</option>
+            <select id="brollRemotionEvery" class="field-input">
+              <option value="0">Ninguno (solo B-roll)</option>
+              <option value="2">1 de cada 2 clips</option>
+              <option value="3">1 de cada 3 clips</option>
+              <option value="5">1 de cada 5 clips</option>
+              <option value="1">Todos con Remotion</option>
             </select>
           </div>
 
           <div class="field-group">
-            <label for="videoOutputResolution" class="field-label">
-              <i class="fas fa-tv"></i> Resolución salida
+            <label class="field-label">
+              <i class="fas fa-sliders-h"></i> Modelo &amp; Estilo IA
             </label>
-            <select id="videoOutputResolution" class="field-select">
-              <option value="1280:720">720p</option>
-              <option value="1920:1080" selected>1080p</option>
-              <option value="2560:1440">1440p</option>
-            </select>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <select id="tlAIModelSelect" class="field-input" style="flex:1;">
+                <option value="">Lite (gratis)</option>
+                <option value="flash">Flash (mejor)</option>
+                <option value="ollama">Local (Ollama)</option>
+              </select>
+              <label class="tl-style-toggle" style="flex-shrink:0;" title="Mantener el mismo estilo visual entre clips IA consecutivos">
+                <input type="checkbox" id="tlStyleContextToggle">
+                <span class="tl-style-toggle-track"><span class="tl-style-toggle-thumb"></span></span>
+                <span class="tl-style-toggle-label">Estilo fijo</span>
+              </label>
+            </div>
           </div>
 
           <div class="field-group">
-            <label for="videoCRF" class="field-label">
-              <i class="fas fa-sliders-h"></i> Calidad (CRF)
+            <label for="brollAIStyleInput" class="field-label">
+              <i class="fas fa-paint-brush"></i> Instrucciones de estilo
             </label>
-            <input type="number" id="videoCRF" class="field-input" value="23" min="18" max="28">
+            <textarea id="brollAIStyleInput" class="field-input" rows="3"
+              placeholder="Ej: fondo negro con líneas punteadas, estilo retro, colores neón..."
+              style="resize:vertical; font-size:0.75rem;"></textarea>
           </div>
 
           <div class="field-group">
-            <label for="videoPreset" class="field-label">
-              <i class="fas fa-tachometer-alt"></i> Velocidad encode
-            </label>
-            <select id="videoPreset" class="field-select">
-              <option value="ultrafast">Ultrafast (solo preview)</option>
-              <option value="fast">Fast (balanceado)</option>
-              <option value="medium">Medium (buena calidad)</option>
-              <option value="slow" selected>Slow (mejor calidad)</option>
-              <option value="slower">Slower (máxima calidad)</option>
-            </select>
-          </div>
-
-          <div class="field-group" style="margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.1);">
-            <label class="field-label" style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-              <input type="checkbox" id="autoGenerateBrollVideo" style="width: 18px; height: 18px; accent-color: #06b6d4;">
-              <i class="fas fa-magic"></i> Generar automático
-            </label>
-            <span style="font-size: 0.7rem; color: #94a3b8; margin-top: 4px; display: block;">Genera el video cuando termine la descarga de B-Roll</span>
+            <div style="display:flex; align-items:center; justify-content:space-between;">
+              <label class="field-label" style="margin-bottom:0;">
+                <i class="fas fa-folder-open"></i> Usar assets del proyecto
+              </label>
+              <label class="tl-style-toggle" title="El LLM elige automáticamente qué imagen de la carpeta assets/ usar en cada clip">
+                <input type="checkbox" id="brollAIUseImagesToggle">
+                <span class="tl-style-toggle-track"><span class="tl-style-toggle-thumb"></span></span>
+                <span class="tl-style-toggle-label">Activar</span>
+              </label>
+            </div>
+            <p style="font-size:0.7rem; color:var(--text-muted); margin:4px 0 8px;">
+              El LLM elige qué imagen de <code>assets/</code> encaja con el clip y la integra en la animación.
+            </p>
+            <button type="button" onclick="openAssetsFolder()" class="tl-assets-btn">
+              <i class="fas fa-folder"></i> Abrir carpeta assets
+            </button>
           </div>
         </div>
       </div>

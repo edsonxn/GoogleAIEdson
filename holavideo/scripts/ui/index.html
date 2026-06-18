@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HolaVideo - Generador de Videos con IA</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0a0a0a;
+      color: #fff;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    header {
+      padding: 2rem 1rem 1rem;
+      text-align: center;
+    }
+
+    header h1 {
+      font-size: 2.5rem;
+      background: linear-gradient(135deg, #667eea, #764ba2);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 0.5rem;
+    }
+
+    header p { color: #888; font-size: 1rem; }
+
+    .container {
+      width: 100%;
+      max-width: 900px;
+      padding: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    .prompt-area {
+      display: flex;
+      gap: 0.75rem;
+    }
+
+    .prompt-area textarea {
+      flex: 1;
+      padding: 1rem;
+      border: 1px solid #333;
+      border-radius: 12px;
+      background: #1a1a1a;
+      color: #fff;
+      font-size: 1rem;
+      font-family: inherit;
+      resize: none;
+      height: 80px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    .prompt-area textarea:focus { border-color: #667eea; }
+    .prompt-area textarea::placeholder { color: #555; }
+
+    .prompt-area button {
+      padding: 0 2rem;
+      border: none;
+      border-radius: 12px;
+      background: linear-gradient(135deg, #667eea, #764ba2);
+      color: #fff;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.2s, transform 0.1s;
+      white-space: nowrap;
+    }
+
+    .prompt-area button:hover { opacity: 0.9; transform: scale(1.02); }
+    .prompt-area button:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+    .options-row {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-top: 0.25rem;
+    }
+
+    .options-row label {
+      color: #888;
+      font-size: 0.9rem;
+    }
+
+    .options-row select {
+      padding: 0.4rem 0.75rem;
+      border: 1px solid #333;
+      border-radius: 8px;
+      background: #1a1a1a;
+      color: #fff;
+      font-size: 0.9rem;
+      outline: none;
+      cursor: pointer;
+    }
+
+    .options-row select:focus { border-color: #667eea; }
+
+    .status {
+      text-align: center;
+      min-height: 1.5rem;
+    }
+
+    .status.loading { color: #667eea; }
+    .status.error { color: #ff4d4d; }
+    .status.success { color: #4dff88; }
+
+    .loader {
+      display: inline-block;
+      width: 20px;
+      height: 20px;
+      border: 2px solid #667eea;
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      vertical-align: middle;
+      margin-right: 8px;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .video-container {
+      width: 100%;
+      aspect-ratio: 16/9;
+      background: #111;
+      border-radius: 16px;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid #222;
+    }
+
+    .video-container video {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+
+    .video-container .placeholder {
+      color: #444;
+      font-size: 1.2rem;
+      text-align: center;
+      padding: 2rem;
+    }
+
+    .video-history { margin-top: 1rem; }
+
+    .video-history h3 {
+      color: #888;
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 0.75rem;
+    }
+
+    .video-history-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 0.75rem;
+    }
+
+    .history-card {
+      background: #1a1a1a;
+      border: 1px solid #333;
+      border-radius: 12px;
+      overflow: hidden;
+      cursor: pointer;
+      transition: border-color 0.2s, transform 0.15s;
+    }
+
+    .history-card:hover { border-color: #667eea; transform: translateY(-2px); }
+
+    .history-card-thumb {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 16/9;
+      background: #111;
+      overflow: hidden;
+    }
+
+    .history-card-thumb video { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+    .history-card-play {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0,0,0,0.45);
+      opacity: 0;
+      transition: opacity 0.2s;
+      font-size: 2rem;
+    }
+
+    .history-card:hover .history-card-play { opacity: 1; }
+
+    .history-card-info { padding: 0.6rem 0.7rem; }
+
+    .history-card-prompt {
+      font-size: 0.8rem;
+      color: #ccc;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      margin-bottom: 0.4rem;
+    }
+
+    .history-card-meta { display: flex; gap: 0.3rem; align-items: center; flex-wrap: wrap; }
+
+    .meta-badge {
+      font-size: 0.65rem;
+      padding: 0.15rem 0.45rem;
+      border-radius: 4px;
+      background: #252525;
+      color: #666;
+      border: 1px solid #333;
+    }
+
+    .meta-badge.model-flash { color: #f0a500; border-color: #3a2e00; background: #1a1500; }
+    .meta-badge.model-lite { color: #667eea; border-color: #2a2f5a; background: #141828; }
+    .meta-badge.model-ollama { color: #ff6b6b; border-color: #3a1515; background: #1f0d0d; }
+    .meta-badge.cost-paid { color: #4dff88; border-color: #1a3a25; background: #0d1f14; }
+    .meta-badge.cost-free { color: #555; border-color: #2a2a2a; background: #1a1a1a; }
+
+    .download-btn {
+      display: none;
+      margin-top: 0.5rem;
+      padding: 0.6rem 1.5rem;
+      background: #1a1a1a;
+      border: 1px solid #333;
+      border-radius: 8px;
+      color: #fff;
+      font-size: 0.9rem;
+      cursor: pointer;
+      text-decoration: none;
+      text-align: center;
+      transition: border-color 0.2s;
+    }
+
+    .download-btn:hover { border-color: #667eea; }
+
+    .code-panels {
+      display: none;
+      gap: 1rem;
+    }
+
+    .code-panel {
+      flex: 1;
+    }
+
+    .code-panel h3 {
+      color: #888;
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 0.5rem;
+    }
+
+    .code-panel pre {
+      background: #1a1a1a;
+      border: 1px solid #333;
+      border-radius: 12px;
+      padding: 1rem;
+      color: #ddd;
+      font-size: 0.8rem;
+      font-family: 'Cascadia Code', 'Fira Code', monospace;
+      overflow-x: auto;
+      max-height: 400px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .code-panel .copy-btn {
+      float: right;
+      padding: 0.3rem 0.7rem;
+      background: #333;
+      border: none;
+      border-radius: 6px;
+      color: #aaa;
+      font-size: 0.75rem;
+      cursor: pointer;
+      transition: color 0.2s;
+    }
+
+    .code-panel .copy-btn:hover { color: #fff; }
+
+    .save-style-btn {
+      display: none;
+      padding: 0.6rem 1.5rem;
+      background: #1a1a1a;
+      border: 1px solid #38ef7d;
+      border-radius: 8px;
+      color: #38ef7d;
+      font-size: 0.9rem;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .save-style-btn:hover { background: #1f2f1f; }
+
+    .saved-styles {
+      display: none;
+    }
+
+    .saved-styles h3 {
+      color: #888;
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 0.75rem;
+    }
+
+    .saved-styles-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+
+    .style-chip {
+      padding: 0.4rem 0.8rem;
+      background: #1a1a1a;
+      border: 1px solid #333;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      color: #aaa;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+
+    .style-chip:hover { border-color: #38ef7d; color: #fff; }
+    .style-chip.active { border-color: #38ef7d; color: #38ef7d; background: #1a2f1a; }
+
+    .style-chip .delete-chip {
+      font-size: 0.7rem;
+      color: #666;
+      cursor: pointer;
+      padding: 0 0.2rem;
+    }
+
+    .style-chip .delete-chip:hover { color: #ff4d4d; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🎬 HolaVideo</h1>
+    <p>Describe un video y la IA lo crea por ti</p>
+  </header>
+
+  <div class="container">
+    <div class="prompt-area">
+      <textarea id="prompt" placeholder="Describe tu video... Ej: un texto que dice HOLA MUNDO con efecto de máquina de escribir y fondo morado"></textarea>
+      <button id="generateBtn" onclick="generate()">Generar</button>
+    </div>
+
+    <div class="options-row">
+      <label for="duration">⏱ Duración:</label>
+      <select id="duration">
+        <option value="5">5 segundos</option>
+        <option value="10" selected>10 segundos</option>
+        <option value="15">15 segundos</option>
+        <option value="20">20 segundos</option>
+        <option value="30">30 segundos</option>
+        <option value="60">60 segundos</option>
+      </select>
+      <label for="model">🤖 Modelo:</label>
+      <select id="model">
+        <option value="lite" selected>3.1 Flash Lite (rápido)</option>
+        <option value="flash">3.5 Flash (mejor calidad)</option>
+        <option value="ollama">gemma4 (local)</option>
+      </select>
+    </div>
+
+    <div class="saved-styles" id="savedStylesSection">
+      <h3>🎨 Estilos guardados <span style="color:#555;font-weight:normal">(click para aplicar)</span></h3>
+      <div id="savedStylesList" class="saved-styles-list"></div>
+    </div>
+
+    <div id="status" class="status"></div>
+
+    <div class="video-container">
+      <div id="placeholder" class="placeholder">Tu video aparecerá aquí</div>
+      <video id="player" controls style="display:none"></video>
+    </div>
+
+    <a id="downloadBtn" class="download-btn" download="video.mp4">⬇ Descargar MP4</a>
+    <button class="save-style-btn" id="saveStyleBtn" onclick="saveCurrentStyle()">🎨 Guardar este estilo</button>
+
+    <div class="code-panels" id="codePanels">
+      <div class="code-panel">
+        <h3>💻 Código generado <button class="copy-btn" onclick="copyCode()">Copiar</button></h3>
+        <pre id="codeBlock"></pre>
+      </div>
+      <div class="code-panel">
+        <h3>🎨 Estilos usados <button class="copy-btn" onclick="copyStyles()">Copiar</button></h3>
+        <pre id="stylesBlock"></pre>
+      </div>
+    </div>
+
+    <div class="video-history" id="videoHistory" style="display:none">
+      <h3>📼 Historial de videos</h3>
+      <div id="videoHistoryList" class="video-history-list"></div>
+    </div>
+  </div>
+
+  <script>
+    const promptEl = document.getElementById('prompt');
+    const btn = document.getElementById('generateBtn');
+    const statusEl = document.getElementById('status');
+    const player = document.getElementById('player');
+    const placeholder = document.getElementById('placeholder');
+    const downloadBtn = document.getElementById('downloadBtn');
+    const durationEl = document.getElementById('duration');
+
+    let savedStyles = JSON.parse(localStorage.getItem('holavideo_styles') || '[]');
+    let activeStyleId = null;
+    let lastCode = '';
+    loadVideoHistory();
+    renderSavedStyles();
+
+    promptEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        generate();
+      }
+    });
+
+    async function generate() {
+      const prompt = promptEl.value.trim();
+      if (!prompt) return;
+      const duration = parseInt(durationEl.value);
+      const model = document.getElementById('model').value;
+      const styleContext = activeStyleId
+        ? savedStyles.find(s => s.id === activeStyleId)?.code || ''
+        : '';
+
+      btn.disabled = true;
+      statusEl.className = 'status loading';
+      statusEl.innerHTML = '<span class="loader"></span>Generando video con Gemini... esto puede tardar ~30s';
+      player.style.display = 'none';
+      placeholder.style.display = 'flex';
+      placeholder.textContent = 'Generando...';
+      downloadBtn.style.display = 'none';
+
+      try {
+        const res = await fetch('/api/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt, duration, model, styleContext }),
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          throw new Error(data.error || 'Error desconocido');
+        }
+
+        player.src = data.videoUrl;
+        player.style.display = 'block';
+        placeholder.style.display = 'none';
+        player.play();
+
+        downloadBtn.href = data.videoUrl;
+        downloadBtn.style.display = 'block';
+
+        // Mostrar código y estilos
+        if (data.code) {
+          lastCode = data.code;
+          document.getElementById('codePanels').style.display = 'grid';
+          document.getElementById('codeBlock').textContent = data.code;
+          document.getElementById('stylesBlock').textContent = extractStyles(data.code);
+          document.getElementById('saveStyleBtn').style.display = 'block';
+        }
+
+        statusEl.className = 'status success';
+        statusEl.textContent = '✅ Video generado exitosamente';
+
+        loadVideoHistory();
+      } catch (err) {
+        statusEl.className = 'status error';
+        statusEl.textContent = '❌ ' + err.message;
+        placeholder.textContent = 'Error al generar el video';
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function loadVideoHistory() {
+      try {
+        const res = await fetch('/api/history');
+        const items = await res.json();
+        renderVideoHistory(items);
+      } catch { /* silently fail */ }
+    }
+
+    function renderVideoHistory(items) {
+      const section = document.getElementById('videoHistory');
+      const list = document.getElementById('videoHistoryList');
+      if (!items || items.length === 0) {
+        section.style.display = 'none';
+        return;
+      }
+      section.style.display = 'block';
+      list.innerHTML = items.map(item => {
+        const modelClass = item.model === 'flash' ? 'model-flash' : item.model === 'ollama' ? 'model-ollama' : 'model-lite';
+        const modelLabel = item.modelUsed || (item.model === 'flash' ? '3.5 flash' : item.model === 'ollama' ? 'gemma4 local' : '3.1 lite');
+        const promptEsc = item.prompt.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        const costBadge = item.isPaid
+          ? `<span class="meta-badge cost-paid">$${item.cost.toFixed(4)} MXN</span>`
+          : `<span class="meta-badge cost-free">gratis</span>`;
+        return `
+          <div class="history-card" onclick="playHistoryVideo('/out/${item.filename}', '${promptEsc}')">
+            <div class="history-card-thumb">
+              <video src="/out/${item.filename}" muted preload="metadata"></video>
+              <div class="history-card-play">▶</div>
+            </div>
+            <div class="history-card-info">
+              <div class="history-card-prompt" title="${item.prompt.replace(/"/g, '&quot;')}">${item.prompt}</div>
+              <div class="history-card-meta">
+                <span class="meta-badge ${modelClass}">${modelLabel}</span>
+                <span class="meta-badge">${item.duration}s</span>
+                ${costBadge}
+                <span class="meta-badge">${formatRelTime(new Date(item.timestamp))}</span>
+              </div>
+            </div>
+          </div>`;
+      }).join('');
+    }
+
+    function playHistoryVideo(url, prompt) {
+      player.src = url;
+      player.style.display = 'block';
+      placeholder.style.display = 'none';
+      player.play();
+      downloadBtn.href = url;
+      downloadBtn.style.display = 'block';
+      if (prompt) promptEl.value = decodeURIComponent(prompt.replace(/&#39;/g, "'").replace(/&quot;/g, '"'));
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    function formatRelTime(date) {
+      const diff = Date.now() - date.getTime();
+      const mins = Math.floor(diff / 60000);
+      if (mins < 1) return 'ahora';
+      if (mins < 60) return `${mins}m`;
+      const hours = Math.floor(mins / 60);
+      if (hours < 24) return `${hours}h`;
+      return `${Math.floor(hours / 24)}d`;
+    }
+
+    function extractStyles(code) {
+      const styles = [];
+      // Extraer objetos style={{ ... }}
+      const regex = /style=\{\{([^}]+)\}\}/g;
+      let match;
+      while ((match = regex.exec(code)) !== null) {
+        const raw = match[1].trim();
+        // Convertir camelCase a kebab-case para legibilidad
+        const formatted = raw
+          .split(',')
+          .map(s => s.trim())
+          .filter(Boolean)
+          .map(s => {
+            const [prop, ...val] = s.split(':');
+            if (!prop || val.length === 0) return s;
+            const kebab = prop.trim().replace(/([A-Z])/g, '-$1').toLowerCase();
+            return `${kebab}: ${val.join(':').trim()}`;
+          })
+          .join(';\n');
+        styles.push(formatted);
+      }
+      return styles.length > 0
+        ? styles.map((s, i) => `/* Estilo ${i + 1} */\n${s}`).join('\n\n')
+        : 'No se encontraron estilos inline.';
+    }
+
+    function copyCode() {
+      navigator.clipboard.writeText(document.getElementById('codeBlock').textContent);
+    }
+
+    function copyStyles() {
+      navigator.clipboard.writeText(document.getElementById('stylesBlock').textContent);
+    }
+
+    // --- Estilos guardados ---
+    function saveCurrentStyle() {
+      if (!lastCode) return;
+      const styleName = window.prompt('Nombre para este estilo:');
+      if (!styleName || !styleName.trim()) return;
+
+      const style = {
+        id: Date.now(),
+        name: styleName.trim(),
+        code: lastCode,
+      };
+      savedStyles.unshift(style);
+      if (savedStyles.length > 20) savedStyles = savedStyles.slice(0, 20);
+      try {
+        localStorage.setItem('holavideo_styles', JSON.stringify(savedStyles));
+      } catch (e) {
+        alert('Error al guardar: ' + e.message);
+      }
+      renderSavedStyles();
+    }
+
+    function renderSavedStyles() {
+      const section = document.getElementById('savedStylesSection');
+      const list = document.getElementById('savedStylesList');
+      if (savedStyles.length === 0) {
+        section.style.display = 'none';
+        return;
+      }
+      section.style.display = 'block';
+      list.innerHTML = savedStyles.map(s =>
+        `<div class="style-chip ${s.id === activeStyleId ? 'active' : ''}" onclick="toggleStyle(${s.id})">
+          <span>🎨 ${s.name}</span>
+          <span class="delete-chip" onclick="event.stopPropagation(); deleteStyle(${s.id})">✖</span>
+        </div>`
+      ).join('');
+    }
+
+    function toggleStyle(id) {
+      activeStyleId = activeStyleId === id ? null : id;
+      renderSavedStyles();
+    }
+
+    function deleteStyle(id) {
+      savedStyles = savedStyles.filter(s => s.id !== id);
+      if (activeStyleId === id) activeStyleId = null;
+      localStorage.setItem('holavideo_styles', JSON.stringify(savedStyles));
+      renderSavedStyles();
+    }
+  </script>
+</body>
+</html>
