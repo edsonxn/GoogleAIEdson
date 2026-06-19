@@ -63,6 +63,11 @@ holavideo/out/*.mp4
 holavideo/out/*.webm
 holavideo/out/history.json
 
+# ── Slots de render paralelo (generados en runtime) ────────
+holavideo/src/Composition_s*.tsx
+holavideo/src/Root_s*.tsx
+holavideo/src/index_s*.ts
+
 # ── Assets de entidades descargados (imágenes temporales) ─
 holavideo/public/entity_*.jpg
 holavideo/public/entity_*.png
@@ -71,6 +76,25 @@ holavideo/public/person_*.jpg
 holavideo/public/person_*.png
 holavideo/public/person_*.webp
 holavideo/public/entity_*.svg
+
+# ── Imágenes web pre-cacheadas por DuckDuckGo (generadas en runtime) ──
+holavideo/public/hv_web_*.jpg
+holavideo/public/hv_web_*.jpeg
+holavideo/public/hv_web_*.png
+holavideo/public/hv_web_*.webp
+holavideo/public/hv_web_manifest.json
+
+# ── Fotos manuales de entidades (ra_manual_*) ─────────────
+holavideo/public/ra_manual_*.jpg
+holavideo/public/ra_manual_*.jpeg
+holavideo/public/ra_manual_*.png
+holavideo/public/ra_manual_*.webp
+
+# ── Otras imágenes sueltas en holavideo/public ────────────
+holavideo/public/*.jpg
+holavideo/public/*.jpeg
+holavideo/public/*.png
+holavideo/public/*.webp
 
 # ── Caché global de assets (descargados automáticamente) ──
 global_assets/
