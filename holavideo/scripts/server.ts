@@ -6,6 +6,24 @@ import { execSync } from "child_process";
 
 const PROJECT_ROOT = path.join(__dirname, "..");
 
+// ── Render slot pool ──────────────────────────────────────────────────────────
+// Each slot has its own Composition_sN / Root_sN / index_sN files so that
+// multiple renders can run concurrently without overwriting shared source files.
+const MAX_SLOTS: number = parseInt(process.env.HV_SLOTS || "3");
+const _freeSlots = new Set<number>(Array.from({ length: MAX_SLOTS }, (_, i) => i));
+const _slotWaiters: Array<(slot: number) => void> = [];
+
+function acquireSlot(): Promise<number> {
+  const iter = _freeSlots.values();
+  const first = iter.next();
+  if (!first.done) { _freeSlots.delete(first.value); return Promise.resolve(first.value); }
+  return new Promise(res => _slotWaiters.push(res));
+}
+function releaseSlot(slot: number) {
+  const next = _slotWaiters.shift();
+  if (next) next(slot); else _freeSlots.add(slot);
+}
+
 // Cargar .env desde el directorio raíz del proyecto principal
 const envPath = path.join(PROJECT_ROOT, "..", ".env");
 if (fs.existsSync(envPath)) {
@@ -28,8 +46,12 @@ const FREE_KEYS = [
 
 const PAID_KEY = process.env.GOOGLE_API_KEY;
 
-const MODEL_FLASH = "gemini-3.5-flash";
-const MODEL_LITE = "gemini-3.1-flash-lite";
+const MODEL_FLASH       = "gemini-3.5-flash";
+const MODEL_LITE        = "gemini-3.1-flash-lite";
+const MODEL_3_FLASH     = "gemini-3-flash-preview";
+const MODEL_25_FLASH    = "gemini-2.5-flash";
+const MODEL_25_PRO      = "gemini-2.5-pro";
+const MODEL_31_PRO      = "gemini-3.1-pro-preview";
 
 const SYSTEM_PROMPT = `Eres un experto en Remotion (framework de video con React).
 El usuario te dará una descripción de un video y tú generarás SOLO el código TypeScript/React del componente.
@@ -122,11 +144,13 @@ PATRONES DE ANIMACIÓN — úsalos según lo que pida el prompt:
 
   SIEMPRE usa este helper al inicio del componente para evitar errores de interpolate con rangos inválidos:
   const si = (f: number, inp: number[], out: number[], opts?: any) => {
+    if (typeof f !== 'number' || !isFinite(f)) return out[0] ?? 0;
     const pairs = inp.map((v, i) => [v, out[i]] as [number, number]);
     pairs.sort((a, b) => a[0] - b[0]);
     const deduped = pairs.filter((p, i) => i === 0 || p[0] > pairs[i-1][0]);
-    return interpolate(f, deduped.map(p => p[0]), deduped.map(p => p[1]), opts);
+    return interpolate(f, deduped.map(p => p[0]), deduped.map(p => p[1]), { extrapolateLeft: 'clamp', extrapolateRight: 'clamp', ...opts });
   };
+  REGLA CRÍTICA ANTI-CRASH: El primer argumento de si() SIEMPRE debe ser frame, frame % N, o una expresión aritmética de frame. NUNCA pases una variable de objeto, prop, o resultado de array.find() como primer argumento — puede ser undefined y crashea el render.
 
   // Para N=1 (un solo acto): anima todo el clip sin zonas
   // Para N=2:
@@ -232,7 +256,7 @@ export const MyComposition = () => {
 const SYSTEM_PROMPT_WITH_IMAGES = SYSTEM_PROMPT
   .replace(
     '- PROHIBIDO usar Img, staticFile, o cualquier imagen/archivo externo. No existen imágenes en el proyecto.\n- Dibuja TODO con divs, CSS (bordes, degradados, border-radius, box-shadow), SVG inline o emojis.\n- Para representar objetos, animales o personas usa emojis grandes, formas geométricas o SVG paths simples.',
-    '- Tienes imágenes reales disponibles vía staticFile() — úsalas como parte central de la animación.\n- Importa: import { AbsoluteFill, Img, Sequence, staticFile, useCurrentFrame, useVideoConfig, interpolate, Easing } from \'remotion\';\n- Usa <Img> de remotion (NO <img> HTML). Combina las imágenes con overlays CSS, texto animado y efectos de opacidad/zoom/posición.\n- Dibuja elementos adicionales con divs, CSS, SVG inline o emojis encima de las imágenes.'
+    '- Tienes imágenes reales disponibles vía staticFile() — úsalas como parte central de la animación.\n- Importa: import { AbsoluteFill, Img, Sequence, staticFile, useCurrentFrame, useVideoConfig, interpolate, Easing } from \'remotion\';\n- Usa <Img> de remotion (NO <img> HTML). Combina las imágenes con overlays CSS, texto animado y efectos de opacidad/zoom/posición.\n- Dibuja elementos adicionales con divs, CSS, SVG inline o emojis encima de las imágenes.\n- ANTI-CRASH CRÍTICO: staticFile() SOLO acepta string literal — NUNCA variables. Escribe staticFile(\'nombre-exacto.png\') con el nombre del asset directamente. NUNCA staticFile(variable) ni staticFile(props.src) ni staticFile(asset?.filename).'
   );
 
 const OLLAMA_SYSTEM_PROMPT = `Eres un experto en Remotion (framework de video con React).
@@ -293,8 +317,12 @@ export const MyComposition = () => {
 `;
 
 const TOKEN_PRICES: Record<string, { input: number; output: number }> = {
-  [MODEL_FLASH]: { input: 1.50, output: 9.00 },
-  [MODEL_LITE]:  { input: 0.25, output: 1.50 },
+  [MODEL_FLASH]:    { input: 1.50, output: 9.00  },
+  [MODEL_LITE]:     { input: 0.25, output: 1.50  },
+  [MODEL_3_FLASH]:  { input: 0.50, output: 3.00  },
+  [MODEL_25_FLASH]: { input: 0.30, output: 2.50  },
+  [MODEL_25_PRO]:   { input: 1.25, output: 10.00 },
+  [MODEL_31_PRO]:   { input: 2.00, output: 12.00 },
 };
 
 const USD_TO_MXN = 17;
@@ -334,17 +362,17 @@ async function tryWithKey(
   };
 }
 
-async function tryWithOllama(prompt: string, durationSeconds: number, width = 1280, height = 720): Promise<string> {
+async function tryWithOllama(prompt: string, durationSeconds: number, width = 1280, height = 720, ollamaModel = "gemma4"): Promise<string> {
   const durationPrompt = `${OLLAMA_SYSTEM_PROMPT}${buildDimNote(width, height)}\n\nDuración del video: ${durationSeconds} segundos (${durationSeconds * 30} frames a 30fps). Distribuye TODAS las animaciones usando interpolate() con frame como variable, desde frame 0 hasta frame ${durationSeconds * 30}.\n\nDescripción del video:\n${prompt}`;
   const res = await fetch("http://localhost:11434/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      model: "gemma4",
+      model: ollamaModel,
       messages: [{ role: "user", content: durationPrompt }],
       stream: false,
     }),
-    signal: AbortSignal.timeout(180000),
+    signal: AbortSignal.timeout(600000),
   });
   if (!res.ok) throw new Error(`Ollama HTTP ${res.status}`);
   const data = await res.json() as any;
@@ -805,7 +833,7 @@ async function pickAndFillTemplate(
   return { success: false };
 }
 
-async function generateVideo(prompt: string, durationSeconds: number, styleContext?: string, preferredModel?: string, outputFilename?: string, width = 1280, height = 720, allowImages = false, injectedCode?: string): Promise<{ success: boolean; modelUsed?: string; cost?: number; inputTokens?: number; outputTokens?: number; isPaid?: boolean; error?: string }> {
+async function generateVideo(prompt: string, durationSeconds: number, styleContext?: string, preferredModel?: string, outputFilename?: string, width = 1280, height = 720, allowImages = false, injectedCode?: string, slotId = 0): Promise<{ success: boolean; modelUsed?: string; cost?: number; inputTokens?: number; outputTokens?: number; isPaid?: boolean; error?: string }> {
   const styleNote = styleContext
     ? `\n\nIMPORTANTE: Usa el MISMO estilo visual (colores, degradados, tipo de animaciones, formas) que el siguiente código de referencia. Adapta el contenido al nuevo prompt pero mantén la misma estética:\n\n${styleContext.slice(0, 2000)}`
     : '';
@@ -821,28 +849,55 @@ async function generateVideo(prompt: string, durationSeconds: number, styleConte
 
   if (injectedCode) {
     // Skip LLM — go straight to render with pre-filled template code
-  } else if (preferredModel === "ollama") {
-    console.log("  🦙 Usando Ollama (gemma4 local)...");
+  } else if (preferredModel === "ollama" || preferredModel.startsWith("ollama:")) {
+    const ollamaModel = preferredModel.startsWith("ollama:") ? preferredModel.slice(7) : "gemma4";
+    console.log(`  🦙 Usando Ollama (${ollamaModel})...`);
     try {
-      code = await tryWithOllama(prompt + styleNote, durationSeconds, width, height);
-      modelUsed = "ollama (gemma4)";
+      code = await tryWithOllama(prompt + styleNote, durationSeconds, width, height, ollamaModel);
+      modelUsed = `ollama (${ollamaModel})`;
       console.log("  ✅ OK (ollama)");
     } catch (err: any) {
       return { success: false, error: "Ollama falló: " + (err?.message || err) };
     }
   } else {
 
-  const useFlash = preferredModel === "flash";
-  const attempts: { keys: string[]; model: string; label: string; isPaid: boolean }[] = useFlash
-    ? [
-        { keys: FREE_KEYS, model: MODEL_FLASH, label: "gratis + flash", isPaid: false },
-        { keys: PAID_KEY ? [PAID_KEY] : [], model: MODEL_FLASH, label: "pago + flash", isPaid: true },
-      ]
-    : [
-        { keys: FREE_KEYS, model: MODEL_LITE, label: "gratis + lite", isPaid: false },
-        { keys: FREE_KEYS, model: MODEL_FLASH, label: "gratis + flash", isPaid: false },
-        { keys: PAID_KEY ? [PAID_KEY] : [], model: MODEL_LITE, label: "pago + lite", isPaid: true },
-      ];
+  type Attempt = { keys: string[]; model: string; label: string; isPaid: boolean };
+  const paid = PAID_KEY ? [PAID_KEY] : [];
+  let attempts: Attempt[];
+
+  if (preferredModel === "flash") {
+    attempts = [
+      { keys: FREE_KEYS, model: MODEL_FLASH,    label: "gratis + flash",        isPaid: false },
+      { keys: paid,       model: MODEL_FLASH,    label: "pago + flash",          isPaid: true  },
+    ];
+  } else if (preferredModel === MODEL_3_FLASH || preferredModel === "3-flash-preview") {
+    attempts = [
+      { keys: FREE_KEYS, model: MODEL_3_FLASH,  label: "gratis + 3-flash",      isPaid: false },
+      { keys: paid,       model: MODEL_3_FLASH,  label: "pago + 3-flash",        isPaid: true  },
+    ];
+  } else if (preferredModel === MODEL_25_FLASH || preferredModel === "2.5-flash") {
+    attempts = [
+      { keys: FREE_KEYS, model: MODEL_25_FLASH, label: "gratis + 2.5-flash",    isPaid: false },
+      { keys: paid,       model: MODEL_25_FLASH, label: "pago + 2.5-flash",      isPaid: true  },
+    ];
+  } else if (preferredModel === MODEL_25_PRO || preferredModel === "2.5-pro") {
+    // 2.5 Pro has limit:0 free tier in most projects — go straight to paid
+    attempts = [
+      { keys: paid,       model: MODEL_25_PRO,   label: "pago + 2.5-pro",        isPaid: true  },
+    ];
+  } else if (preferredModel === MODEL_31_PRO || preferredModel === "3.1-pro-preview") {
+    // 3.1 Pro Preview is paid-only (no free tier)
+    attempts = [
+      { keys: paid,       model: MODEL_31_PRO,   label: "pago + 3.1-pro",        isPaid: true  },
+    ];
+  } else {
+    // Default: Lite (free) → Flash (free) → Lite (paid)
+    attempts = [
+      { keys: FREE_KEYS, model: MODEL_LITE,     label: "gratis + lite",         isPaid: false },
+      { keys: FREE_KEYS, model: MODEL_FLASH,    label: "gratis + flash",        isPaid: false },
+      { keys: paid,       model: MODEL_LITE,     label: "pago + lite",           isPaid: true  },
+    ];
+  }
 
   for (const attempt of attempts) {
     if (attempt.keys.length === 0) continue;
@@ -850,7 +905,7 @@ async function generateVideo(prompt: string, durationSeconds: number, styleConte
 
     for (let i = 0; i < attempt.keys.length; i++) {
       try {
-        const timeoutMs = attempt.model === MODEL_FLASH ? 300000 : 5000;
+        const timeoutMs = attempt.model === MODEL_LITE ? 5000 : 300000;
         const result = await tryWithKey(attempt.keys[i], attempt.model, prompt + styleNote, durationSeconds, timeoutMs, width, height, activeSystemPrompt);
         code = result.text;
         inputTokens = result.inputTokens;
@@ -877,28 +932,45 @@ async function generateVideo(prompt: string, durationSeconds: number, styleConte
   // Limpiar markdown fences
   code = code.replace(/^```(?:tsx?|javascript|jsx)?\n?/gm, "").replace(/```$/gm, "").trim();
 
-  // Escribir código
-  const compositionPath = path.join(PROJECT_ROOT, "src", "Composition.tsx");
+  // Escribir código en el archivo del slot asignado
+  const compositionPath = path.join(PROJECT_ROOT, "src", `Composition_s${slotId}.tsx`);
   fs.writeFileSync(compositionPath, code, "utf-8");
 
-  // Actualizar duración y dimensiones en Root.tsx
-  const rootPath = path.join(PROJECT_ROOT, "src", "Root.tsx");
-  const rootContent = fs.readFileSync(rootPath, "utf-8");
-  const updatedRoot = rootContent
-    .replace(/durationInFrames=\{\d+\}/, `durationInFrames={${durationSeconds * 30}}`)
-    .replace(/width=\{\d+\}/, `width={${width}}`)
-    .replace(/height=\{\d+\}/, `height={${height}}`);
-  fs.writeFileSync(rootPath, updatedRoot, "utf-8");
-
-  // Limpiar cache de webpack
-  const cachePath = path.join(PROJECT_ROOT, "node_modules", ".cache");
-  if (fs.existsSync(cachePath)) {
-    fs.rmSync(cachePath, { recursive: true, force: true });
-  }
+  // Escribir Root del slot con duración y dimensiones correctas
+  const rootPath = path.join(PROJECT_ROOT, "src", `Root_s${slotId}.tsx`);
+  fs.writeFileSync(rootPath,
+    `import "./index.css";\nimport { Composition } from "remotion";\nimport { MyComposition } from "./Composition_s${slotId}";\nexport const RemotionRoot: React.FC = () => (\n  <><Composition id="MyComp" component={MyComposition} durationInFrames={${durationSeconds * 30}} fps={30} width={${width}} height={${height}} /></>\n);\n`);
 
   // Asegurar directorio out/
   const outDir = path.join(PROJECT_ROOT, "out");
   if (!fs.existsSync(outDir)) fs.mkdirSync(outDir);
+
+  // ── Auto-fix imports ───────────────────────────────────────────────────────
+  // If the code uses a Remotion symbol but the import line is missing it, patch it.
+  const remotionImportLine = code.match(/import\s*\{([^}]+)\}\s*from\s*['"]remotion['"]/);
+  if (remotionImportLine) {
+    const imported = remotionImportLine[1].split(',').map((s: string) => s.trim());
+    const remotionSymbols: Record<string, string> = {
+      staticFile: 'staticFile',
+      Img: 'Img',
+      Sequence: 'Sequence',
+      Audio: 'Audio',
+      Video: 'Video',
+      spring: 'spring',
+      measureSpring: 'measureSpring',
+    };
+    const toAdd: string[] = [];
+    for (const [sym] of Object.entries(remotionSymbols)) {
+      const usedInCode = new RegExp(`\\b${sym}\\s*[\\(\\<]`).test(code);
+      if (usedInCode && !imported.includes(sym)) toAdd.push(sym);
+    }
+    if (toAdd.length > 0) {
+      const newImport = `import { ${[...imported, ...toAdd].join(', ')} } from 'remotion';`;
+      code = code.replace(/import\s*\{[^}]+\}\s*from\s*['"]remotion['"].*/, newImport);
+      fs.writeFileSync(compositionPath, code, "utf-8");
+      console.log(`🔧 Auto-import añadido: ${toAdd.join(', ')}`);
+    }
+  }
 
   // Verify all staticFile() references exist in public/ before rendering
   const staticFileRefs = [...code.matchAll(/staticFile\(['"`]([^'"`]+)['"`]\)/g)].map(m => m[1]);
@@ -913,22 +985,22 @@ async function generateVideo(prompt: string, durationSeconds: number, styleConte
 
   // Renderizar — con retry automático si el código tiene errores
   const outFile = outputFilename || "video.mp4";
-  const renderOnce = () => execSync(`npx remotion render MyComp out/${outFile} --overwrite`, {
-    cwd: PROJECT_ROOT,
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: 300000,
-    maxBuffer: 50 * 1024 * 1024,
-  });
+  const renderOnce = () => execSync(
+    `npx remotion render src/index_s${slotId}.ts MyComp out/${outFile} --overwrite`,
+    { cwd: PROJECT_ROOT, stdio: ["ignore", "pipe", "pipe"], timeout: 300000, maxBuffer: 50 * 1024 * 1024 }
+  );
 
   const isCodeError = (msg: string) =>
-    /ReferenceError|SyntaxError|TypeError|is not defined|Cannot read prop|Unexpected token|is not a function/i.test(msg);
+    /ReferenceError|SyntaxError|TypeError|is not defined|Cannot read prop|Unexpected token|is not a function|can not be undefined|inputRange can not|outputRange can not|is not iterable|Cannot destructure|passed to the `component` prop|value of `undefined` was passed|Transform failed|Unexpected "="/i.test(msg);
+
+  const stripAnsi = (s: string) => s.replace(/\x1B\[[0-9;]*[mGKHFABCDJST]/g, '');
 
   try {
     renderOnce();
     const cost = isPaid ? calcCost(successModel, inputTokens, outputTokens) : 0;
     return { success: true, modelUsed, cost, inputTokens, outputTokens, isPaid };
   } catch (firstErr: any) {
-    const stderr1 = (firstErr.stderr?.toString() || "").slice(0, 2000);
+    const stderr1 = stripAnsi(firstErr.stderr?.toString() || "").slice(0, 2000);
     const errMsg1 = stderr1 || firstErr.message || "";
     console.error("❌ Render error (intento 1):\n" + errMsg1.slice(0, 400));
 
@@ -937,11 +1009,18 @@ async function generateVideo(prompt: string, durationSeconds: number, styleConte
     }
 
     // Extraer el mensaje de error limpio para el LLM
-    const errorLine = errMsg1.match(/(ReferenceError|SyntaxError|TypeError)[^\n]*/)?.[0] || errMsg1.slice(0, 200);
+    const errorLine = errMsg1.match(/(ReferenceError|SyntaxError|TypeError|Transform failed|ERROR: Unexpected|Error[^\n]{0,80}(?:can not be undefined|passed to the `component` prop))[^\n]*/)?.[0] || errMsg1.slice(0, 200);
     console.log(`  🔁 Error de código detectado ("${errorLine.slice(0, 80)}") — reintentando con fix...`);
 
     // Pedir al LLM que corrija el código
-    const fixPrompt = `El siguiente código Remotion tiene un error de JavaScript que impide renderizarse:\n\nERROR: ${errorLine}\n\nCÓDIGO CON ERROR:\n${code.slice(0, 3000)}\n\nCorrige ÚNICAMENTE el error. Devuelve el código completo corregido sin explicaciones ni markdown.`;
+    const undefinedHint = /can not be undefined/i.test(errMsg1)
+      ? '\n\nEste error ocurre cuando interpolate() o si() recibe `undefined` como primer argumento. Revisa TODAS las llamadas a si()/interpolate() y asegúrate de que el primer argumento sea siempre `frame` o una expresión aritmética de frame (ej: frame%60, frame/2), NUNCA una variable que pueda ser undefined. Si el helper si() no existe en el código, añádelo:\nconst si = (f:number,inp:number[],out:number[],opts?:any)=>{if(typeof f!=="number"||!isFinite(f))return out[0]??0;const pairs=inp.map((v,i)=>[v,out[i]]as[number,number]);pairs.sort((a,b)=>a[0]-b[0]);const d=pairs.filter((p,i)=>i===0||p[0]>pairs[i-1][0]);return interpolate(f,d.map(p=>p[0]),d.map(p=>p[1]),{extrapolateLeft:"clamp",extrapolateRight:"clamp",...opts});};'
+      : /passed to the `component` prop|value of `undefined` was passed/i.test(errMsg1)
+      ? '\n\nEste error ocurre cuando el archivo Composition.tsx no exporta el componente con el nombre exacto `MyComposition`. Asegúrate de que el código contenga exactamente: export const MyComposition: React.FC = () => { ... }. No uses export default, no cambies el nombre del componente.'
+      : /Transform failed|Unexpected "="/i.test(errMsg1)
+      ? '\n\nEste error es de sintaxis incompatible con el compilador esbuild de Remotion. REGLAS ESTRICTAS: (1) NO uses operadores de asignación lógica: ??= ||= &&= — reemplázalos por: a = a ?? b, a = a || b, a = a && b. (2) NO uses optional chaining en el lado izquierdo de una asignación. (3) NO uses sintaxis de ES2022+ como class fields con #. Usa solo sintaxis ES2019 o anterior.'
+      : '';
+    const fixPrompt = `El siguiente código Remotion tiene un error de JavaScript que impide renderizarse:\n\nERROR: ${errorLine}${undefinedHint}\n\nCÓDIGO CON ERROR:\n${code.slice(0, 3000)}\n\nCorrige ÚNICAMENTE el error. Devuelve el código completo corregido sin explicaciones ni markdown.`;
     const fixKey = (PAID_KEY || FREE_KEYS[0]);
     if (!fixKey) return { success: false, error: "Error al renderizar: " + errMsg1 };
 
@@ -955,11 +1034,34 @@ async function generateVideo(prompt: string, durationSeconds: number, styleConte
       const cost = isPaid ? calcCost(successModel, inputTokens + fixResult.inputTokens, outputTokens + fixResult.outputTokens) : 0;
       return { success: true, modelUsed: modelUsed + ' (auto-fix)', cost, inputTokens: inputTokens + fixResult.inputTokens, outputTokens: outputTokens + fixResult.outputTokens, isPaid };
     } catch (secondErr: any) {
-      const stderr2 = (secondErr.stderr?.toString() || secondErr.message || "").slice(0, 1000);
+      const stderr2 = stripAnsi(secondErr.stderr?.toString() || secondErr.message || "").slice(0, 1000);
       console.error("❌ Render error (intento 2 tras fix):\n" + stderr2.slice(0, 300));
       return { success: false, error: "Error al renderizar (tras auto-fix): " + stderr2 };
     }
   }
+}
+
+// ── Initialize per-slot source files ─────────────────────────────────────────
+{
+  const srcDir = path.join(PROJECT_ROOT, "src");
+  for (let i = 0; i < MAX_SLOTS; i++) {
+    const indexSlot  = path.join(srcDir, `index_s${i}.ts`);
+    const rootSlot   = path.join(srcDir, `Root_s${i}.tsx`);
+    const compSlot   = path.join(srcDir, `Composition_s${i}.tsx`);
+
+    if (!fs.existsSync(indexSlot))
+      fs.writeFileSync(indexSlot,
+        `import { registerRoot } from "remotion";\nimport { RemotionRoot } from "./Root_s${i}";\nregisterRoot(RemotionRoot);\n`);
+
+    if (!fs.existsSync(rootSlot))
+      fs.writeFileSync(rootSlot,
+        `import "./index.css";\nimport { Composition } from "remotion";\nimport { MyComposition } from "./Composition_s${i}";\nexport const RemotionRoot: React.FC = () => (\n  <><Composition id="MyComp" component={MyComposition} durationInFrames={300} fps={30} width={1280} height={720} /></>\n);\n`);
+
+    if (!fs.existsSync(compSlot))
+      fs.writeFileSync(compSlot,
+        `import React from 'react';\nimport { AbsoluteFill } from 'remotion';\nexport const MyComposition: React.FC = () => <AbsoluteFill style={{background:'#000'}} />;\n`);
+  }
+  console.log(`🎬 HolaVideo: ${MAX_SLOTS} slot(s) de render paralelo inicializados`);
 }
 
 // Clean up old non-deterministic asset files from public/ on startup
@@ -983,10 +1085,8 @@ app.get("/", (_req, res) => {
   res.sendFile(path.join(__dirname, "ui", "index.html"));
 });
 
-let isGenerating = false;
-
 app.post("/api/generate", async (req, res) => {
-  const { prompt, duration, model, styleContext, width, height, assets } = req.body;
+  const { prompt, duration, model, styleContext, styleName, width, height, assets } = req.body;
   const vidWidth = (typeof width === 'number' && width > 0) ? width : 1280;
   const vidHeight = (typeof height === 'number' && height > 0) ? height : 720;
 
@@ -1002,16 +1102,25 @@ app.post("/api/generate", async (req, res) => {
     return;
   }
 
-  if (isGenerating) {
-    res.status(429).json({ error: "Ya se está generando un video, espera..." });
+  // Cola de slots: hasta MAX_QUEUE esperando, resto rechazado
+  const MAX_QUEUE = 20;
+  if (_slotWaiters.length >= MAX_QUEUE) {
+    res.status(429).json({ error: `Cola llena (${_slotWaiters.length} en espera). Intenta más tarde.` });
     return;
   }
 
-  isGenerating = true;
+  const slot = await acquireSlot();
+  const activeSlots = MAX_SLOTS - _freeSlots.size;
   const timestamp = Date.now();
   const filename = `video-${timestamp}.mp4`;
-  const modelLabel = model === "flash" ? "3.5 flash" : model === "ollama" ? "gemma4 local" : "3.1 lite";
-  console.log(`🎬 Generando (${durationSeconds}s) [${modelLabel}]: "${prompt.slice(0, 80)}..."`);
+  const modelLabel = model === "flash" ? "3.5 Flash"
+    : model === MODEL_3_FLASH  ? "3 Flash Preview"
+    : model === MODEL_25_FLASH ? "2.5 Flash"
+    : model === MODEL_25_PRO   ? "2.5 Pro"
+    : model === MODEL_31_PRO   ? "3.1 Pro Preview"
+    : (model === "ollama" || model.startsWith("ollama:")) ? (model.startsWith("ollama:") ? model.slice(7) : "gemma4") + " (local)"
+    : "3.1 Lite";
+  console.log(`🎬 [slot ${slot}] Generando (${durationSeconds}s) [${modelLabel}] — ${activeSlots}/${MAX_SLOTS} activos: "${prompt.slice(0, 60)}..."`);
 
   // Build multi-asset instructions
   const assetList: any[] = Array.isArray(assets) ? assets : [];
@@ -1051,7 +1160,7 @@ app.post("/api/generate", async (req, res) => {
         ? 'Pon un div semitransparente encima (background: "rgba(0,0,0,0.4)") para que el texto sea legible.'
         : a.use === 'icon'
         ? 'Tamaño compacto (120-200px). Si es PNG con fondo transparente se integra directamente.'
-        : `Es el elemento protagonista (foto real de persona). CSS OBLIGATORIO para el <Img>: objectFit: "contain", height: "auto", maxHeight: "85%", maxWidth: "${a.size || '38%'}", width: "auto" — NUNCA uses overflow:"hidden" en el contenedor de la imagen. Añade sombra con filter: "drop-shadow(0 0 18px rgba(0,200,255,0.5))".`;
+        : `Es el elemento protagonista. CSS OBLIGATORIO para el <Img>: objectFit: "contain", height: "auto", maxHeight: "85%", maxWidth: "${a.size || '38%'}", width: "auto" — NUNCA uses overflow:"hidden" en el contenedor. Aplica: filter: "drop-shadow(0 0 18px rgba(0,200,255,0.5))".`;
       return `ASSET ${i + 1}: staticFile('${a.filename}') — "${a.label}"
   Rol: ${a.use} | Posición: { ${pos} }
   Animación: ${anim}
@@ -1083,9 +1192,9 @@ Usa <Img src={staticFile('filename')} style={{...}} /> (NO <img> HTML).`;
   }
 
   try {
-    const result = await generateVideo(prompt.trim() + imageNote, durationSeconds, styleContext, model, filename, vidWidth, vidHeight, assetList.length > 0);
+    const result = await generateVideo(prompt.trim() + imageNote, durationSeconds, styleContext, model, filename, vidWidth, vidHeight, assetList.length > 0, undefined, slot);
     if (result.success) {
-      console.log("✅ Video generado");
+      console.log(`✅ Video generado [slot ${slot}]`);
 
       // Guardar en historial
       const historyPath = path.join(PROJECT_ROOT, "out", "history.json");
@@ -1107,17 +1216,21 @@ Usa <Img src={staticFile('filename')} style={{...}} /> (NO <img> HTML).`;
         inputTokens: result.inputTokens ?? 0,
         outputTokens: result.outputTokens ?? 0,
         isPaid: result.isPaid ?? false,
+        styleName: (styleName as string) || '',
       });
       fs.writeFileSync(historyPath, JSON.stringify(history, null, 2));
 
-      const code = fs.readFileSync(path.join(PROJECT_ROOT, "src", "Composition.tsx"), "utf-8");
-      res.json({ success: true, videoUrl: `/out/${filename}`, code });
+      const code = fs.readFileSync(path.join(PROJECT_ROOT, "src", `Composition_s${slot}.tsx`), "utf-8");
+      res.json({ success: true, videoUrl: `/out/${filename}`, code,
+        cost: result.cost ?? 0, inputTokens: result.inputTokens ?? 0,
+        outputTokens: result.outputTokens ?? 0, isPaid: result.isPaid ?? false,
+        modelUsed: result.modelUsed ?? '' });
     } else {
-      console.error("❌", result.error);
+      console.error(`❌ [slot ${slot}]`, result.error);
       res.status(500).json({ error: result.error });
     }
   } finally {
-    isGenerating = false;
+    releaseSlot(slot);
   }
 });
 

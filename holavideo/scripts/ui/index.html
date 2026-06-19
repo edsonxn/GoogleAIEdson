@@ -352,6 +352,152 @@
     }
 
     .style-chip .delete-chip:hover { color: #ff4d4d; }
+
+    /* ── Stats section ─────────────────────────────────────── */
+    .stats-toggle {
+      display: flex;
+      justify-content: center;
+      gap: 0.5rem;
+      margin-top: -0.5rem;
+    }
+
+    .stats-toggle button {
+      padding: 0.45rem 1.1rem;
+      background: transparent;
+      border: 1px solid #333;
+      border-radius: 20px;
+      color: #888;
+      font-size: 0.82rem;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .stats-toggle button.active, .stats-toggle button:hover { border-color: #764ba2; color: #c8b8f0; background: #1a1525; }
+
+    .stats-section { display: none; }
+    .stats-section.visible { display: block; }
+
+    .stat-cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 0.75rem;
+      margin-bottom: 1.25rem;
+    }
+
+    .stat-card {
+      background: #141414;
+      border: 1px solid #252525;
+      border-radius: 12px;
+      padding: 1rem;
+      text-align: center;
+    }
+
+    .stat-card .sc-val {
+      font-size: 1.65rem;
+      font-weight: 700;
+      background: linear-gradient(135deg, #667eea, #a78bfa);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      line-height: 1.1;
+    }
+
+    .stat-card .sc-label {
+      font-size: 0.73rem;
+      color: #555;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-top: 0.35rem;
+    }
+
+    .stats-block {
+      background: #111;
+      border: 1px solid #222;
+      border-radius: 14px;
+      padding: 1.1rem 1.25rem;
+      margin-bottom: 1rem;
+    }
+
+    .stats-block h4 {
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #555;
+      margin-bottom: 1rem;
+    }
+
+    /* Bar chart per model */
+    .model-rows { display: flex; flex-direction: column; gap: 0.65rem; }
+
+    .model-row { display: flex; align-items: center; gap: 0.65rem; }
+
+    .model-row .mr-name {
+      width: 140px;
+      font-size: 0.78rem;
+      color: #aaa;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      flex-shrink: 0;
+    }
+
+    .model-row .mr-bar-wrap {
+      flex: 1;
+      height: 14px;
+      background: #1c1c1c;
+      border-radius: 7px;
+      overflow: hidden;
+    }
+
+    .model-row .mr-bar {
+      height: 100%;
+      border-radius: 7px;
+      background: linear-gradient(90deg, #667eea, #764ba2);
+      transition: width 0.6s ease;
+    }
+
+    .model-row .mr-val {
+      width: 80px;
+      text-align: right;
+      font-size: 0.75rem;
+      color: #888;
+      flex-shrink: 0;
+    }
+
+    /* Pie / pill donut for free vs paid */
+    .dist-row {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    .dist-pill {
+      padding: 0.4rem 0.8rem;
+      border-radius: 20px;
+      font-size: 0.78rem;
+      font-weight: 600;
+    }
+
+    .dist-pill.free { background: #141828; border: 1px solid #2a2f5a; color: #667eea; }
+    .dist-pill.paid { background: #0d1f14; border: 1px solid #1a3a25; color: #4dff88; }
+
+    /* Timeline SVG chart */
+    #timelineSvg {
+      width: 100%;
+      height: 80px;
+      overflow: visible;
+    }
+
+    .tl-tooltip {
+      position: fixed;
+      background: #1e1e1e;
+      border: 1px solid #333;
+      border-radius: 6px;
+      padding: 0.3rem 0.6rem;
+      font-size: 0.73rem;
+      color: #ccc;
+      pointer-events: none;
+      display: none;
+      z-index: 999;
+    }
   </style>
 </head>
 <body>
@@ -378,9 +524,19 @@
       </select>
       <label for="model">🤖 Modelo:</label>
       <select id="model">
-        <option value="lite" selected>3.1 Flash Lite (rápido)</option>
-        <option value="flash">3.5 Flash (mejor calidad)</option>
-        <option value="ollama">gemma4 (local)</option>
+        <optgroup label="Gratis">
+          <option value="lite" selected>3.1 Flash Lite</option>
+          <option value="gemini-2.5-flash">2.5 Flash</option>
+          <option value="gemini-3-flash-preview">3 Flash Preview</option>
+          <option value="flash">3.5 Flash</option>
+        </optgroup>
+        <optgroup label="Pagado">
+          <option value="gemini-2.5-pro">2.5 Pro ($1.25/M)</option>
+          <option value="gemini-3.1-pro-preview">3.1 Pro Preview ($2/M)</option>
+        </optgroup>
+        <optgroup label="Local">
+          <option value="ollama">Ollama (local)</option>
+        </optgroup>
       </select>
     </div>
 
@@ -410,9 +566,38 @@
       </div>
     </div>
 
+    <div class="stats-toggle">
+      <button id="historyTabBtn" class="active" onclick="switchTab('history')">📼 Historial</button>
+      <button id="statsTabBtn" onclick="switchTab('stats')">📊 Estadísticas</button>
+    </div>
+
     <div class="video-history" id="videoHistory" style="display:none">
-      <h3>📼 Historial de videos</h3>
       <div id="videoHistoryList" class="video-history-list"></div>
+    </div>
+
+    <div class="stats-section" id="statsSection">
+      <div class="stat-cards" id="statCards"></div>
+
+      <div class="stats-block">
+        <h4>💰 Costo total por modelo</h4>
+        <div class="model-rows" id="costByModel"></div>
+      </div>
+
+      <div class="stats-block">
+        <h4>🎬 Clips generados por modelo</h4>
+        <div class="model-rows" id="clipsByModel"></div>
+      </div>
+
+      <div class="stats-block">
+        <h4>📅 Gasto diario (últimos 30 días)</h4>
+        <svg id="timelineSvg"></svg>
+        <div class="tl-tooltip" id="tlTooltip"></div>
+      </div>
+
+      <div class="stats-block">
+        <h4>⚖️ Distribución gratis vs. pagado</h4>
+        <div class="dist-row" id="distRow"></div>
+      </div>
     </div>
   </div>
 
@@ -430,6 +615,28 @@
     let lastCode = '';
     loadVideoHistory();
     renderSavedStyles();
+    loadOllamaModels();
+
+    async function loadOllamaModels() {
+      try {
+        const res = await fetch('http://localhost:11434/api/tags', { signal: AbortSignal.timeout(3000) });
+        if (!res.ok) return;
+        const data = await res.json();
+        const models = (data.models || []);
+        if (!models.length) return;
+        const select = document.getElementById('model');
+        const group = select.querySelector('optgroup[label="Local"]');
+        if (!group) return;
+        group.innerHTML = '';
+        models.forEach(m => {
+          const opt = document.createElement('option');
+          opt.value = `ollama:${m.name}`;
+          const sizeGB = m.size ? ` — ${(m.size / 1e9).toFixed(1)}GB` : '';
+          opt.textContent = `${m.name}${sizeGB}`;
+          group.appendChild(opt);
+        });
+      } catch { /* Ollama no disponible — mantiene opción por defecto */ }
+    }
 
     promptEl.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
@@ -443,9 +650,9 @@
       if (!prompt) return;
       const duration = parseInt(durationEl.value);
       const model = document.getElementById('model').value;
-      const styleContext = activeStyleId
-        ? savedStyles.find(s => s.id === activeStyleId)?.code || ''
-        : '';
+      const activeStyle = activeStyleId ? savedStyles.find(s => s.id === activeStyleId) : null;
+      const styleContext = activeStyle?.code || '';
+      const styleName = activeStyle?.name || '';
 
       btn.disabled = true;
       statusEl.className = 'status loading';
@@ -459,7 +666,7 @@
         const res = await fetch('/api/generate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt, duration, model, styleContext }),
+          body: JSON.stringify({ prompt, duration, model, styleContext, styleName }),
         });
 
         const data = await res.json();
@@ -503,6 +710,7 @@
         const res = await fetch('/api/history');
         const items = await res.json();
         renderVideoHistory(items);
+        renderStats(items);
       } catch { /* silently fail */ }
     }
 
@@ -521,6 +729,9 @@
         const costBadge = item.isPaid
           ? `<span class="meta-badge cost-paid">$${item.cost.toFixed(4)} MXN</span>`
           : `<span class="meta-badge cost-free">gratis</span>`;
+        const styleBadge = item.styleName
+          ? `<span class="meta-badge" style="color:#38ef7d;border-color:#38ef7d33;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="Estilo: ${item.styleName.replace(/"/g, '&quot;')}">🎨 ${item.styleName}</span>`
+          : '';
         return `
           <div class="history-card" onclick="playHistoryVideo('/out/${item.filename}', '${promptEsc}')">
             <div class="history-card-thumb">
@@ -533,6 +744,7 @@
                 <span class="meta-badge ${modelClass}">${modelLabel}</span>
                 <span class="meta-badge">${item.duration}s</span>
                 ${costBadge}
+                ${styleBadge}
                 <span class="meta-badge">${formatRelTime(new Date(item.timestamp))}</span>
               </div>
             </div>
@@ -642,6 +854,172 @@
       if (activeStyleId === id) activeStyleId = null;
       localStorage.setItem('holavideo_styles', JSON.stringify(savedStyles));
       renderSavedStyles();
+    }
+
+    // ── Tab switching ────────────────────────────────────────────
+    let currentTab = 'history';
+    function switchTab(tab) {
+      currentTab = tab;
+      document.getElementById('historyTabBtn').classList.toggle('active', tab === 'history');
+      document.getElementById('statsTabBtn').classList.toggle('active', tab === 'stats');
+      document.getElementById('videoHistory').style.display = tab === 'history' ? 'block' : 'none';
+      document.getElementById('statsSection').classList.toggle('visible', tab === 'stats');
+    }
+
+    // ── Stats ────────────────────────────────────────────────────
+    const MODEL_NAMES = {
+      'lite':                      '3.1 Flash Lite',
+      '':                          '3.1 Flash Lite',
+      'flash':                     '3.5 Flash',
+      'gemini-3-flash-preview':    '3 Flash Preview',
+      'gemini-2.5-flash':          '2.5 Flash',
+      'gemini-2.5-pro':            '2.5 Pro',
+      'gemini-3.1-pro-preview':    '3.1 Pro Preview',
+      'ollama':                    'Ollama (local)',
+    };
+
+    const MODEL_COLORS = {
+      'lite':                      '#667eea',
+      '':                          '#667eea',
+      'flash':                     '#f0a500',
+      'gemini-3-flash-preview':    '#38bdf8',
+      'gemini-2.5-flash':          '#34d399',
+      'gemini-2.5-pro':            '#a78bfa',
+      'gemini-3.1-pro-preview':    '#fb7185',
+      'ollama':                    '#f97316',
+    };
+
+    function getModelName(m) { return MODEL_NAMES[m] ?? m; }
+    function getModelColor(m) { return MODEL_COLORS[m] ?? '#667eea'; }
+
+    function renderStats(items) {
+      if (!items || items.length === 0) return;
+
+      // ── Summary cards ──────────────────────────────────────
+      const totalClips = items.length;
+      const totalCost  = items.reduce((s, i) => s + (i.cost || 0), 0);
+      const paidClips  = items.filter(i => i.isPaid).length;
+      const avgCost    = paidClips > 0 ? items.filter(i => i.isPaid).reduce((s, i) => s + i.cost, 0) / paidClips : 0;
+      const totalTok   = items.reduce((s, i) => s + (i.inputTokens || 0) + (i.outputTokens || 0), 0);
+      const avgDur     = items.reduce((s, i) => s + (i.duration || 0), 0) / totalClips;
+
+      document.getElementById('statCards').innerHTML = [
+        { val: totalClips,              label: 'Clips totales' },
+        { val: `$${totalCost.toFixed(2)}`, label: 'Gasto total (MXN)' },
+        { val: paidClips > 0 ? `$${avgCost.toFixed(4)}` : '—', label: 'Costo prom. pagado' },
+        { val: (totalTok / 1000).toFixed(1) + 'K', label: 'Tokens usados' },
+        { val: avgDur.toFixed(1) + 's', label: 'Duración prom.' },
+      ].map(c => `<div class="stat-card"><div class="sc-val">${c.val}</div><div class="sc-label">${c.label}</div></div>`).join('');
+
+      // ── Per-model aggregation ──────────────────────────────
+      const byModel = {};
+      for (const item of items) {
+        const key = item.model || 'lite';
+        if (!byModel[key]) byModel[key] = { clips: 0, cost: 0, tokens: 0 };
+        byModel[key].clips++;
+        byModel[key].cost  += item.cost || 0;
+        byModel[key].tokens += (item.inputTokens || 0) + (item.outputTokens || 0);
+      }
+
+      const sortedByCost  = Object.entries(byModel).sort((a, b) => b[1].cost  - a[1].cost);
+      const sortedByClips = Object.entries(byModel).sort((a, b) => b[1].clips - a[1].clips);
+      const maxCost  = Math.max(...sortedByCost.map(e  => e[1].cost),  0.0001);
+      const maxClips = Math.max(...sortedByClips.map(e => e[1].clips), 1);
+
+      function modelBarHTML(entries, valueKey, maxVal, fmt) {
+        return entries.map(([model, data]) => {
+          const pct = Math.round((data[valueKey] / maxVal) * 100);
+          const color = getModelColor(model);
+          return `
+            <div class="model-row">
+              <div class="mr-name" title="${getModelName(model)}">${getModelName(model)}</div>
+              <div class="mr-bar-wrap"><div class="mr-bar" style="width:${pct}%;background:${color}"></div></div>
+              <div class="mr-val">${fmt(data, model)}</div>
+            </div>`;
+        }).join('');
+      }
+
+      document.getElementById('costByModel').innerHTML = modelBarHTML(
+        sortedByCost, 'cost', maxCost,
+        (d) => `$${d.cost.toFixed(4)} MXN`
+      );
+      document.getElementById('clipsByModel').innerHTML = modelBarHTML(
+        sortedByClips, 'clips', maxClips,
+        (d, m) => `${d.clips} clip${d.clips !== 1 ? 's' : ''} · ${(d.tokens/1000).toFixed(1)}K tok`
+      );
+
+      // ── Distribution free vs paid ──────────────────────────
+      const freeCount = items.filter(i => !i.isPaid).length;
+      document.getElementById('distRow').innerHTML = `
+        <div class="dist-pill free">Gratis: ${freeCount} clip${freeCount !== 1 ? 's' : ''}</div>
+        <div class="dist-pill paid">Pagado: ${paidClips} clips · $${totalCost.toFixed(2)} MXN</div>
+        ${totalCost > 0 ? `<div class="dist-pill paid" style="background:#110d1a;border-color:#4a2d5a;color:#c084fc">USD: $${(totalCost/17).toFixed(4)}</div>` : ''}
+      `;
+
+      // ── Timeline SVG ───────────────────────────────────────
+      renderTimeline(items);
+    }
+
+    function renderTimeline(items) {
+      const svg = document.getElementById('timelineSvg');
+      const tooltip = document.getElementById('tlTooltip');
+      if (!svg) return;
+
+      // Bucket by date (last 30 days)
+      const now = new Date();
+      const days = 30;
+      const buckets = {};
+      for (let i = 0; i < days; i++) {
+        const d = new Date(now);
+        d.setDate(d.getDate() - (days - 1 - i));
+        buckets[d.toISOString().slice(0, 10)] = { cost: 0, clips: 0 };
+      }
+      for (const item of items) {
+        const key = item.timestamp?.slice(0, 10);
+        if (buckets[key]) { buckets[key].cost += item.cost || 0; buckets[key].clips++; }
+      }
+
+      const keys = Object.keys(buckets).sort();
+      const vals = keys.map(k => buckets[k].cost);
+      const clips = keys.map(k => buckets[k].clips);
+      const maxVal = Math.max(...vals, 0.0001);
+      const W = 860, H = 70, PAD = 4;
+      const stepX = W / (keys.length - 1 || 1);
+
+      const points = vals.map((v, i) => [i * stepX, H - PAD - ((v / maxVal) * (H - PAD * 2))]);
+      const pathD = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ');
+      const fillD = pathD + ` L${points[points.length-1][0]},${H} L0,${H} Z`;
+
+      svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+      svg.innerHTML = `
+        <defs>
+          <linearGradient id="tlGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#764ba2" stop-opacity="0.35"/>
+            <stop offset="100%" stop-color="#764ba2" stop-opacity="0"/>
+          </linearGradient>
+        </defs>
+        <path d="${fillD}" fill="url(#tlGrad)"/>
+        <path d="${pathD}" fill="none" stroke="#764ba2" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+        ${points.map((p, i) => `
+          <circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="${clips[i] > 0 ? 4 : 2}" fill="${clips[i] > 0 ? '#a78bfa' : '#333'}" class="tl-dot"
+            data-date="${keys[i]}" data-cost="${vals[i].toFixed(4)}" data-clips="${clips[i]}"/>
+        `).join('')}
+      `;
+
+      // Tooltip on hover
+      svg.querySelectorAll('.tl-dot').forEach(dot => {
+        dot.style.cursor = 'crosshair';
+        dot.addEventListener('mouseenter', (e) => {
+          const { date, cost, clips: c } = dot.dataset;
+          tooltip.style.display = 'block';
+          tooltip.innerHTML = `<strong>${date}</strong><br>$${parseFloat(cost).toFixed(4)} MXN · ${c} clip${c != 1 ? 's' : ''}`;
+        });
+        dot.addEventListener('mousemove', (e) => {
+          tooltip.style.left = (e.clientX + 10) + 'px';
+          tooltip.style.top  = (e.clientY - 28) + 'px';
+        });
+        dot.addEventListener('mouseleave', () => { tooltip.style.display = 'none'; });
+      });
     }
   </script>
 </body>

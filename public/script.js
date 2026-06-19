@@ -14810,6 +14810,13 @@ async function regenerateAllAudios() {
     applio: { generated: 0, pending: 0 }
   };
 
+  // Mostrar progreso y empezar polling mientras se generan audios
+  const totalSec = window.currentProject?.completedSections?.length || 5;
+  if (!projectProgressContainers.has(folderName)) {
+    createProjectProgressContainer(folderName, totalSec, false, true, false);
+  }
+  startProgressPolling(folderName);
+
   try {
     if (useGoogleTTS) {
       console.log('ðŸŽ¤ Verificando audios faltantes para Google TTS...');
@@ -14943,6 +14950,7 @@ async function regenerateAllAudios() {
     console.error('ÃƒÂ¢Ã‚ÂÃ…â€™ Error verificando/generando audios:', error);
     showError(`Error verificando/generando audios: ${error.message}`);
   } finally {
+    stopProgressPolling(folderName);
     if (regenerateBtn) {
       regenerateBtn.disabled = false;
       regenerateBtn.innerHTML = `
@@ -14989,6 +14997,9 @@ async function regenerateAllAudiosForProject(folderName) {
     google: { generated: 0, pending: 0 },
     applio: { generated: 0, pending: 0 }
   };
+
+  // Mostrar progreso y empezar polling mientras se generan audios
+  startProgressPolling(folderName);
 
   try {
     if (useGoogleTTS) {
@@ -15105,11 +15116,12 @@ async function regenerateAllAudiosForProject(folderName) {
 
     const totalGenerated = summary.google.generated + summary.applio.generated;
     console.log(`âœ… Verificación de audios completada para ${folderName}. Total generados: ${totalGenerated}`);
-
   } catch (error) {
-    console.error(`ÃƒÂ¢Ã‚ÂÃ…â€™ Error verificando/generando audios para proyecto ${folderName}:`, error);
-    throw error; // Re-lanzar para que sea manejado por el llamador
+    throw error;
+  } finally {
+    stopProgressPolling(folderName);
   }
+
 }
 
 // Función para regenerar guiones faltantes
@@ -17702,11 +17714,12 @@ if (downloadProjectZipBtn) {
             if (progressLabel) progressLabel.textContent = 'âœ… Video generado exitosamente';
             if (progressInfo) progressInfo.textContent = p.outputFile ? `Guardado: ${p.outputFile}` : '';
 
-            showNotification('âœ… Video con B-Roll generado exitosamente! Guardado en la carpeta del proyecto.', 'success');
-
+            showNotification('✅ Video con B-Roll generado exitosamente! Guardado en la carpeta del proyecto.', 'success');
             btn.disabled = false;
             btn.innerHTML = '<i class="fas fa-clapperboard"></i><span>Generar Video con B-Roll</span>';
             isGeneratingVideo = false;
+            // Reload the editor so the user can keep editing after render
+            if (folderName) loadExistingBrollTimeline(folderName);
           } else if (p.status === 'error') {
             clearInterval(pollInterval);
             pollInterval = null;
@@ -17744,10 +17757,11 @@ let _brollIsAutoAdvancing = false; // true when advancing within same section (d
 let _brollAIStyleInstructions = ''; // User instructions for AI clip style
 let _lastAIClipCode = '';           // TSX code of last generated AI clip (for styleContext)
 
-// ─── AI Clip Queue System ─────────────────────────────────────────────────────
-let _aiClipQueue = [];       // [{ sectionIndex, clipIndex }]
-let _aiClipGenerating = null; // { sectionIndex, clipIndex } | null
-const _aiProgressTimers = {}; // timers por clip para las fases de texto
+// ─── AI Clip Queue System (parallel) ──────────────────────────────────────────
+const AI_MAX_PARALLEL = 3;          // must match HV_SLOTS in server.ts
+let _aiClipQueue = [];              // [{ sectionIndex, clipIndex }] — pending
+const _aiClipsActive = new Set();   // Set<"si_ci"> — currently generating
+const _aiProgressTimers = {};       // timers por clip para las fases de texto
 
 function _clipKey(si, ci) { return `${si}_${ci}`; }
 
@@ -17801,48 +17815,201 @@ function _startProgressPhases(si, ci) {
 }
 
 function _reapplyQueueVisuals() {
-  if (_aiClipGenerating) {
-    _setAIProgress(_aiClipGenerating.sectionIndex, _aiClipGenerating.clipIndex, 'generating', 'Generando...');
-    _startProgressPhases(_aiClipGenerating.sectionIndex, _aiClipGenerating.clipIndex);
+  for (const key of _aiClipsActive) {
+    const [si, ci] = key.split('_').map(Number);
+    _setAIProgress(si, ci, 'generating', 'Generando...');
   }
   _aiClipQueue.forEach(({ sectionIndex, clipIndex }, i) => {
     _setAIProgress(sectionIndex, clipIndex, 'queued', `Cola #${i + 1}`);
   });
 }
 
-async function generateAIClip(sectionIndex, clipIndex) {
+// ── Clip mix triangle control ─────────────────────────────────────────────────
+// Weights always sum to 1.0: { broll, remotion, web }
+let _clipMixWeights = { broll: 1/3, remotion: 1/3, web: 1/3 };
+const _CLIP_MIX_KEY = 'hv_clipMixWeights';
+
+// Triangle vertices in SVG space (matches viewBox="0 0 240 200")
+const _TRI = {
+  web:     { x: 120, y: 18  },  // top    — Remotion + Web
+  broll:   { x: 20,  y: 185 },  // bottom-left — B-Roll
+  remotion:{ x: 220, y: 185 }   // bottom-right — Remotion puro
+};
+
+function _svgToWeights(px, py) {
+  const A = _TRI.web, B = _TRI.broll, C = _TRI.remotion;
+  const denom = (B.y-C.y)*(A.x-C.x) + (C.x-B.x)*(A.y-C.y);
+  let wA = ((B.y-C.y)*(px-C.x) + (C.x-B.x)*(py-C.y)) / denom;
+  let wB = ((C.y-A.y)*(px-C.x) + (A.x-C.x)*(py-C.y)) / denom;
+  let wC = 1 - wA - wB;
+  wA = Math.max(0, wA); wB = Math.max(0, wB); wC = Math.max(0, wC);
+  const s = wA + wB + wC || 1;
+  return { web: wA/s, broll: wB/s, remotion: wC/s };
+}
+
+function _weightsToSvg(w) {
+  return {
+    x: w.web*_TRI.web.x + w.broll*_TRI.broll.x + w.remotion*_TRI.remotion.x,
+    y: w.web*_TRI.web.y + w.broll*_TRI.broll.y + w.remotion*_TRI.remotion.y
+  };
+}
+
+function _updateTriangleUI(w) {
+  const pos = _weightsToSvg(w);
+  const dot = document.getElementById('clipMixDot');
+  if (dot) { dot.setAttribute('cx', pos.x.toFixed(1)); dot.setAttribute('cy', pos.y.toFixed(1)); }
+  const el = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = Math.round(v*100) + '%'; };
+  el('triPctBroll', w.broll);
+  el('triPctWeb', w.web);
+  el('triPctRemotion', w.remotion);
+  // Sync hidden brollRemotionEvery for settings save compat (0=all broll, 1=some remotion)
+  const hiddenEvery = document.getElementById('brollRemotionEvery');
+  if (hiddenEvery) hiddenEvery.value = w.broll >= 0.99 ? '0' : '1';
+  // Sync web images toggle visual to reflect triangle state
+  const webToggle = document.getElementById('brollAIWebImagesToggle');
+  if (webToggle) webToggle.checked = w.web > 0.04;
+  const prefetchBtn = document.getElementById('prefetchWebImagesBtn');
+  if (prefetchBtn) prefetchBtn.style.display = w.web > 0.04 ? 'flex' : 'none';
+}
+
+function initClipMixTriangle() {
+  const svg = document.getElementById('clipMixSvg');
+  if (!svg) return;
+
+  // Load saved weights
+  try {
+    const saved = localStorage.getItem(_CLIP_MIX_KEY);
+    if (saved) { const p = JSON.parse(saved); if (p.broll != null) _clipMixWeights = p; }
+  } catch {}
+  _updateTriangleUI(_clipMixWeights);
+
+  let dragging = false;
+
+  function getSvgPoint(e) {
+    const rect = svg.getBoundingClientRect();
+    const touch = e.touches?.[0] || e;
+    const scaleX = 240 / rect.width;
+    const scaleY = 200 / rect.height;
+    return { x: (touch.clientX - rect.left) * scaleX, y: (touch.clientY - rect.top) * scaleY };
+  }
+
+  function handleMove(e) {
+    if (!dragging) return;
+    e.preventDefault();
+    const pt = getSvgPoint(e);
+    const w = _svgToWeights(pt.x, pt.y);
+    _clipMixWeights = w;
+    _updateTriangleUI(w);
+    localStorage.setItem(_CLIP_MIX_KEY, JSON.stringify(w));
+  }
+
+  svg.addEventListener('mousedown', (e) => { dragging = true; handleMove(e); });
+  svg.addEventListener('touchstart', (e) => { dragging = true; handleMove(e); }, { passive: false });
+  window.addEventListener('mousemove', handleMove);
+  window.addEventListener('touchmove', handleMove, { passive: false });
+  window.addEventListener('mouseup', () => { dragging = false; });
+  window.addEventListener('touchend', () => { dragging = false; });
+}
+
+document.addEventListener('DOMContentLoaded', initClipMixTriangle);
+
+// ── Web image prefetch ────────────────────────────────────────────────────────
+let _webImagesPrefetched = false;
+let _webImagesPrefetchedForPreviewId = null; // track which previewId was prefetched
+
+const _WEB_IMG_TOGGLE_KEY = 'hv_webImagesToggle';
+
+document.addEventListener('DOMContentLoaded', () => {
+  const toggle = document.getElementById('brollAIWebImagesToggle');
+  const btn = document.getElementById('prefetchWebImagesBtn');
+  if (toggle) {
+    // Restore persisted state
+    const saved = localStorage.getItem(_WEB_IMG_TOGGLE_KEY);
+    if (saved === 'true') {
+      toggle.checked = true;
+      if (btn) btn.style.display = 'flex';
+    }
+    toggle.addEventListener('change', () => {
+      localStorage.setItem(_WEB_IMG_TOGGLE_KEY, toggle.checked);
+      if (btn) btn.style.display = toggle.checked ? 'flex' : 'none';
+      if (!toggle.checked) { _webImagesPrefetched = false; _webImagesPrefetchedForPreviewId = null; }
+    });
+  }
+});
+
+async function prefetchWebImages(silent = false) {
+  if (!_brollPreviewId || !_brollPreviewFolderName) {
+    if (!silent) showNotification('Carga el preview primero', 'error');
+    return false;
+  }
+  // Already done for this exact previewId — skip
+  if (_webImagesPrefetchedForPreviewId === _brollPreviewId) {
+    console.log('[WebImg] Prefetch ya completado para este proyecto, saltando');
+    return true;
+  }
+  const btn = document.getElementById('prefetchWebImagesBtn');
+  const btnText = document.getElementById('prefetchWebImagesBtnText');
+  if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; }
+  if (btnText) btnText.textContent = 'Buscando imágenes...';
+  if (!silent) showNotification('Buscando y validando imágenes web para cada sección...', 'info');
+  else showNotification('🌐 Buscando imágenes de internet antes de generar clips...', 'info');
+
+  try {
+    const res = await fetch('/api/prefetch-remotion-images', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ previewId: _brollPreviewId, folderName: _brollPreviewFolderName })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Error en prefetch');
+    _webImagesPrefetched = true;
+    _webImagesPrefetchedForPreviewId = _brollPreviewId;
+    showNotification(`✅ ${data.totalImages} imagen(es) lista(s) en ${data.sections} sección(es)`, 'success');
+    if (btnText) btnText.textContent = `${data.totalImages} imágenes descargadas ✓`;
+    return true;
+  } catch (err) {
+    showNotification('Error al buscar imágenes: ' + err.message, 'error');
+    if (btnText) btnText.textContent = 'Descargar imágenes ahora';
+    return false;
+  } finally {
+    if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
+  }
+}
+
+async function generateAIClip(sectionIndex, clipIndex, forceWebImages = null) {
   if (!_brollPreviewId || !_brollPreviewFolderName) return;
 
-  if (_aiClipGenerating?.sectionIndex === sectionIndex && _aiClipGenerating?.clipIndex === clipIndex) return;
-  if (_aiClipQueue.some(q => q.sectionIndex === sectionIndex && q.clipIndex === clipIndex)) return;
+  const key = _clipKey(sectionIndex, clipIndex);
+  if (_aiClipsActive.has(key)) return;
+  if (_aiClipQueue.some(q => _clipKey(q.sectionIndex, q.clipIndex) === key)) return;
 
-  if (_aiClipGenerating) {
-    _aiClipQueue.push({ sectionIndex, clipIndex });
+  if (_aiClipsActive.size >= AI_MAX_PARALLEL) {
+    _aiClipQueue.push({ sectionIndex, clipIndex, forceWebImages });
     _setAIProgress(sectionIndex, clipIndex, 'queued', `Cola #${_aiClipQueue.length}`);
     showNotification(`Clip añadido a la cola (#${_aiClipQueue.length})`, 'info');
     return;
   }
 
-  await _runAIClipGeneration(sectionIndex, clipIndex);
+  _runAIClipGeneration(sectionIndex, clipIndex, forceWebImages); // fire-and-forget: no await
 }
 
-async function _runAIClipGeneration(sectionIndex, clipIndex) {
+async function _runAIClipGeneration(sectionIndex, clipIndex, forceWebImages = null) {
   if (!_brollPreviewId || !_brollPreviewFolderName) return;
-  _aiClipGenerating = { sectionIndex, clipIndex };
-
-  const video = document.getElementById('tlPreviewVideo');
-  const audio = document.getElementById('tlPreviewAudio');
-  if (video) video.pause();
-  if (audio) audio.pause();
-  if (_brollImageTimer) { clearTimeout(_brollImageTimer); _brollImageTimer = null; }
+  const key = _clipKey(sectionIndex, clipIndex);
+  _aiClipsActive.add(key);
 
   _setAIProgress(sectionIndex, clipIndex, 'generating', 'Transcribiendo...');
   _startProgressPhases(sectionIndex, clipIndex);
-  showNotification('Generando clip con IA... (Whisper + Remotion)', 'info');
+  const activeCount = _aiClipsActive.size;
+  showNotification(`Generando clip con IA${activeCount > 1 ? ` (${activeCount} en paralelo)` : ''}...`, 'info');
 
   try {
     const aiModel = document.getElementById('tlAIModelSelect')?.value || '';
     const useStyleCtx = document.getElementById('tlStyleContextToggle')?.checked && _lastAIClipCode;
+    // forceWebImages=null means use triangle weight (already determined by caller), else use explicit value
+    const webImagesOn = forceWebImages !== null
+      ? forceWebImages
+      : (_clipMixWeights.web > 0.04);
     const response = await fetch('/api/generate-ai-clip', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -17854,7 +18021,8 @@ async function _runAIClipGeneration(sectionIndex, clipIndex) {
         styleInstructions: document.getElementById('brollAIStyleInput')?.value.trim() || _brollAIStyleInstructions || '',
         model: aiModel,
         styleContext: useStyleCtx ? _lastAIClipCode : '',
-        useAssets: document.getElementById('brollAIUseImagesToggle')?.checked || false,
+        useAssets: webImagesOn ? (document.getElementById('brollAIUseImagesToggle')?.checked || false) : false,
+        useWebImages: webImagesOn,
         isVertical: _brollShortsMode
       })
     });
@@ -17884,14 +18052,14 @@ async function _runAIClipGeneration(sectionIndex, clipIndex) {
     _clearAIProgress(sectionIndex, clipIndex);
     showNotification(`Error: ${error.message}`, 'error');
   } finally {
-    _aiClipGenerating = null;
-    _reapplyQueueVisuals();
-    if (_aiClipQueue.length > 0) {
+    _aiClipsActive.delete(key);
+    // Drain queue: start as many pending clips as there are free slots
+    while (_aiClipQueue.length > 0 && _aiClipsActive.size < AI_MAX_PARALLEL) {
       const next = _aiClipQueue.shift();
       _aiClipQueue.forEach(({ sectionIndex: si, clipIndex: ci }, i) => {
         _setAIProgress(si, ci, 'queued', `Cola #${i + 1}`);
       });
-      setTimeout(() => _runAIClipGeneration(next.sectionIndex, next.clipIndex), 300);
+      _runAIClipGeneration(next.sectionIndex, next.clipIndex, next.forceWebImages ?? null); // fire-and-forget
     }
   }
 }
@@ -17999,18 +18167,31 @@ async function regenerateSectionByPhrases(sectionIndex) {
   }
 }
 
-function _autoQueueRemotionClips(filterSectionIndex = null) {
-  const every = parseInt(document.getElementById('brollRemotionEvery')?.value || '0');
-  if (!every || !_brollFlatClips.length) return;
+async function _autoQueueRemotionClips(filterSectionIndex = null) {
+  const { broll: wBroll, remotion: wRemotion, web: wWeb } = _clipMixWeights;
+  const totalRemotion = wRemotion + wWeb;
+  if (totalRemotion < 0.01 || !_brollFlatClips.length) return;
+
+  // Auto-prefetch web images if web fraction is significant
+  if (wWeb > 0.04 && _webImagesPrefetchedForPreviewId !== _brollPreviewId) {
+    await prefetchWebImages(true);
+  }
 
   const mainClips = _brollFlatClips.filter(f =>
     !f.isPause && (filterSectionIndex === null || f.sectionIndex === filterSectionIndex)
   );
-  for (let i = 0; i < mainClips.length; i++) {
-    if (every === 1 || i % every === 0) {
-      const { sectionIndex, clipIndex } = mainClips[i];
-      generateAIClip(sectionIndex, clipIndex);
-    }
+  const N = mainClips.length;
+
+  for (let i = 0; i < N; i++) {
+    const f = (i + 0.5) / N;
+    if (f < wBroll) continue; // stays as B-roll
+
+    // Determine if this remotion clip gets web images
+    const remotionFraction = (f - wBroll) / (totalRemotion || 1);
+    const useWebForThisClip = wWeb > 0.04 && remotionFraction >= wRemotion / (totalRemotion || 1);
+
+    const { sectionIndex, clipIndex } = mainClips[i];
+    generateAIClip(sectionIndex, clipIndex, useWebForThisClip);
   }
 }
 
@@ -19458,15 +19639,22 @@ async function regenerateAllBrollClips() {
   if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Regenerando...'; }
 
   try {
+    // Detect if there are Whisper timestamps to reuse
     const hasWhisperData = _brollPreviewSections?.some(s => s.clips?.some(c => typeof c.audioStart === 'number'));
 
+    // Detect if any clip has a Remotion AI clip already (or if triangle mix includes remotion)
+    const hasExistingAiClips = _brollPreviewSections?.some(s => s.clips?.some(c => c.type === 'ai_clip' || c.aiClipPath));
+    const shouldRegenerateAI = (_clipMixWeights.remotion + _clipMixWeights.web) > 0.01 || hasExistingAiClips;
+
+    // Step 1: regenerate the preview structure (reuse Whisper segments if available)
     const response = await fetch('/api/generate-broll-preview', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         folderName: _brollPreviewFolderName,
         videoConfig: getVideoConfig(),
-        keepSegments: hasWhisperData
+        keepSegments: hasWhisperData,
+        useTransitions: document.getElementById('brollUseTransitionsToggle')?.checked !== false
       })
     });
     const data = await response.json();
@@ -19476,7 +19664,34 @@ async function regenerateAllBrollClips() {
     _brollPreviewSections = data.sections;
     _brollFlatClips = buildFlatClipList(data.sections);
     renderBrollTimeline();
-    showNotification('Timeline regenerado', 'success');
+    showBrollTimelinePanel();
+
+    // Step 2: re-queue all Remotion AI clips with current settings
+    if (shouldRegenerateAI) {
+      // Auto-prefetch web images if toggle is on
+      const webToggle = document.getElementById('brollAIWebImagesToggle');
+      if (webToggle?.checked && _webImagesPrefetchedForPreviewId !== _brollPreviewId) {
+        await prefetchWebImages(true);
+      }
+
+      // Use triangle weights to distribute clips; if we had ai clips but triangle is all-broll, force 50/50
+      const effectiveWeights = (_clipMixWeights.remotion + _clipMixWeights.web) > 0.01
+        ? _clipMixWeights
+        : { broll: 0.5, remotion: 0.5, web: 0 };
+      const mainClips = _brollFlatClips.filter(f => !f.isPause);
+      const N = mainClips.length;
+      for (let i = 0; i < N; i++) {
+        const f = (i + 0.5) / N;
+        if (f < effectiveWeights.broll) continue;
+        const remotionFraction = (f - effectiveWeights.broll) / ((effectiveWeights.remotion + effectiveWeights.web) || 1);
+        const useWeb = effectiveWeights.web > 0.04 && remotionFraction >= effectiveWeights.remotion / ((effectiveWeights.remotion + effectiveWeights.web) || 1);
+        const { sectionIndex, clipIndex } = mainClips[i];
+        generateAIClip(sectionIndex, clipIndex, useWeb);
+      }
+      showNotification(`Timeline regenerado — generando ${mainClips.filter((_, i) => effectiveEvery === 1 || i % effectiveEvery === 0).length} clips Remotion IA...`, 'success');
+    } else {
+      showNotification('Timeline regenerado', 'success');
+    }
   } catch (error) {
     showNotification(`Error: ${error.message}`, 'error');
   } finally {
@@ -19557,9 +19772,9 @@ async function confirmBrollRender() {
           showNotification('Video con B-Roll generado!', 'success');
           if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-clapperboard"></i><span>Generar Video con B-Roll</span>'; }
           isGeneratingVideo = false;
-
-          // Show translation panel
           showBrollTranslatePanel(p.outputFile, _brollPreviewFolderName, p.bgMusicFile, p.bgMusicVolume);
+          // Reload the editor so user can keep editing after render
+          if (_brollPreviewFolderName) loadExistingBrollTimeline(_brollPreviewFolderName);
         } else if (p.status === 'error') {
           clearInterval(pollInterval);
           throw new Error(p.error || 'Error durante el renderizado');
@@ -19586,12 +19801,11 @@ async function checkAndShowTranslatePanel(folderName) {
     const data = await resp.json();
     if (!data.success || !data.videos || data.videos.length === 0) return;
 
-    // Use the latest rendered video
-    const latestVideo = data.videos[data.videos.length - 1];
-    // Read the current music volume from slider if available
+    // Prefer the video saved in project_state (last rendered), else pick the latest file
+    const targetVideo = data.lastRenderedVideo || data.videos[data.videos.length - 1];
     const musicSlider = document.getElementById('bgMusicVolume');
     const vol = musicSlider ? parseInt(musicSlider.value) / 100 : 0.13;
-    showBrollTranslatePanel(latestVideo, folderName, data.bgMusicFile, vol);
+    showBrollTranslatePanel(targetVideo, folderName, data.bgMusicFile, vol);
   } catch (e) { /* ignore */ }
 }
 

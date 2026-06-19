@@ -72,6 +72,9 @@ holavideo/public/person_*.png
 holavideo/public/person_*.webp
 holavideo/public/entity_*.svg
 
+# ── Caché global de assets (descargados automáticamente) ──
+global_assets/
+
 # ── Proyectos de usuario (datos personales/privados) ──────
 projects/
 E:/outputs/

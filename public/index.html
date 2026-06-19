@@ -797,16 +797,52 @@
           </div>
 
           <div class="field-group">
-            <label for="brollRemotionEvery" class="field-label">
-              <i class="fas fa-robot"></i> Clips Remotion IA
+            <label class="field-label">
+              <i class="fas fa-robot"></i> Mix de clips
             </label>
-            <select id="brollRemotionEvery" class="field-input">
-              <option value="0">Ninguno (solo B-roll)</option>
-              <option value="2">1 de cada 2 clips</option>
-              <option value="3">1 de cada 3 clips</option>
-              <option value="5">1 de cada 5 clips</option>
-              <option value="1">Todos con Remotion</option>
-            </select>
+            <div id="clipMixControl" style="user-select:none; padding:2px 0 6px;">
+              <svg id="clipMixSvg" viewBox="-15 -30 270 260" width="100%" style="cursor:crosshair; display:block; touch-action:none;">
+                <defs>
+                  <radialGradient id="gWeb" gradientUnits="userSpaceOnUse" cx="120" cy="18" r="190">
+                    <stop offset="0%" stop-color="#3b82f6" stop-opacity="0.4"/>
+                    <stop offset="100%" stop-color="#3b82f6" stop-opacity="0"/>
+                  </radialGradient>
+                  <radialGradient id="gBroll" gradientUnits="userSpaceOnUse" cx="20" cy="185" r="190">
+                    <stop offset="0%" stop-color="#22c55e" stop-opacity="0.4"/>
+                    <stop offset="100%" stop-color="#22c55e" stop-opacity="0"/>
+                  </radialGradient>
+                  <radialGradient id="gRem" gradientUnits="userSpaceOnUse" cx="220" cy="185" r="190">
+                    <stop offset="0%" stop-color="#a78bfa" stop-opacity="0.4"/>
+                    <stop offset="100%" stop-color="#a78bfa" stop-opacity="0"/>
+                  </radialGradient>
+                  <filter id="dotGlow" x="-50%" y="-50%" width="200%" height="200%">
+                    <feGaussianBlur stdDeviation="3" result="blur"/>
+                    <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+                  </filter>
+                </defs>
+                <!-- Color zones -->
+                <polygon points="120,18 20,185 220,185" fill="url(#gBroll)"/>
+                <polygon points="120,18 20,185 220,185" fill="url(#gWeb)"/>
+                <polygon points="120,18 20,185 220,185" fill="url(#gRem)"/>
+                <!-- Triangle border -->
+                <polygon points="120,18 20,185 220,185" fill="none" stroke="#334155" stroke-width="1.5"/>
+                <!-- Corner dots -->
+                <circle cx="120" cy="18" r="3" fill="#60a5fa" opacity="0.8"/>
+                <circle cx="20" cy="185" r="3" fill="#4ade80" opacity="0.8"/>
+                <circle cx="220" cy="185" r="3" fill="#c4b5fd" opacity="0.8"/>
+                <!-- Vertex labels inside SVG — anchored to each corner -->
+                <text x="120" y="-14" text-anchor="middle" fill="#93c5fd" font-size="10">🌐 +Web</text>
+                <text id="triPctWeb" x="120" y="-3" text-anchor="middle" fill="#93c5fd" font-size="10" font-weight="bold">34%</text>
+                <text x="20" y="200" text-anchor="middle" fill="#4ade80" font-size="10">🎬 B-Roll</text>
+                <text id="triPctBroll" x="20" y="211" text-anchor="middle" fill="#4ade80" font-size="10" font-weight="bold">33%</text>
+                <text x="220" y="200" text-anchor="middle" fill="#c4b5fd" font-size="10">🤖 Remotion</text>
+                <text id="triPctRemotion" x="220" y="211" text-anchor="middle" fill="#c4b5fd" font-size="10" font-weight="bold">33%</text>
+                <!-- Draggable dot -->
+                <circle id="clipMixDot" cx="120" cy="129" r="9" fill="#60a5fa" stroke="white" stroke-width="2" filter="url(#dotGlow)"/>
+              </svg>
+            </div>
+            <!-- Hidden input kept for settings persistence compatibility -->
+            <input type="hidden" id="brollRemotionEvery" value="1"/>
           </div>
 
           <div class="field-group">
@@ -815,9 +851,19 @@
             </label>
             <div style="display:flex; gap:8px; align-items:center;">
               <select id="tlAIModelSelect" class="field-input" style="flex:1;">
-                <option value="">Lite (gratis)</option>
-                <option value="flash">Flash (mejor)</option>
-                <option value="ollama">Local (Ollama)</option>
+                <optgroup label="── Gratis ──">
+                  <option value="">3.1 Lite</option>
+                  <option value="gemini-2.5-flash">2.5 Flash</option>
+                  <option value="gemini-3-flash-preview">3 Flash Preview</option>
+                  <option value="flash">3.5 Flash</option>
+                </optgroup>
+                <optgroup label="── Pagado ──">
+                  <option value="gemini-2.5-pro">2.5 Pro ($1.25/M)</option>
+                  <option value="gemini-3.1-pro-preview">3.1 Pro Preview ($2/M)</option>
+                </optgroup>
+                <optgroup label="── Local ──">
+                  <option value="ollama">Ollama (local)</option>
+                </optgroup>
               </select>
               <label class="tl-style-toggle" style="flex-shrink:0;" title="Mantener el mismo estilo visual entre clips IA consecutivos">
                 <input type="checkbox" id="tlStyleContextToggle">
@@ -852,6 +898,25 @@
             </p>
             <button type="button" onclick="openAssetsFolder()" class="tl-assets-btn">
               <i class="fas fa-folder"></i> Abrir carpeta assets
+            </button>
+          </div>
+
+          <div class="field-group">
+            <div style="display:flex; align-items:center; justify-content:space-between;">
+              <label class="field-label" style="margin-bottom:0;">
+                <i class="fas fa-globe"></i> Buscar imágenes de internet
+              </label>
+              <label class="tl-style-toggle" title="Antes de generar clips, busca imágenes web relevantes con DuckDuckGo y las filtra con Gemini Vision">
+                <input type="checkbox" id="brollAIWebImagesToggle">
+                <span class="tl-style-toggle-track"><span class="tl-style-toggle-thumb"></span></span>
+                <span class="tl-style-toggle-label">Activar</span>
+              </label>
+            </div>
+            <p style="font-size:0.7rem; color:var(--text-muted); margin:4px 0 8px;">
+              Descarga imágenes por sección vía DuckDuckGo y Gemini Vision las valida antes de usarlas.
+            </p>
+            <button type="button" id="prefetchWebImagesBtn" onclick="prefetchWebImages()" class="tl-assets-btn" style="display:none; background:#1a2535; border-color:#3b82f6; color:#60a5fa;">
+              <i class="fas fa-download"></i> <span id="prefetchWebImagesBtnText">Descargar imágenes ahora</span>
             </button>
           </div>
         </div>
