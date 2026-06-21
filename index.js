@@ -16454,7 +16454,7 @@ app.post('/api/generate-broll-preview', async (req, res) => {
 
       if (segments && segments.length > 0 && allMedia.length > 0) {
         // Accumulate Whisper segments until reaching MIN_CLIP_DURATION, then emit.
-        const MIN_CLIP_DURATION = config.minClipDuration ?? 3.0;
+        const MIN_CLIP_DURATION = (cfg ?? config)?.minClipDuration ?? 3.0;
         const mergedSegments = [];
         let pending = null;
         for (const seg of segments) {
