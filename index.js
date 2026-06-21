@@ -18980,7 +18980,8 @@ app.post('/api/generate-ai-clip', async (req, res) => {
     }
     const useWebImages = selectedTypes.has('webImages') || (!enabledTypes.length && (useWebImagesReq ?? true));
     const forceVideo   = selectedTypes.has('brollVideo');
-    const skipStock    = !selectedTypes.has('stockVideo') && enabledTypes.length > 0;
+    // skipStock=true when: pure Remotion (no types enabled) OR stock not in selectedTypes
+    const skipStock    = enabledTypes.length === 0 || !selectedTypes.has('stockVideo');
     console.log(`🎲 [ClipMix] Habilitados: [${enabledTypes.join(', ')}] → Seleccionados: [${[...selectedTypes].join(', ')}]`);
     
     // Load preview
