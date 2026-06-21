@@ -18911,7 +18911,13 @@ Texto del clip: ${transcription.slice(0, 600)}`;
 // POST /api/prefetch-remotion-images — Download + validate web images for all sections before clip generation
 app.post('/api/prefetch-remotion-images', async (req, res) => {
   try {
-    const { previewId, folderName } = req.body;
+    const { previewId, folderName, useWebImages } = req.body;
+
+    // If web images are disabled, skip prefetch entirely
+    if (useWebImages === false) {
+      console.log('[Prefetch] Saltado — useWebImages=false');
+      return res.json({ success: true, totalImages: 0, sections: 0, manifest: { sections: {} } });
+    }
 
     let preview = brollPreviewData.get(previewId);
     if (!preview) {

@@ -17943,6 +17943,12 @@ async function prefetchWebImages(silent = false) {
     if (!silent) showNotification('Carga el preview primero', 'error');
     return false;
   }
+  // Skip if web images switch is off
+  const _webImagesOn = document.getElementById('clipTypeWebImages')?.checked !== false;
+  if (!_webImagesOn) {
+    console.log('[WebImg] Prefetch saltado — switch "Imágenes web" desactivado');
+    return true;
+  }
   // Already done for this exact previewId — skip
   if (_webImagesPrefetchedForPreviewId === _brollPreviewId) {
     console.log('[WebImg] Prefetch ya completado para este proyecto, saltando');
@@ -17959,7 +17965,7 @@ async function prefetchWebImages(silent = false) {
     const res = await fetch('/api/prefetch-remotion-images', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ previewId: _brollPreviewId, folderName: _brollPreviewFolderName })
+      body: JSON.stringify({ previewId: _brollPreviewId, folderName: _brollPreviewFolderName, useWebImages: document.getElementById('clipTypeWebImages')?.checked !== false })
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Error en prefetch');
