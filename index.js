@@ -19468,32 +19468,31 @@ app.post('/api/generate-ai-clip', async (req, res) => {
         const _isScifi   = /sci.?fi|digital|tech|matrix|hologram|futur/i.test(_si);
         const _isPaper   = /paper|papercraft|origami|cardboard|craft/i.test(_si);
 
-        // Ken Burns slow-zoom: scale 5% larger than canvas, animate crop from center
-        // zoompan is accurate but slow; use a lightweight version with scale+crop+setpts trick
-        const zoomFilter = `scale=${Math.round(W*1.06)}:${Math.round(H*1.06)},crop=${W}:${H}:x='(iw-${W})/2+sin(t*0.3)*8':y='(ih-${H})/2+cos(t*0.2)*6'`;
+        // Base scale+crop (static — stock video already has its own motion)
+        const baseScale = `scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},setpts=PTS-STARTPTS`;
 
         let styleFilters;
         if (_isDark && _hasRed) {
           // True crime / dark documentary — desaturated, red-tinted, film grain, vignette
-          styleFilters = `${zoomFilter},eq=brightness=-0.22:contrast=1.35:saturation=0.45,colorchannelmixer=rr=1.12:gg=0.82:bb=0.78,vignette=PI/3,noise=alls=8:allf=t`;
+          styleFilters = `${baseScale},eq=brightness=-0.22:contrast=1.35:saturation=0.45,colorchannelmixer=rr=1.12:gg=0.82:bb=0.78,vignette=PI/3,noise=alls=8:allf=t`;
         } else if (_isNeon) {
           // Neon / cyberpunk — boosted saturation, blue-purple shift, vignette
-          styleFilters = `${zoomFilter},eq=brightness=-0.28:contrast=1.4:saturation=1.4,colorchannelmixer=rr=0.88:bb=1.18,vignette=PI/4`;
+          styleFilters = `${baseScale},eq=brightness=-0.28:contrast=1.4:saturation=1.4,colorchannelmixer=rr=0.88:bb=1.18,vignette=PI/4`;
         } else if (_isVintage) {
           // Vintage / retro — warm sepia, heavy grain, vignette
-          styleFilters = `${zoomFilter},eq=brightness=-0.08:contrast=1.1:saturation=0.45,colorchannelmixer=rr=1.1:rg=0.08:bb=0.82,noise=alls=18:allf=t,vignette=PI/3.5`;
+          styleFilters = `${baseScale},eq=brightness=-0.08:contrast=1.1:saturation=0.45,colorchannelmixer=rr=1.1:rg=0.08:bb=0.82,noise=alls=18:allf=t,vignette=PI/3.5`;
         } else if (_isScifi) {
           // Sci-fi / digital — cold blue, high contrast, vignette
-          styleFilters = `${zoomFilter},eq=brightness=-0.25:contrast=1.45:saturation=0.75,colorchannelmixer=rr=0.78:bb=1.22,vignette=PI/4`;
+          styleFilters = `${baseScale},eq=brightness=-0.25:contrast=1.45:saturation=0.75,colorchannelmixer=rr=0.78:bb=1.22,vignette=PI/4`;
         } else if (_isPaper) {
           // Papercraft / origami — soft warm tones, gentle grain
-          styleFilters = `${zoomFilter},eq=brightness=-0.05:contrast=1.05:saturation=0.65,colorchannelmixer=rr=1.05:gg=0.98:bb=0.9,noise=alls=5:allf=t`;
+          styleFilters = `${baseScale},eq=brightness=-0.05:contrast=1.05:saturation=0.65,colorchannelmixer=rr=1.05:gg=0.98:bb=0.9,noise=alls=5:allf=t`;
         } else if (_isDark) {
           // Generic dark — lower brightness, contrast boost, grain, vignette
-          styleFilters = `${zoomFilter},eq=brightness=-0.28:contrast=1.3:saturation=0.55,vignette=PI/4,noise=alls=6:allf=t`;
+          styleFilters = `${baseScale},eq=brightness=-0.28:contrast=1.3:saturation=0.55,vignette=PI/4,noise=alls=6:allf=t`;
         } else {
-          // Default — neutral dark treatment with subtle movement
-          styleFilters = `${zoomFilter},eq=brightness=-0.18:contrast=1.15:saturation=0.7,vignette=PI/5`;
+          // Default — neutral dark treatment
+          styleFilters = `${baseScale},eq=brightness=-0.18:contrast=1.15:saturation=0.7,vignette=PI/5`;
         }
         console.log(`🎨 [BrollFX] Filtros de estilo aplicados al B-Roll: ${styleFilters.split(',').slice(-3).join(', ')}`);
 
