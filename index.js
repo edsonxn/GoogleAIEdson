@@ -18816,28 +18816,29 @@ Texto del clip: ${transcription.slice(0, 600)}`;
   }
 
   // 2. Download images: Wikipedia first (no watermarks), DuckDuckGo as fallback
+  // Skip entirely when maxApproved=0 (e.g. only stock video is needed — keywords still used below)
   const tmpDir = path.join(os.default.tmpdir(), `hv_web_${sectionKey}_${Date.now()}`);
-  fs.mkdirSync(tmpDir, { recursive: true });
-
-  // Map: file path → keyword that produced it
   const fileToKeyword = new Map();
-  for (const keyword of keywords) {
-    // ── Wikipedia first ──────────────────────────────────────────────────
-    const wikiResult = await tryWikipediaImageForKeyword(keyword, transcription, tmpDir);
-    if (wikiResult) {
-      console.log(`📖 [WebImg] Wikipedia: imagen encontrada para "${keyword}"`);
-      fileToKeyword.set(wikiResult.imgPath, keyword);
-    }
+  if (maxApproved > 0) {
+    fs.mkdirSync(tmpDir, { recursive: true });
+    for (const keyword of keywords) {
+      // ── Wikipedia first ──────────────────────────────────────────────────
+      const wikiResult = await tryWikipediaImageForKeyword(keyword, transcription, tmpDir);
+      if (wikiResult) {
+        console.log(`📖 [WebImg] Wikipedia: imagen encontrada para "${keyword}"`);
+        fileToKeyword.set(wikiResult.imgPath, keyword);
+      }
 
-    // ── DuckDuckGo fallback (always runs to fill remaining slots) ────────
-    const kwDir = path.join(tmpDir, keyword.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 30));
-    fs.mkdirSync(kwDir, { recursive: true });
-    try {
-      await brollDownloadImages({ term: keyword, maxImages: 5, outputDir: kwDir, status: 'pending' }, spawnFn);
-      const downloaded = fs.readdirSync(kwDir).filter(f => /\.(jpe?g|png|webp)$/i.test(f));
-      downloaded.forEach(f => fileToKeyword.set(path.join(kwDir, f), keyword));
-    } catch (e) {
-      console.warn(`⚠️ [WebImg] DDG error "${keyword}": ${e.message?.slice(0, 60)}`);
+      // ── DuckDuckGo fallback (always runs to fill remaining slots) ────────
+      const kwDir = path.join(tmpDir, keyword.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 30));
+      fs.mkdirSync(kwDir, { recursive: true });
+      try {
+        await brollDownloadImages({ term: keyword, maxImages: 5, outputDir: kwDir, status: 'pending' }, spawnFn);
+        const downloaded = fs.readdirSync(kwDir).filter(f => /\.(jpe?g|png|webp)$/i.test(f));
+        downloaded.forEach(f => fileToKeyword.set(path.join(kwDir, f), keyword));
+      } catch (e) {
+        console.warn(`⚠️ [WebImg] DDG error "${keyword}": ${e.message?.slice(0, 60)}`);
+      }
     }
   }
 
