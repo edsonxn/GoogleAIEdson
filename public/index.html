@@ -773,7 +773,7 @@
           <!-- Hidden inputs keeping Video Final defaults so JS reads them without errors -->
           <input type="hidden" id="videoMaxImagesPerSection" value="0">
           <input type="hidden" id="videoImageDuration" value="5">
-          <input type="hidden" id="videoMinClipDuration" value="4">
+          <!-- videoMinClipDuration is now a visible control below -->
           <input type="hidden" id="videoMaxClipDuration" value="10">
           <input type="hidden" id="videoMinResolution" value="720">
           <input type="hidden" id="videoOutputResolution" value="1920:1080">
@@ -782,6 +782,19 @@
           <input type="hidden" id="autoGenerateBrollVideo">
 
           <h3 class="column-title"><i class="fas fa-robot"></i> Remotion IA</h3>
+
+          <div class="field-group">
+            <label class="field-label">
+              <i class="fas fa-clock"></i> Duración mínima de clip
+              <span style="float:right; font-weight:600; color:#a78bfa;" id="videoMinClipDurationLabel">4s</span>
+            </label>
+            <input type="range" id="videoMinClipDuration" min="2" max="12" step="1" value="4"
+              style="width:100%; accent-color:#a78bfa;"
+              oninput="document.getElementById('videoMinClipDurationLabel').textContent = this.value + 's'">
+            <div style="display:flex; justify-content:space-between; font-size:11px; color:#666; margin-top:2px;">
+              <span>2s</span><span style="color:#888; font-size:10px;">Frases cortas se fusionan si duran menos</span><span>12s</span>
+            </div>
+          </div>
 
           <div class="field-group">
             <div style="display:flex; align-items:center; justify-content:space-between;">
@@ -843,34 +856,65 @@
             </div>
             <!-- Hidden input kept for settings persistence compatibility -->
             <input type="hidden" id="brollRemotionEvery" value="1"/>
+            <!-- Compact asset-type switches — visible only when web vertex > 0 -->
+            <div id="clipTypePanel" style="display:none; margin-top:8px; padding:8px 10px; background:#0f1a2a; border:1px solid #1e3a5f; border-radius:8px;">
+              <div style="font-size:0.68rem; color:#60a5fa; font-weight:600; margin-bottom:6px; letter-spacing:0.03em;">
+                <i class="fas fa-random"></i> Tipos de media por clip (aleatorio)
+              </div>
+              <div style="display:flex; flex-direction:column; gap:5px;">
+                <label style="display:flex; align-items:center; justify-content:space-between; cursor:pointer;">
+                  <span style="font-size:0.72rem; color:#93c5fd;"><i class="fas fa-image" style="width:13px;"></i> Imágenes web</span>
+                  <label class="tl-style-toggle" style="transform:scale(0.82); transform-origin:right;">
+                    <input type="checkbox" id="clipTypeWebImages" checked>
+                    <span class="tl-style-toggle-track"><span class="tl-style-toggle-thumb"></span></span>
+                    <span class="tl-style-toggle-label" style="display:none;"></span>
+                  </label>
+                </label>
+                <label style="display:flex; align-items:center; justify-content:space-between; cursor:pointer;">
+                  <span style="font-size:0.72rem; color:#86efac;"><i class="fas fa-video" style="width:13px;"></i> Videos de stock</span>
+                  <label class="tl-style-toggle" style="transform:scale(0.82); transform-origin:right;">
+                    <input type="checkbox" id="clipTypeStockVideo">
+                    <span class="tl-style-toggle-track"><span class="tl-style-toggle-thumb"></span></span>
+                    <span class="tl-style-toggle-label" style="display:none;"></span>
+                  </label>
+                </label>
+                <label style="display:flex; align-items:center; justify-content:space-between; cursor:pointer;">
+                  <span style="font-size:0.72rem; color:#c4b5fd;"><i class="fas fa-film" style="width:13px;"></i> Videos B-Roll</span>
+                  <label class="tl-style-toggle" style="transform:scale(0.82); transform-origin:right;">
+                    <input type="checkbox" id="clipTypeBrollVideo">
+                    <span class="tl-style-toggle-track"><span class="tl-style-toggle-thumb"></span></span>
+                    <span class="tl-style-toggle-label" style="display:none;"></span>
+                  </label>
+                </label>
+              </div>
+            </div>
           </div>
 
           <div class="field-group">
             <label class="field-label">
               <i class="fas fa-sliders-h"></i> Modelo &amp; Estilo IA
             </label>
-            <div style="display:flex; gap:8px; align-items:center;">
-              <select id="tlAIModelSelect" class="field-input" style="flex:1;">
-                <optgroup label="── Gratis ──">
-                  <option value="">3.1 Lite</option>
-                  <option value="gemini-2.5-flash">2.5 Flash</option>
-                  <option value="gemini-3-flash-preview">3 Flash Preview</option>
-                  <option value="flash">3.5 Flash</option>
-                </optgroup>
-                <optgroup label="── Pagado ──">
-                  <option value="gemini-2.5-pro">2.5 Pro ($1.25/M)</option>
-                  <option value="gemini-3.1-pro-preview">3.1 Pro Preview ($2/M)</option>
-                </optgroup>
-                <optgroup label="── Local ──">
-                  <option value="ollama">Ollama (local)</option>
-                </optgroup>
-              </select>
-              <label class="tl-style-toggle" style="flex-shrink:0;" title="Mantener el mismo estilo visual entre clips IA consecutivos">
+            <!-- Model fallback chain -->
+            <div id="modelChainList" style="display:flex; flex-direction:column; gap:5px; margin-bottom:6px;"></div>
+            <div style="display:flex; gap:6px; align-items:center; margin-bottom:4px;">
+              <button type="button" id="addModelChainBtn" onclick="addModelChainRow()" style="font-size:0.72rem; padding:3px 10px; background:#1a2535; border:1px solid #334155; border-radius:4px; color:#94a3b8; cursor:pointer;">+ Agregar fallback</button>
+              <label class="tl-style-toggle" style="flex-shrink:0; margin-left:auto;" title="Mantener el mismo estilo visual entre clips IA consecutivos">
                 <input type="checkbox" id="tlStyleContextToggle">
                 <span class="tl-style-toggle-track"><span class="tl-style-toggle-thumb"></span></span>
                 <span class="tl-style-toggle-label">Estilo fijo</span>
               </label>
             </div>
+            <p style="font-size:0.68rem; color:var(--text-muted); margin:0 0 2px;">Se intenta cada modelo en orden con todas las keys gratis. Al agotar todas, pasa al siguiente.</p>
+            <!-- Hidden legacy select kept for settings persistence compatibility -->
+            <select id="tlAIModelSelect" style="display:none;" aria-hidden="true">
+              <option value="">3.1 Lite</option>
+              <option value="gemini-2.5-flash">2.5 Flash</option>
+              <option value="gemini-3-flash-preview">3 Flash Preview</option>
+              <option value="flash">3.5 Flash</option>
+              <option value="gemini-2.5-pro">2.5 Pro</option>
+              <option value="gemini-3.1-pro-preview">3.1 Pro Preview</option>
+              <option value="ollama">Ollama</option>
+            </select>
           </div>
 
           <div class="field-group">
@@ -882,43 +926,7 @@
               style="resize:vertical; font-size:0.75rem;"></textarea>
           </div>
 
-          <div class="field-group">
-            <div style="display:flex; align-items:center; justify-content:space-between;">
-              <label class="field-label" style="margin-bottom:0;">
-                <i class="fas fa-folder-open"></i> Usar assets del proyecto
-              </label>
-              <label class="tl-style-toggle" title="El LLM elige automáticamente qué imagen de la carpeta assets/ usar en cada clip">
-                <input type="checkbox" id="brollAIUseImagesToggle">
-                <span class="tl-style-toggle-track"><span class="tl-style-toggle-thumb"></span></span>
-                <span class="tl-style-toggle-label">Activar</span>
-              </label>
-            </div>
-            <p style="font-size:0.7rem; color:var(--text-muted); margin:4px 0 8px;">
-              El LLM elige qué imagen de <code>assets/</code> encaja con el clip y la integra en la animación.
-            </p>
-            <button type="button" onclick="openAssetsFolder()" class="tl-assets-btn">
-              <i class="fas fa-folder"></i> Abrir carpeta assets
-            </button>
-          </div>
-
-          <div class="field-group">
-            <div style="display:flex; align-items:center; justify-content:space-between;">
-              <label class="field-label" style="margin-bottom:0;">
-                <i class="fas fa-globe"></i> Buscar imágenes de internet
-              </label>
-              <label class="tl-style-toggle" title="Antes de generar clips, busca imágenes web relevantes con DuckDuckGo y las filtra con Gemini Vision">
-                <input type="checkbox" id="brollAIWebImagesToggle">
-                <span class="tl-style-toggle-track"><span class="tl-style-toggle-thumb"></span></span>
-                <span class="tl-style-toggle-label">Activar</span>
-              </label>
-            </div>
-            <p style="font-size:0.7rem; color:var(--text-muted); margin:4px 0 8px;">
-              Descarga imágenes por sección vía DuckDuckGo y Gemini Vision las valida antes de usarlas.
-            </p>
-            <button type="button" id="prefetchWebImagesBtn" onclick="prefetchWebImages()" class="tl-assets-btn" style="display:none; background:#1a2535; border-color:#3b82f6; color:#60a5fa;">
-              <i class="fas fa-download"></i> <span id="prefetchWebImagesBtnText">Descargar imágenes ahora</span>
-            </button>
-          </div>
+          <!-- Removed: Usar assets, Buscar imágenes, Forzar video — replaced by clipTypePanel switches near the triangle -->
         </div>
       </div>
 

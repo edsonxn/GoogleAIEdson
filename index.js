@@ -751,7 +751,7 @@ function checkImageGenerationCancellation(sessionId) {
 
 import * as cheerio from 'cheerio';
 import ffmpeg from 'fluent-ffmpeg';
-import { spawn, exec } from 'child_process';
+import { spawn, exec, execSync } from 'child_process';
 import { promisify } from 'util';
 import { createCanvas, loadImage } from 'canvas';
 import ComfyUIClient from './comfyui-client.js';
@@ -16453,22 +16453,24 @@ app.post('/api/generate-broll-preview', async (req, res) => {
       const clips = [];
 
       if (segments && segments.length > 0 && allMedia.length > 0) {
-        // Build clips from Whisper segments (one clip per phrase)
-        // Merge clips shorter than 3s into the previous clip
-        const MIN_CLIP_DURATION = 3.0;
+        // Accumulate Whisper segments until reaching MIN_CLIP_DURATION, then emit.
+        const MIN_CLIP_DURATION = config.minClipDuration ?? 3.0;
         const mergedSegments = [];
+        let pending = null;
         for (const seg of segments) {
-          const duration = seg.end - seg.start;
-          if (duration < 0.5) continue; // skip near-empty segments
-          if (duration < MIN_CLIP_DURATION && mergedSegments.length > 0) {
-            // Merge into previous: extend its end and append text
-            const prev = mergedSegments[mergedSegments.length - 1];
-            prev.end = seg.end;
-            prev.text = (prev.text + ' ' + seg.text).trim();
+          if (seg.end - seg.start < 0.5) continue;
+          if (!pending) {
+            pending = { start: seg.start, end: seg.end, text: seg.text };
           } else {
-            mergedSegments.push({ start: seg.start, end: seg.end, text: seg.text });
+            pending.end = seg.end;
+            pending.text = (pending.text + ' ' + seg.text).trim();
+          }
+          if (pending.end - pending.start >= MIN_CLIP_DURATION) {
+            mergedSegments.push(pending);
+            pending = null;
           }
         }
+        if (pending) mergedSegments.push(pending);
 
         let mi = 0;
         for (const seg of mergedSegments) {
@@ -16536,6 +16538,7 @@ app.post('/api/generate-broll-preview', async (req, res) => {
         nombre: sec.nombre,
         audioPath: sec.audioPath,
         audioDuration: sec.audioDuration,
+        videoFiles: sec.videoFiles,       // full paths — needed for B-Roll video search
         videoFilesCount: sec.videoFiles.length,
         imageFilesCount: sec.imageFiles.length,
         clips
@@ -18492,7 +18495,7 @@ app.get('/api/broll-clip-preview/:folderName/:sectionIndex/:clipIndex', async (r
  * Returns true if the image is relevant to the given transcription text.
  */
 // Returns { relevant: bool, label: string } — label describes what the image shows (used as filename + asset label)
-async function verifySearchImage(imagePath, transcription, keyword = '') {
+async function verifySearchImage(imagePath, transcription, keyword = '', sectionContext = '') {
   const MAX_INLINE_BYTES = 1.2 * 1024 * 1024;
   try {
     const stat = fs.statSync(imagePath);
@@ -18510,7 +18513,13 @@ async function verifySearchImage(imagePath, transcription, keyword = '') {
     const base64Data = buffer.toString('base64');
     const ext = path.extname(imagePath).toLowerCase();
     const mimeType = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
-    const prompt = `Analiza esta imagen para usarla en un video informativo.\nResponde SOLO con JSON: {"relevant": true/false, "watermark": true/false, "label": "descripción muy corta de qué muestra en 3-5 palabras en español"}\n\nTexto de referencia: ${transcription.slice(0, 300)}\n\nREGLAS (si alguna falla → relevant=false):\n1. NO debe tener marca de agua visible de ningún tipo: Alamy, Getty, Shutterstock, iStock, Adobe Stock, 123RF, Depositphotos, ni cualquier logo/texto semitransparente superpuesto sobre la imagen. Si ves texto de agencia de fotos en cualquier parte de la imagen → watermark=true → relevant=false.\n2. La imagen debe mostrar algo directamente relacionado con el tema del texto.\n3. Calidad aceptable: no pixelada, no recortada de forma extraña.\n4. Apropiada para video noticiero/informativo: no memes, no contenido adulto.\n\nEl "label" describe QUÉ se ve físicamente en la imagen (ej: "niebla densa en valle montañoso", "vapor saliendo del suelo"), no el tema del texto.`;
+    const sectionCtxLine = sectionContext
+      ? `\nGuion original de la sección (ortografía correcta de nombres propios — úsalo para identificar el universo específico aunque la transcripción del clip tenga errores de Whisper): "${sectionContext.slice(0, 350)}"\nExige que la imagen pertenezca a ese universo concreto, no solo al género general.`
+      : '';
+    const strictMode = keyword && keyword.length > 2; // strict when verifying manual photos with a specific entity name
+    const prompt = strictMode
+      ? `Analiza si esta imagen muestra ESPECÍFICAMENTE a "${keyword}" o algo directamente descrito en el texto.\nResponde SOLO con JSON: {"relevant": true/false, "watermark": true/false, "label": "descripción muy corta de qué muestra en 3-5 palabras en español"}\n\nTexto del clip: ${transcription.slice(0, 300)}${sectionCtxLine}\n\nREGLAS ESTRICTAS (relevant=true solo si SE CUMPLEN TODAS):\n1. La imagen muestra específicamente a "${keyword}" o un elemento concreto mencionado en el texto. Compartir el mismo género o universo NO es suficiente — debe ser el elemento específico.\n2. Sin marca de agua (Alamy, Getty, Shutterstock, etc.) → watermark=true si la hay.\n3. Calidad aceptable.\n\nEjemplo: si el texto habla de "resistencia al fuego en Moulten Kore" (WoW) y la imagen muestra un elfo arquero genérico de WoW, relevant=false porque no muestra Moulten Kore ni resistencia al fuego.\n\nEl "label" describe QUÉ se ve físicamente.`
+      : `Analiza esta imagen para usarla en un video.\nResponde SOLO con JSON: {"relevant": true/false, "watermark": true/false, "label": "descripción muy corta de qué muestra en 3-5 palabras en español"}\n\nTexto del clip: ${transcription.slice(0, 300)}${sectionCtxLine}\n\nREGLAS (si alguna falla → relevant=false):\n1. Sin marca de agua (Alamy, Getty, Shutterstock, iStock, Adobe Stock, etc.) → watermark=true → relevant=false.\n2. La imagen debe mostrar algo específicamente relacionado con el clip. Si el contexto es un juego/película/evento concreto, la imagen debe pertenecer a ese universo específico — no basta con ser del mismo género.\n3. Calidad aceptable: no pixelada, no recortada extrañamente.\n4. Apropiada para video: no memes, no contenido adulto.\n\nEl "label" describe QUÉ se ve físicamente (ej: "niebla densa en valle", "zona de fuego en mazmorra de WoW").`;
 
     let lastErr;
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -18542,29 +18551,257 @@ async function verifySearchImage(imagePath, transcription, keyword = '') {
 }
 
 /**
+ * Extract first, middle and last frame from a video using FFmpeg.
+ * Returns array of temp image paths, or empty array on failure.
+ */
+async function extractVideoFrames(videoPath, tmpDir) {
+  const os = await import('node:os');
+  const framesDir = tmpDir || path.join(os.default.tmpdir(), `hv_frames_${Date.now()}`);
+  if (!fs.existsSync(framesDir)) fs.mkdirSync(framesDir, { recursive: true });
+
+  // Copy to a safe temp path — filenames with special chars (｜ ： ' spaces) break FFmpeg on Windows
+  const safeSrc = path.join(framesDir, `src_input.mp4`);
+  try {
+    fs.copyFileSync(videoPath, safeSrc);
+  } catch (e) {
+    console.warn(`⚠️ [extractFrames] No se pudo copiar "${path.basename(videoPath)}": ${e.message?.slice(0, 60)}`);
+    return [];
+  }
+
+  // Get video duration with ffprobe using the safe path
+  let duration = 0;
+  try {
+    const probe = execSync(
+      `ffprobe -v error -select_streams v:0 -show_entries format=duration -of csv=p=0 "${safeSrc}"`,
+      { stdio: ['ignore', 'pipe', 'pipe'], timeout: 10000 }
+    ).toString().trim();
+    duration = parseFloat(probe) || 0;
+  } catch (e) {
+    console.warn(`⚠️ [extractFrames] ffprobe falló: ${e.message?.slice(0, 60)}`);
+    return [];
+  }
+  if (duration < 0.5) return [];
+
+  const timestamps = [0.05, duration / 2, Math.max(0, duration - 0.5)];
+  const frames = [];
+  for (let i = 0; i < timestamps.length; i++) {
+    const outPath = path.join(framesDir, `frame_${i}.jpg`);
+    try {
+      execSync(
+        `ffmpeg -y -ss ${timestamps[i].toFixed(3)} -i "${safeSrc}" -frames:v 1 -q:v 3 -vf scale=640:-1 "${outPath}"`,
+        { stdio: 'ignore', timeout: 15000 }
+      );
+      if (fs.existsSync(outPath) && fs.statSync(outPath).size > 1000) frames.push(outPath);
+    } catch { /* skip frame */ }
+  }
+  return frames;
+}
+
+/**
+ * Verify a B-Roll video clip by analyzing 3 frames with Gemini Vision.
+ * Returns { relevant: bool, label: string }
+ */
+async function verifyBrollVideoRelevance(videoPath, transcription, sectionContext = '') {
+  const os = await import('node:os');
+  const framesDir = path.join(os.default.tmpdir(), `hv_broll_verify_${Date.now()}`);
+  let frames = [];
+  try {
+    frames = await extractVideoFrames(videoPath, framesDir);
+    if (frames.length === 0) return { relevant: false, label: '' };
+
+    const sectionCtxLine = sectionContext
+      ? `\nGuion original de la sección: "${sectionContext.slice(0, 300)}"`
+      : '';
+
+    const parts = [
+      { text: `Analiza estos ${frames.length} fotogramas (inicio, medio y final) de un video B-Roll para determinar si es adecuado para ilustrar el siguiente clip.\n\nTexto del clip: "${transcription.slice(0, 250)}"${sectionCtxLine}\n\nResponde SOLO con JSON: {"relevant": true/false, "label": "descripción de 3-5 palabras de qué muestra el video"}\n\nEl video es relevante si muestra el tema, personajes, lugares u objetos mencionados en el texto o en el guion de la sección. Comparte el mismo universo temático específico (no solo el género).` }
+    ];
+    for (const fp of frames) {
+      const buf = fs.readFileSync(fp);
+      parts.push({ inlineData: { mimeType: 'image/jpeg', data: buf.toString('base64') } });
+    }
+
+    let lastErr;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const { model: aiModel } = await getGoogleAI('gemini-3.1-flash-lite', { context: 'llm', forcePrimary: attempt > 0 });
+        const result = await aiModel.generateContent(parts);
+        const raw = result.response.text().trim();
+        const jsonStr = raw.match(/\{[\s\S]*\}/)?.[0] || raw;
+        const analysis = JSON.parse(jsonStr);
+        const label = (analysis.label || '').trim();
+        console.log(`🎞️ [BrollVerify] ${path.basename(videoPath)}: relevant=${analysis.relevant} — "${label}"`);
+        return { relevant: analysis.relevant === true, label };
+      } catch (err) {
+        lastErr = err;
+        if (attempt === 0) await new Promise(r => setTimeout(r, 1500));
+      }
+    }
+    console.warn(`⚠️ [BrollVerify] Error verificando ${path.basename(videoPath)}: ${lastErr?.message?.slice(0, 80)}`);
+    return { relevant: false, label: '' };
+  } finally {
+    try { fs.rmSync(framesDir, { recursive: true, force: true }); } catch {}
+  }
+}
+
+/**
+ * Download one stock video from Pexels (primary) or Pixabay (fallback) for a keyword.
+ * Returns an asset descriptor with suggestedUse:'video', or null if not found/no API key.
+ */
+async function searchAndDownloadStockVideo(keyword, holavideoPublicDir, sectionKey, previewId = '', transcription = '', sectionContext = '') {
+  const PEXELS_KEY  = process.env.PEXELS_API_KEY;
+  const PIXABAY_KEY = process.env.PIXABAY_API_KEY;
+  if (!PEXELS_KEY && !PIXABAY_KEY) return null;
+
+  const pidSlug  = previewId ? previewId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 10) + '_' : '';
+  const safeKw   = keyword.replace(/[^a-zA-Z0-9\s]/g, '').trim().replace(/\s+/g, '_').toLowerCase().slice(0, 40);
+  const filename = `hv_vid_${pidSlug}${sectionKey}_${safeKw}.mp4`;
+  const destPath = path.join(holavideoPublicDir, filename);
+
+  // Verify with Gemini if transcription provided; if already cached, re-verify too
+  const verifyVideo = async (videoPath) => {
+    if (!transcription) return true; // no transcription = no filter
+    const { relevant } = await verifyBrollVideoRelevance(videoPath, transcription, sectionContext);
+    return relevant;
+  };
+
+  // Skip download if already cached — but still re-verify relevance
+  if (fs.existsSync(destPath) && fs.statSync(destPath).size > 50000) {
+    console.log(`📼 [StockVideo] Caché encontrada: ${filename} — verificando relevancia...`);
+    if (await verifyVideo(destPath)) {
+      return { filename, publicFilename: filename, label: keyword, relativePath: filename, absPath: destPath, suggestedUse: 'video', position: 'fullscreen', size: '100%', animation: 'none', opacity: 1 };
+    }
+    console.log(`🚫 [StockVideo] Caché rechazada por verificación — eliminando y buscando nuevo`);
+    try { fs.unlinkSync(destPath); } catch {}
+  }
+
+  const tryDownloadUrl = async (url) => {
+    const r = await fetch(url, { signal: AbortSignal.timeout(45000) });
+    if (!r.ok) return null;
+    const buf = Buffer.from(await r.arrayBuffer());
+    if (buf.length < 50_000 || buf.length > 40 * 1024 * 1024) return null; // 50KB–40MB
+    return buf;
+  };
+
+  const trySaveAndVerify = async (buf, source) => {
+    if (!fs.existsSync(holavideoPublicDir)) fs.mkdirSync(holavideoPublicDir, { recursive: true });
+    fs.writeFileSync(destPath, buf);
+    console.log(`🎬 [StockVideo] ${source}: "${keyword}" → ${filename} (${Math.round(buf.length / 1024)}KB)`);
+    if (await verifyVideo(destPath)) {
+      return { filename, publicFilename: filename, label: keyword, relativePath: filename, absPath: destPath, suggestedUse: 'video', position: 'fullscreen', size: '100%', animation: 'none', opacity: 1 };
+    }
+    console.log(`🚫 [StockVideo] Video de ${source} rechazado — no es relevante para el clip`);
+    try { fs.unlinkSync(destPath); } catch {}
+    return null;
+  };
+
+  // ── Pexels ────────────────────────────────────────────────────────────────
+  if (PEXELS_KEY) {
+    try {
+      const res = await fetch(
+        `https://api.pexels.com/videos/search?query=${encodeURIComponent(keyword)}&per_page=5&size=medium&orientation=landscape`,
+        { headers: { Authorization: PEXELS_KEY }, signal: AbortSignal.timeout(10000) }
+      );
+      if (res.ok) {
+        const data = await res.json();
+        for (const video of (data.videos || [])) {
+          const files = (video.video_files || []).sort((a, b) => (a.width || 0) - (b.width || 0));
+          const file  = files.find(f => f.width >= 640 && f.width <= 1280) || files[0];
+          if (!file?.link) continue;
+          const buf = await tryDownloadUrl(file.link);
+          if (!buf) continue;
+          const asset = await trySaveAndVerify(buf, 'Pexels');
+          if (asset) return asset;
+        }
+      }
+    } catch (e) { console.warn(`⚠️ [StockVideo] Pexels error: ${e.message?.slice(0, 60)}`); }
+  }
+
+  // ── Pixabay fallback ──────────────────────────────────────────────────────
+  if (PIXABAY_KEY) {
+    try {
+      const res = await fetch(
+        `https://pixabay.com/api/videos/?key=${PIXABAY_KEY}&q=${encodeURIComponent(keyword)}&per_page=5&video_type=all`,
+        { signal: AbortSignal.timeout(10000) }
+      );
+      if (res.ok) {
+        const data = await res.json();
+        for (const video of (data.hits || [])) {
+          const file = video.videos?.medium || video.videos?.small || video.videos?.tiny;
+          if (!file?.url) continue;
+          const buf = await tryDownloadUrl(file.url);
+          if (!buf) continue;
+          const asset = await trySaveAndVerify(buf, 'Pixabay');
+          if (asset) return asset;
+        }
+      }
+    } catch (e) { console.warn(`⚠️ [StockVideo] Pixabay error: ${e.message?.slice(0, 60)}`); }
+  }
+
+  console.log(`ℹ️ [StockVideo] Sin resultados verificados para "${keyword}"`);
+  return null;
+}
+
+/**
+ * Try to get a relevant image from Wikipedia for a given keyword.
+ * Uses the REST summary API (thumbnail) and verifies with Gemini Vision.
+ * Returns { imgPath, keyword } or null.
+ */
+async function tryWikipediaImageForKeyword(keyword, transcription, tmpDir) {
+  // Try English first, then Spanish
+  for (const lang of ['en', 'es']) {
+    try {
+      const url = `https://${lang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(keyword.replace(/\s+/g, '_'))}`;
+      const res = await fetch(url, {
+        headers: { 'User-Agent': 'HolaVideo-BrollBot/1.0 (educational)' },
+        signal: AbortSignal.timeout(7000)
+      });
+      if (!res.ok) continue;
+      const data = await res.json();
+      const imgUrl = data?.thumbnail?.source || data?.originalimage?.source;
+      if (!imgUrl) continue;
+
+      const imgRes = await fetch(imgUrl, { signal: AbortSignal.timeout(12000) });
+      if (!imgRes.ok) continue;
+      const ext = imgUrl.match(/\.(jpe?g|png|webp)/i)?.[1]?.replace('jpeg', 'jpg') || 'jpg';
+      const safeKw = keyword.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 30);
+      const imgPath = path.join(tmpDir, `wiki_${lang}_${safeKw}.${ext}`);
+      const buf = Buffer.from(await imgRes.arrayBuffer());
+      if (buf.length < 3000) continue; // tiny/corrupt
+      fs.writeFileSync(imgPath, buf);
+      return { imgPath, keyword };
+    } catch { /* try next lang */ }
+  }
+  return null;
+}
+
+/**
  * Search and download web images for a Remotion clip section.
- * Uses DuckDuckGo (via image_search.py) + Gemini Vision filter.
+ * Uses Wikipedia first (no watermarks), then DuckDuckGo as fallback.
  * Returns up to maxApproved asset descriptors ready for Remotion.
  */
-async function searchAndDownloadRemotionImages(transcription, sectionKey, holavideoPublicDir, spawnFn, maxApproved = 3, previewId = '') {
+async function searchAndDownloadRemotionImages(transcription, sectionKey, holavideoPublicDir, spawnFn, maxApproved = 4, previewId = '', sectionContext = '', skipStockVideo = false) {
   const os = await import('node:os');
 
   // 1. Extract visual search terms by analyzing every visual element in the transcription
   let keywords = [];
   try {
+    const sectionCtxKw = sectionContext
+      ? `\nGuion original de la sección (con ortografía correcta de nombres — úsalo para añadir el universo/juego/evento específico a los términos de búsqueda, ej: si la sección es sobre WoW, añade "World of Warcraft" a términos ambiguos como "guerreros" → "World of Warcraft warriors resistance gear"):\n"${sectionContext.slice(0, 400)}"\n`
+      : '';
     const kwPrompt = `Analiza el siguiente texto y extrae términos de búsqueda de imágenes para ilustrar visualmente cada elemento mencionado en un video informativo. Busca específicamente:
 - PERSONAS: nombre completo + contexto (ej: "Billy Mitchell gamer", "Steve Wiebe Donkey Kong player")
 - OBJETOS/ELEMENTOS: objetos concretos mencionados (ej: "VHS tape cassette", "magnifying glass investigation", "arcade machine")
 - LUGARES/CIUDADES: la ciudad o lugar + foto y también un mapa (ej: "Chicago city aerial view", "Chicago map")
 - EVENTOS: acciones o situaciones concretas (ej: "video game competition 1980s", "world record attempt arcade")
 - CONCEPTOS VISUALES: conceptos que se pueden fotografiar (ej: "fraud evidence documents", "trophy award ceremony")
-
+${sectionCtxKw}
 Genera entre 4 y 6 términos de búsqueda EN INGLÉS, cortos (2-5 palabras), concretos y diferentes entre sí. Si se menciona un lugar, incluye SIEMPRE una búsqueda de foto Y una de mapa.
 
 Responde ÚNICAMENTE con un JSON array de strings, sin explicación:
 ["término 1", "término 2", "término 3", "término 4"]
 
-Texto: ${transcription.slice(0, 600)}`;
+Texto del clip: ${transcription.slice(0, 600)}`;
 
     const raw = await generateTextWithLLM(kwPrompt, { model: 'gemini-3.1-flash-lite', context: 'llm', retries: 2 });
     const jsonStr = raw.match(/\[[\s\S]*\]/)?.[0];
@@ -18578,21 +18815,29 @@ Texto: ${transcription.slice(0, 600)}`;
     console.warn(`⚠️ [WebImg] Keywords fallback para ${sectionKey}: ${e.message?.slice(0, 80)}`);
   }
 
-  // 2. Download images for each keyword to its own sub-dir so we know which keyword produced which file
+  // 2. Download images: Wikipedia first (no watermarks), DuckDuckGo as fallback
   const tmpDir = path.join(os.default.tmpdir(), `hv_web_${sectionKey}_${Date.now()}`);
   fs.mkdirSync(tmpDir, { recursive: true });
 
   // Map: file path → keyword that produced it
   const fileToKeyword = new Map();
   for (const keyword of keywords) {
+    // ── Wikipedia first ──────────────────────────────────────────────────
+    const wikiResult = await tryWikipediaImageForKeyword(keyword, transcription, tmpDir);
+    if (wikiResult) {
+      console.log(`📖 [WebImg] Wikipedia: imagen encontrada para "${keyword}"`);
+      fileToKeyword.set(wikiResult.imgPath, keyword);
+    }
+
+    // ── DuckDuckGo fallback (always runs to fill remaining slots) ────────
     const kwDir = path.join(tmpDir, keyword.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 30));
     fs.mkdirSync(kwDir, { recursive: true });
     try {
-      await brollDownloadImages({ term: keyword, maxImages: 3, outputDir: kwDir, status: 'pending' }, spawnFn);
+      await brollDownloadImages({ term: keyword, maxImages: 5, outputDir: kwDir, status: 'pending' }, spawnFn);
       const downloaded = fs.readdirSync(kwDir).filter(f => /\.(jpe?g|png|webp)$/i.test(f));
       downloaded.forEach(f => fileToKeyword.set(path.join(kwDir, f), keyword));
     } catch (e) {
-      console.warn(`⚠️ [WebImg] Error descargando "${keyword}": ${e.message?.slice(0, 60)}`);
+      console.warn(`⚠️ [WebImg] DDG error "${keyword}": ${e.message?.slice(0, 60)}`);
     }
   }
 
@@ -18600,13 +18845,36 @@ Texto: ${transcription.slice(0, 600)}`;
   const allFiles = [...fileToKeyword.keys()];
 
   if (!fs.existsSync(holavideoPublicDir)) fs.mkdirSync(holavideoPublicDir, { recursive: true });
+
+  // Build a set of filenames already used in other clips to avoid repeating the same image
+  const alreadyUsedLabels = new Set();
+  try {
+    const manifestPath = path.join(holavideoPublicDir, 'hv_web_manifest.json');
+    if (fs.existsSync(manifestPath)) {
+      const mf = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+      const allMfAssets = [
+        ...Object.values(mf.sections || {}).flat(),
+        ...Object.values(mf.clips || {}).flat()
+      ];
+      allMfAssets.forEach(a => { if (a.label) alreadyUsedLabels.add(a.label.toLowerCase().trim()); });
+    }
+  } catch {}
+
   const assets = [];
 
   for (const imgPath of allFiles) {
     if (assets.length >= maxApproved) break;
     const keyword = fileToKeyword.get(imgPath) || '';
-    const { relevant, label } = await verifySearchImage(imgPath, transcription, keyword);
+    const { relevant, label } = await verifySearchImage(imgPath, transcription, keyword, sectionContext);
     if (!relevant) continue;
+
+    // Skip if this exact label was already used in another clip (same image reused)
+    const labelKey = label.toLowerCase().trim();
+    if (alreadyUsedLabels.has(labelKey)) {
+      console.log(`⏭️ [WebImg] Omitiendo imagen ya usada en otro clip: "${label}"`);
+      continue;
+    }
+    alreadyUsedLabels.add(labelKey);
 
     // Filename includes previewId prefix to avoid cross-project collisions
     const safeLabel = label.replace(/[^a-zA-Z0-9áéíóúüñÁÉÍÓÚÜÑ\s]/g, '').trim()
@@ -18620,11 +18888,18 @@ Texto: ${transcription.slice(0, 600)}`;
     console.log(`✅ [WebImg] Aprobada: ${filename} — "${label}" (${sizeKB}KB)`);
     assets.push({
       filename, publicFilename: filename,
-      label,          // Human-readable description of what the image shows
+      label,
       relativePath: filename, absPath: destPath,
       suggestedUse: 'photo', position: 'fullscreen', size: '100%',
       animation: 'slow-zoom-in', opacity: 1
     });
+  }
+
+  // 4. Try to find one stock video using the most specific keyword (skip if forceVideo is on — broll handles it)
+  if (!skipStockVideo && (assets.length > 0 || keywords.length > 0)) {
+    const videoKeyword = keywords[0] || transcription.slice(0, 60);
+    const videoAsset = await searchAndDownloadStockVideo(videoKeyword, holavideoPublicDir, sectionKey, previewId, transcription, sectionContext);
+    if (videoAsset) assets.unshift(videoAsset); // video goes first so LLM uses it as base layer
   }
 
   // Cleanup tmp
@@ -18658,7 +18933,7 @@ app.post('/api/prefetch-remotion-images', async (req, res) => {
       if (!sectionText.trim()) continue;
 
       console.log(`🔍 [Prefetch] Sección ${section.secNum}: "${sectionText.slice(0, 80)}..."`);
-      const assets = await searchAndDownloadRemotionImages(sectionText, sectionKey, holavideoPublicDir, spawn, 3, preview.previewId);
+      const assets = await searchAndDownloadRemotionImages(sectionText, sectionKey, holavideoPublicDir, spawn, 4, preview.previewId);
       manifest.sections[sectionKey] = assets;
       totalImages += assets.length;
       console.log(`📦 [Prefetch] Sección ${section.secNum}: ${assets.length} imagen(es) lista(s)`);
@@ -18679,7 +18954,27 @@ app.post('/api/prefetch-remotion-images', async (req, res) => {
 // POST /api/generate-ai-clip — Generate AI video clip using Whisper + HolaVideo/Remotion
 app.post('/api/generate-ai-clip', async (req, res) => {
   try {
-    const { folderName, previewId, sectionIndex, clipIndex, styleInstructions, model, styleContext, useRealImages, useAssets, useWebImages, isVertical: isVerticalReq } = req.body;
+    const { folderName, previewId, sectionIndex, clipIndex, styleInstructions, model, modelChain, styleContext, useRealImages, useAssets,
+            useWebImages: useWebImagesReq, useStockVideo: useStockVideoReq, useBrollVideo: useBrollVideoReq,
+            forceVideo: forceVideoLegacy, isVertical: isVerticalReq } = req.body;
+
+    // Per-clip random selection from enabled types
+    const enabledTypes = [];
+    if (useWebImagesReq)   enabledTypes.push('webImages');
+    if (useStockVideoReq)  enabledTypes.push('stockVideo');
+    if (useBrollVideoReq)  enabledTypes.push('brollVideo');
+    // Legacy forceVideo fallback (old clients)
+    if (!enabledTypes.length && forceVideoLegacy) enabledTypes.push('brollVideo');
+
+    const selectedTypes = new Set();
+    if (enabledTypes.length > 0) {
+      for (const t of enabledTypes) { if (Math.random() < 0.65) selectedTypes.add(t); }
+      if (selectedTypes.size === 0) selectedTypes.add(enabledTypes[Math.floor(Math.random() * enabledTypes.length)]);
+    }
+    const useWebImages = selectedTypes.has('webImages') || (!enabledTypes.length && (useWebImagesReq ?? true));
+    const forceVideo   = selectedTypes.has('brollVideo');
+    const skipStock    = !selectedTypes.has('stockVideo') && enabledTypes.length > 0;
+    console.log(`🎲 [ClipMix] Habilitados: [${enabledTypes.join(', ')}] → Seleccionados: [${[...selectedTypes].join(', ')}]`);
     
     // Load preview
     let preview = brollPreviewData.get(previewId);
@@ -18696,6 +18991,44 @@ app.post('/api/generate-ai-clip', async (req, res) => {
     if (!section) return res.status(400).json({ error: 'Sección no encontrada' });
     const clip = section.clips[clipIndex];
     if (!clip) return res.status(400).json({ error: 'Clip no encontrado' });
+
+    // Full section text — gives Gemini thematic context beyond this clip's phrase alone
+    // Prefer the original script .txt (correct spelling) over Whisper phrases (may have errors)
+    let sectionContext = '';
+    {
+      const projectPath = preview.projectPath;
+      const folderName = path.basename(projectPath);
+      const secNum = section.secNum;
+      // Try canonical name first: {folder}_seccion_{N}_guion.txt
+      const guionPath = path.join(projectPath, `seccion_${secNum}`, `${folderName}_seccion_${secNum}_guion.txt`);
+      if (fs.existsSync(guionPath)) {
+        try {
+          sectionContext = fs.readFileSync(guionPath, 'utf8').trim().slice(0, 1200);
+          console.log(`📄 Guion original cargado para sección ${secNum} (${sectionContext.length} chars)`);
+        } catch {}
+      }
+      // Fallback: any .txt in the section dir that isn't metadata/keywords
+      if (!sectionContext) {
+        const secDir = path.join(projectPath, `seccion_${secNum}`);
+        if (fs.existsSync(secDir)) {
+          const txts = fs.readdirSync(secDir).filter(f => f.endsWith('.txt') && !f.includes('metadata') && !f.includes('keywords'));
+          if (txts.length > 0) {
+            try {
+              sectionContext = fs.readFileSync(path.join(secDir, txts[0]), 'utf8').trim().slice(0, 1200);
+              console.log(`📄 Guion (fallback) cargado: ${txts[0]} (${sectionContext.length} chars)`);
+            } catch {}
+          }
+        }
+      }
+      // Last resort: concatenate Whisper phrase texts
+      if (!sectionContext) {
+        sectionContext = section.clips
+          .map(c => c.phraseText || '')
+          .filter(t => t.trim().length > 5)
+          .join(' ')
+          .slice(0, 800);
+      }
+    }
 
     // Calculate timestamps for this clip
     const { startTime, duration } = calculateClipTimestamps(section.clips, clipIndex);
@@ -18748,19 +19081,29 @@ app.post('/api/generate-ai-clip', async (req, res) => {
     // Remotion includes them in the animation composition instead of generating a placeholder.
     let manualPhotoAsset = null;
     {
-      const nameWords = [...new Set((transcription.match(/[A-ZÁÉÍÓÚÜÑ][a-záéíóúüñA-Z0-9]{3,}/g) || []))];
+      // Common Spanish words that appear capitalized at sentence start — not entity names
+      const STOPWORDS_ES = new Set(['Para','Pero','Esta','Este','Esto','Como','Cuando','Donde','Desde','Hasta','Sobre','Entre','Cada','Todo','Toda','Todos','Todas','Algo','Alguien','Nadie','Nada','Muy','Más','Menos','Porque','Aunque','Mientras','Según','Tras','Ante','Bajo','Mediante','Durante','Incluso','Además','También','Solo','Sólo','Ahora','Antes','Después','Aquí','Allí','Luego','Entonces','Así','Aún','Hay','Fue','Era','Son','Ser','Tener','Hacer','Poder','Saber','Querer','Venir','Decir','Llegar','Pasar','Queda','Siendo','Teniendo','Siendo','Dicho','Una','Unas','Unos','Los','Las','Del','Sus','Nos','Les','Con','Sin','Por','Que','Cual','Cuyo','Quien','Cuál','Qué','Fue','Han','Has','Hay','Hoy','Ayer']);
+
+      const nameWords = [...new Set((transcription.match(/[A-ZÁÉÍÓÚÜÑ][a-záéíóúüñA-Z0-9]{3,}/g) || []))]
+        .filter(w => !STOPWORDS_ES.has(w)); // exclude common words capitalized by sentence position
       for (const word of nameWords) {
         const found = findManualAsset(word, holavideoPublic, [preview.projectPath]);
         if (found) {
-          // Ensure it's accessible from holavideoPublic (copy if needed)
           const ext = path.extname(found);
           const safeWord = word.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
           const assetFilename = `ra_manual_${safeWord}${ext}`;
           const destPath = path.join(holavideoPublic, assetFilename);
           try {
             if (!fs.existsSync(destPath)) fs.copyFileSync(found, destPath);
-            manualPhotoAsset = { path: destPath, filename: assetFilename, publicFilename: assetFilename, relativePath: assetFilename, absPath: destPath, label: word, suggestedUse: 'photo', position: 'center', size: '80%', animation: 'slow-zoom-in', opacity: 1 };
-            console.log(`📸 Foto manual para "${word}": ${path.basename(found)} → Remotion la usará en el clip`);
+            // Verify with Gemini Vision that the image is actually relevant to this clip
+            const { relevant, label: vLabel } = await verifySearchImage(destPath, transcription, word, sectionContext);
+            if (!relevant) {
+              console.log(`🚫 Foto manual "${word}" descartada — no es relevante para este clip según Gemini`);
+              continue;
+            }
+            const displayLabel = vLabel || word;
+            manualPhotoAsset = { path: destPath, filename: assetFilename, publicFilename: assetFilename, relativePath: assetFilename, absPath: destPath, label: displayLabel, suggestedUse: 'photo', position: 'center', size: '80%', animation: 'slow-zoom-in', opacity: 1 };
+            console.log(`📸 Foto manual para "${word}" ✅ verificada: ${path.basename(found)} — "${displayLabel}"`);
           } catch (e) {
             console.warn(`⚠️ No se pudo copiar foto "${path.basename(found)}": ${e.message}`);
           }
@@ -18842,25 +19185,204 @@ app.post('/api/generate-ai-clip', async (req, res) => {
       }
     }
 
-    // Check pre-fetched web images from prefetch-remotion-images endpoint
+    // Web images: per-clip search (accurate) + manifest cache (fast)
     if (!imageAsset && useWebImages !== false) {
       const manifestPath = path.join(holavideoPublic, 'hv_web_manifest.json');
-      if (fs.existsSync(manifestPath)) {
+      const clipKey = `sec${section.secNum}_clip${clip.index ?? clipIndex}`;
+
+      // 1. Try per-clip cache in manifest first
+      let manifest = null;
+      try {
+        if (fs.existsSync(manifestPath)) {
+          manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+          if (manifest.previewId && manifest.previewId !== previewId) manifest = null; // wrong project
+        }
+      } catch {}
+
+      // Re-verify cached images with current strict criteria (section context may have changed)
+      const rawCached = manifest?.clips?.[clipKey]?.filter(a => fs.existsSync(a.absPath)) || [];
+      if (rawCached.length > 0) {
+        console.log(`🔄 [WebImg] Re-verificando ${rawCached.length} imagen(es) en caché para clip ${clipKey}...`);
+        const reVerified = [];
+        for (const a of rawCached) {
+          const { relevant } = await verifySearchImage(a.absPath, transcription, a.label || '', sectionContext);
+          if (relevant) reVerified.push(a);
+          else console.log(`🚫 [WebImg] Caché descartada (ya no pasa verificación): ${a.filename}`);
+        }
+        if (reVerified.length > 0) {
+          imageAsset = { assets: reVerified };
+          console.log(`✅ [WebImg] ${reVerified.length} imagen(es) del caché verificadas para clip ${clipKey}`);
+          // Update cache to only keep verified ones
+          if (reVerified.length < rawCached.length && manifest) {
+            manifest.clips[clipKey] = reVerified;
+            try { fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2)); } catch {}
+          }
+        } else {
+          // All cached images failed — clear cache entry so next run doesn't retry them
+          if (manifest?.clips?.[clipKey]) {
+            delete manifest.clips[clipKey];
+            try { fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2)); } catch {}
+          }
+          console.log(`⚠️ [WebImg] Caché inválida — buscando imágenes nuevas para clip ${clipKey}`);
+        }
+      }
+
+      if (!imageAsset) {
+        // No valid cache — do a fresh per-clip search using this clip's specific transcription
+        console.log(`🔍 [WebImg] Buscando imágenes específicas para clip ${clipKey}...`);
         try {
-          const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-          // Only use manifest if it belongs to the current project
-          if (manifest.previewId && manifest.previewId !== previewId) {
-            console.log(`⚠️ [WebImg] Manifiesto es de otro proyecto (${manifest.previewId?.slice(0,8)}), ignorando`);
+          const clipAssets = await searchAndDownloadRemotionImages(
+            transcription, clipKey, holavideoPublic, spawn, 3, previewId, sectionContext, skipStock
+          );
+          if (clipAssets.length > 0) {
+            imageAsset = { assets: clipAssets };
+            console.log(`✅ [WebImg] ${clipAssets.length} imagen(es) encontradas para clip ${clipKey}`);
+            // Save to manifest cache under clips
+            const freshManifest = (() => {
+              try { return fs.existsSync(manifestPath) ? JSON.parse(fs.readFileSync(manifestPath, 'utf8')) : {}; } catch { return {}; }
+            })();
+            if (!freshManifest.clips) freshManifest.clips = {};
+            if (!freshManifest.previewId) freshManifest.previewId = previewId;
+            freshManifest.clips[clipKey] = clipAssets;
+            fs.writeFileSync(manifestPath, JSON.stringify(freshManifest, null, 2));
           } else {
+            // 3. Fallback to section-level pre-fetched images
             const sectionKey = `sec${section.secNum}`;
-            const sections = manifest.sections || manifest; // backwards compat
-            const webAssets = (sections[sectionKey] || []).filter(a => fs.existsSync(a.absPath));
-            if (webAssets.length > 0) {
-              imageAsset = { assets: webAssets };
-              console.log(`🌐 Usando ${webAssets.length} imagen(es) web pre-cacheadas para sección ${section.secNum}`);
+            const sections = manifest?.sections || {};
+            const sectionAssets = (sections[sectionKey] || []).filter(a => fs.existsSync(a.absPath));
+            if (sectionAssets.length > 0) {
+              imageAsset = { assets: sectionAssets };
+              console.log(`🌐 [WebImg] Fallback: usando ${sectionAssets.length} imagen(es) de sección ${section.secNum}`);
             }
           }
-        } catch { /* manifest malformado o vacío, ignorar */ }
+        } catch (e) {
+          console.warn(`⚠️ [WebImg] Error en búsqueda por clip: ${e.message?.slice(0, 80)}`);
+        }
+      }
+    }
+
+    // ── B-Roll video asset: with forceVideo skip verification, otherwise verify with Gemini ──
+    {
+      const videoExtsSet = new Set(['.mp4', '.webm', '.mkv', '.mov', '.avi']);
+      const isOriginalBroll = (p) =>
+        p && videoExtsSet.has(path.extname(p).toLowerCase()) &&
+        !path.basename(p).startsWith('ai_clip_') &&
+        fs.existsSync(p);
+
+      // Build candidate list from all three sources
+      const buildBrollCandidates = () => {
+        const candidates = [];
+        const seen = new Set();
+        const add = (p) => { if (p && !seen.has(p) && isOriginalBroll(p)) { seen.add(p); candidates.push(p); } };
+
+        (section.videoFiles || []).forEach(add);
+        (section.clips || []).forEach(c => add(c.sourcePath));
+
+        const projPath = preview.projectPath || '';
+        const secNum = section.secNum;
+        const brollDirCandidates = [
+          path.join(projPath, `seccion_${secNum}`, 'broll'),
+          path.join(projPath, `seccion_0${secNum}`, 'broll'),
+          path.join(projPath, `section_${secNum}`, 'broll'),
+          path.join(projPath, 'broll'),
+          path.join(projPath, `seccion_${secNum}`),
+        ];
+        for (const dir of brollDirCandidates) {
+          if (!fs.existsSync(dir)) continue;
+          const files = fs.readdirSync(dir)
+            .filter(f => videoExtsSet.has(path.extname(f).toLowerCase()) && !f.startsWith('ai_clip_'));
+          if (files.length > 0) {
+            files.forEach(f => add(path.join(dir, f)));
+            break;
+          }
+        }
+        return candidates;
+      };
+
+      const getBrollDuration = (filePath) => {
+        try {
+          return parseFloat(execSync(
+            `ffprobe -v error -select_streams v:0 -show_entries format=duration -of csv=p=0 "${filePath}"`,
+            { stdio: ['ignore', 'pipe', 'pipe'], timeout: 5000 }
+          ).toString().trim()) || 0;
+        } catch { return 0; }
+      };
+
+      const copyBrollAsset = (vPath, suffix = '') => {
+        const pidSlug = previewId ? previewId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 10) + '_' : '';
+        const brollFilename = `hv_broll_${pidSlug}sec${section.secNum}_clip${clipIndex}${suffix}.mp4`;
+        const brollDest = path.join(holavideoPublic, brollFilename);
+
+        // Always re-generate: trim to clip duration + re-transcode to H.264
+        // Prevents timeout in Remotion OffthreadVideo proxy (original YouTube videos can be 15+ min)
+        const clipLen = Math.ceil((duration || 7) + 1); // +1s buffer
+        const tmpSrc = path.join(holavideoPublic, `_tmp_broll_${Date.now()}.mp4`);
+        try {
+          fs.copyFileSync(vPath, tmpSrc);
+          // Pick start offset so different clips use different parts of the video
+          const srcDuration = getBrollDuration(tmpSrc);
+          const maxStart = Math.max(0, srcDuration - clipLen - 2);
+          const startOffset = maxStart > 0 ? (clipIndex * Math.ceil(clipLen)) % maxStart : 0;
+          execSync(
+            `ffmpeg -y -ss ${startOffset.toFixed(3)} -i "${tmpSrc}" -t ${clipLen} -c:v libx264 -preset fast -crf 23 -map 0:v -map 0:a? -c:a aac -ar 44100 -movflags +faststart "${brollDest}"`,
+            { stdio: 'ignore', timeout: 120000 }
+          );
+          console.log(`🎞️ [ForceVideo] Recortado+H.264: ${brollFilename} (${startOffset.toFixed(1)}s → ${(startOffset + clipLen).toFixed(1)}s de ${srcDuration.toFixed(1)}s total)`);
+        } catch (e) {
+          console.warn(`⚠️ [ForceVideo] Transcode falló, copiando directo: ${e.message?.slice(0, 80)}`);
+          if (!fs.existsSync(brollDest)) fs.copyFileSync(vPath, brollDest);
+        } finally {
+          try { if (fs.existsSync(tmpSrc)) fs.unlinkSync(tmpSrc); } catch {}
+        }
+        return { filename: brollFilename, publicFilename: brollFilename, label: path.basename(vPath, path.extname(vPath)), relativePath: brollFilename, absPath: brollDest, suggestedUse: 'video', position: 'fullscreen', size: '100%', animation: 'none', opacity: 1 };
+      };
+
+      if (forceVideo) {
+        // ForceVideo: no verification — pick a B-Roll directly (rotate by clipIndex for variety)
+        const hasVideoAsset = imageAsset?.assets?.some(a => a.suggestedUse === 'video');
+        if (!hasVideoAsset) {
+          const candidates = buildBrollCandidates();
+          console.log(`🎬 [ForceVideo] ${candidates.length} video(s) B-Roll disponibles (sin verificación)`);
+          if (candidates.length > 0) {
+            const picked = candidates[clipIndex % candidates.length];
+            console.log(`✅ [ForceVideo] Usando B-Roll: "${path.basename(picked)}"`);
+            const asset = copyBrollAsset(picked, '_fv');
+            if (!imageAsset) imageAsset = { assets: [asset] };
+            else imageAsset.assets.unshift(asset);
+          } else {
+            console.log(`⚠️ [ForceVideo] No hay B-Roll en la sección — clip sin video de fondo`);
+          }
+        }
+      } else if (useWebImages !== false && clip.sourcePath && fs.existsSync(clip.sourcePath) &&
+                 !path.basename(clip.sourcePath).startsWith('ai_clip_') &&
+                 !path.basename(clip.sourcePath).startsWith('hv_broll_')) {
+        // Normal mode: verify current clip's sourcePath with Gemini before using.
+        // Skip ai_clip_* and hv_broll_* — those are composited AI outputs, not original B-Roll.
+        const ext = path.extname(clip.sourcePath).toLowerCase();
+        if (videoExtsSet.has(ext)) {
+          console.log(`🎞️ [BrollVerify] Verificando clip B-Roll: ${path.basename(clip.sourcePath)}`);
+          const { relevant, label: brollLabel } = await verifyBrollVideoRelevance(clip.sourcePath, transcription, sectionContext);
+          if (relevant) {
+            const pidSlug = previewId ? previewId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 10) + '_' : '';
+            const safeLabel = (brollLabel || 'broll').replace(/[^a-zA-Z0-9\s]/g, '').trim().replace(/\s+/g, '_').toLowerCase().slice(0, 40);
+            const brollFilename = `hv_broll_${pidSlug}sec${section.secNum}_clip${clipIndex}_${safeLabel}.mp4`;
+            const brollDest = path.join(holavideoPublic, brollFilename);
+            if (!fs.existsSync(brollDest)) {
+              const tmpSrc = path.join(holavideoPublic, `_tmp_broll_${Date.now()}.mp4`);
+              try {
+                fs.copyFileSync(clip.sourcePath, tmpSrc);
+                execSync(`ffmpeg -y -i "${tmpSrc}" -c:v libx264 -preset fast -crf 23 -c:a aac -ar 44100 -movflags +faststart "${brollDest}"`, { stdio: 'ignore', timeout: 120000 });
+              } catch { fs.copyFileSync(clip.sourcePath, brollDest); }
+              finally { try { if (fs.existsSync(tmpSrc)) fs.unlinkSync(tmpSrc); } catch {} }
+            }
+            const brollAsset = { filename: brollFilename, publicFilename: brollFilename, label: brollLabel, relativePath: brollFilename, absPath: brollDest, suggestedUse: 'video', position: 'fullscreen', size: '100%', animation: 'none', opacity: 1 };
+            if (!imageAsset) imageAsset = { assets: [brollAsset] };
+            else imageAsset.assets.unshift(brollAsset);
+            console.log(`✅ [BrollVerify] Clip B-Roll verificado: ${brollFilename}`);
+          } else {
+            console.log(`🚫 [BrollVerify] Clip B-Roll descartado — no es relevante`);
+          }
+        }
       }
     }
 
@@ -18871,6 +19393,20 @@ app.post('/api/generate-ai-clip', async (req, res) => {
       imageAsset.assets.unshift(manualPhotoAsset); // manual photo takes priority
     }
 
+    // ── Separate B-Roll video from image assets before HolaVideo ──────────────
+    // OffthreadVideo in Remotion consistently crashes the headless renderer.
+    // Instead: render Remotion WITHOUT video, then composite broll via FFmpeg after.
+    let brollVideoForComposite = null;
+    if (imageAsset?.assets) {
+      const videoIdx = imageAsset.assets.findIndex(a => a.suggestedUse === 'video');
+      if (videoIdx >= 0) {
+        brollVideoForComposite = imageAsset.assets[videoIdx];
+        imageAsset.assets.splice(videoIdx, 1);
+        if (imageAsset.assets.length === 0) imageAsset = null;
+        console.log(`🎬 [ForceVideo] B-Roll separado para composite post-render: ${brollVideoForComposite.filename}`);
+      }
+    }
+
     let visualPrompt = '';
     let generatedCode = '';
     // Cost accumulator: any paid Gemini call (index.js side) adds here automatically via AsyncLocalStorage
@@ -18878,7 +19414,7 @@ app.post('/api/generate-ai-clip', async (req, res) => {
     let _hvResult = null;
     try {
       _hvResult = await _clipCostCtx.run(_idxCosts, () =>
-        generateRemotionClip(transcription, duration, outputPath, styleInstructions, model, styleContext, isVertical, imageAsset)
+        generateRemotionClip(transcription, duration, outputPath, styleInstructions, model, styleContext, isVertical, imageAsset, sectionContext, modelChain, false /* forceVideo handled via FFmpeg composite */)
       );
       visualPrompt = _hvResult.visualPrompt || '';
       generatedCode = _hvResult.generatedCode || '';
@@ -18909,6 +19445,38 @@ app.post('/api/generate-ai-clip', async (req, res) => {
           console.log(`   HolaVideo [${hvModel}]: ${hvIn}↓ ${hvOut}↑ tok → $${hvCost.toFixed(4)} MXN`);
         console.log(`   TOTAL: ${totalIn}↓ ${totalOut}↑ tokens → $${totalCost.toFixed(4)} MXN / USD $${(totalCost/MXN_PER_USD_CLIP).toFixed(5)}`);
         console.log(`═══════════════════════════════════════════\n`);
+      }
+    }
+
+    // ── FFmpeg composite: broll video as background behind Remotion output ────
+    // Uses "screen" blend: Remotion's dark/black background becomes transparent,
+    // revealing the B-Roll video. Bright neon text/graphics stay fully visible.
+    if (brollVideoForComposite?.absPath && fs.existsSync(outputPath) && fs.existsSync(brollVideoForComposite.absPath)) {
+      const compositedPath = outputPath.replace('.mp4', '_bg.mp4');
+      const W = isVertical ? 720 : 1280;
+      const H = isVertical ? 1280 : 720;
+      try {
+        // colorkey removes black pixels from Remotion output making them transparent,
+        // then overlay B-Roll shows through those transparent areas naturally.
+        // similarity=0.25 removes near-black (Remotion background), blend=0.08 feathers edges.
+        execSync(
+          `ffmpeg -y -stream_loop -1 -t ${duration + 0.5} -i "${brollVideoForComposite.absPath}" -i "${outputPath}" ` +
+          `-filter_complex "[0:v]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},setpts=PTS-STARTPTS[bg];` +
+          `[1:v]colorkey=color=0x000000:similarity=0.25:blend=0.08[fg];` +
+          `[bg][fg]overlay=format=auto[out]" ` +
+          `-map [out] -t ${duration} -c:v libx264 -preset fast -crf 20 -movflags +faststart "${compositedPath}"`,
+          { stdio: 'ignore', timeout: 120000 }
+        );
+        if (fs.existsSync(compositedPath) && fs.statSync(compositedPath).size > 50000) {
+          fs.renameSync(compositedPath, outputPath);
+          console.log(`✅ [ForceVideo] B-Roll composited (colorkey overlay): ${path.basename(outputPath)}`);
+        } else {
+          console.warn(`⚠️ [ForceVideo] Composite file vacío/inválido — usando clip sin B-Roll`);
+          try { if (fs.existsSync(compositedPath)) fs.unlinkSync(compositedPath); } catch {}
+        }
+      } catch (e) {
+        console.warn(`⚠️ [ForceVideo] Composite FFmpeg falló: ${e.message?.slice(0, 100)}`);
+        try { if (fs.existsSync(compositedPath)) fs.unlinkSync(compositedPath); } catch {}
       }
     }
 
@@ -18974,7 +19542,8 @@ app.post('/api/generate-ai-clip', async (req, res) => {
 // POST /api/regenerate-section-by-phrases — Regenerate section clips based on narrator phrases
 app.post('/api/regenerate-section-by-phrases', async (req, res) => {
   try {
-    const { folderName, previewId, sectionIndex } = req.body;
+    const { folderName, previewId, sectionIndex, minClipDuration } = req.body;
+    const MIN_CLIP_DURATION = Math.max(2, Math.min(12, parseFloat(minClipDuration) || 4));
     
     // Load preview
     let preview = brollPreviewData.get(previewId);
@@ -19105,7 +19674,27 @@ app.post('/api/regenerate-section-by-phrases', async (req, res) => {
     const imageCount = allMedia.length - videoCount;
     console.log(`🎬 Material disponible: ${videoCount} videos, ${imageCount} imágenes (total: ${allMedia.length})`);
 
-    // Build new clips array based on segments
+    // Accumulate segments until reaching MIN_CLIP_DURATION, then emit.
+    // Prevents all-short segments from cascading into one giant clip.
+    const mergedSegments = [];
+    let pending = null;
+    for (const seg of segments) {
+      if (seg.end - seg.start < 0.5) continue;
+      if (!pending) {
+        pending = { start: seg.start, end: seg.end, text: seg.text };
+      } else {
+        pending.end = seg.end;
+        pending.text = (pending.text + ' ' + seg.text).trim();
+      }
+      if (pending.end - pending.start >= MIN_CLIP_DURATION) {
+        mergedSegments.push(pending);
+        pending = null;
+      }
+    }
+    if (pending) mergedSegments.push(pending); // remainder (may be shorter)
+    console.log(`🔗 Segmentos fusionados (mín ${MIN_CLIP_DURATION}s): ${segments.length} → ${mergedSegments.length}`);
+
+    // Build new clips array based on merged segments
     const newClips = [];
     const thumbsDir = path.join(preview.projectPath, 'broll_thumbs');
     if (!fs.existsSync(thumbsDir)) fs.mkdirSync(thumbsDir, { recursive: true });
@@ -19114,10 +19703,10 @@ app.post('/api/regenerate-section-by-phrases', async (req, res) => {
     const shuffledMedia = [...allMedia].sort(() => Math.random() - 0.5);
     let mediaIndex = 0;
 
-    for (let i = 0; i < segments.length; i++) {
-      const seg = segments[i];
+    for (let i = 0; i < mergedSegments.length; i++) {
+      const seg = mergedSegments[i];
       const duration = seg.end - seg.start;
-      
+
       // Skip very short segments (less than 0.5s)
       if (duration < 0.5) continue;
 
@@ -19925,7 +20514,7 @@ except Exception as e:
 /**
  * Use Gemini to analyze transcription and generate a smart visual prompt for HolaVideo
  */
-async function generateVisualPromptFromTranscription(transcription, styleInstructions = '', entityInfo = null) {
+async function generateVisualPromptFromTranscription(transcription, styleInstructions = '', entityInfo = null, sectionContext = '') {
   // Si hay imagen(es) real(es) descargada(s), avisar a Gemini para que las use
   let entityNote = '';
   if (Array.isArray(entityInfo) && entityInfo.length === 2) {
@@ -19950,8 +20539,17 @@ async function generateVisualPromptFromTranscription(transcription, styleInstruc
     ? `\n\nIMPORTANTE: El usuario quiere este ESTILO VISUAL específico: "${styleInstructions}". Incorpora estos elementos en tu prompt.${entityNote}`
     : entityNote;
 
+  const sectionCtxNote = sectionContext
+    ? `\n\nGUION ORIGINAL DE LA SECCIÓN (texto completo con ortografía correcta de nombres propios, úsalo como referencia principal de qué trata este clip): "${sectionContext.slice(0, 500)}"\nEste guion tiene los nombres correctos aunque la transcripción del clip los tenga mal escritos (Whisper puede deformar nombres de juegos, personajes, lugares, etc.).`
+    : '';
+
+  // Only switch to English text when the user EXPLICITLY mentions text language.
+  // Writing the style description IN English does NOT count — must say "textos en inglés" / "texts in english" / etc.
+  const wantsEnglish = /\b(textos?\s+(en\s+)?ingl[eé]s|texts?\s+in\s+english|english\s+texts?)\b/i.test(styleInstructions || '');
+  const langInstruction = wantsEnglish ? 'ALL overlay texts IN ENGLISH' : 'todos los textos en pantalla EN ESPAÑOL';
+
   // El LLM primero decide cuántos actos necesita la narración, luego los describe
-  const inputPrompt = `Analiza la narración y decide cuántos actos visuales necesita (1, 2 o 3 según su complejidad narrativa). Luego describe cada acto. Todos los textos EN ESPAÑOL.${styleSection}
+  const inputPrompt = `Analiza la narración y decide cuántos actos visuales necesita (1, 2 o 3 según su complejidad narrativa). Luego describe cada acto. IDIOMA DE TEXTOS: ${langInstruction}.${styleSection}${sectionCtxNote}
 
 CRITERIOS para decidir:
 - 1 acto: un solo hecho, dato o imagen (ej: una fecha, un número, una persona)
@@ -19976,6 +20574,7 @@ ACTOS: 3
 Acto 1: Siluetas de ejecutivos celebrando con brillo neon y texto "CELEBRACIÓN EN SONY". Acto 2: Altavoz con ondas rojas pulsando y texto "ALIANZA ROTA". Acto 3: Ícono de circuito quebrado con texto "MUERTA EN 24 HORAS".
 
 ---
+RECUERDA: ${langInstruction}.
 Narración: "${transcription.slice(0, 300)}"
 `;
   
@@ -20095,8 +20694,12 @@ Narración: "${transcription.slice(0, 300)}"
     return result.trim();
   } catch (err) {
     console.warn(`⚠️ Error generando prompt visual con LLM, usando fallback: ${err.message}`);
-    // Fallback: prompt genérico corto
-    return `Animación abstracta con formas geométricas y colores vibrantes representando el tema narrado.`;
+    // Fallback: use actual transcription + style (better than generic placeholder)
+    const styleHint = styleInstructions ? styleInstructions.slice(0, 200) : '';
+    const textHint = transcription ? transcription.slice(0, 150) : 'animación dinámica';
+    return styleHint
+      ? `${styleHint.split('.')[0]}. Escena animada representando: "${textHint}".`
+      : `Animación dinámica representando: "${textHint}". Colores vibrantes, movimiento fluido.`;
   }
 }
 
@@ -20785,10 +21388,11 @@ async function searchWikipediaImage(entityName, entityType = 'persona', holavide
 /**
  * Call HolaVideo server to generate an AI video clip
  */
-async function generateRemotionClip(transcription, durationSeconds, outputPath, styleInstructions = '', model = '', styleContext = '', isVertical = false, imageAsset = null) {
+async function generateRemotionClip(transcription, durationSeconds, outputPath, styleInstructions = '', model = '', styleContext = '', isVertical = false, imageAsset = null, sectionContext = '', modelChain = null, forceVideo = false) {
   const HOLAVIDEO_URL = process.env.HOLAVIDEO_URL || 'http://localhost:4000';
   const vidWidth = isVertical ? 720 : 1280;
   const vidHeight = isVertical ? 1280 : 720;
+  const wantsEnglish = /\b(textos?\s+(en\s+)?ingl[eé]s|texts?\s+in\s+english|english\s+texts?)\b/i.test(styleInstructions || '');
 
   // Si hay imágenes de entidades reales, pasarlas al generador de prompt
   const entityAssets = (imageAsset?.assets || []).filter(a => a.filename?.startsWith('person_') || a.filename?.startsWith('entity_'));
@@ -20798,7 +21402,7 @@ async function generateRemotionClip(transcription, durationSeconds, outputPath, 
   } else if (entityAssets.length === 1) {
     entityInfo = { name: entityAssets[0].label, type: entityAssets[0].entityType || 'persona' };
   }
-  const visualPrompt = await generateVisualPromptFromTranscription(transcription, styleInstructions, entityInfo);
+  const visualPrompt = await generateVisualPromptFromTranscription(transcription, styleInstructions, entityInfo, sectionContext);
 
   const modelLabel = model === 'flash' ? '3.5 Flash'
     : model === 'gemini-3-flash-preview'  ? '3 Flash Preview'
@@ -20819,7 +21423,7 @@ async function generateRemotionClip(transcription, durationSeconds, outputPath, 
       const response = await fetch(`${HOLAVIDEO_URL}/api/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: visualPrompt, duration: Math.ceil(durationSeconds), model: model || '', styleContext: styleContext || '', width: vidWidth, height: vidHeight, assets: assetList.map(a => ({ filename: a.publicFilename, use: a.suggestedUse, position: a.position, size: a.size, animation: a.animation, opacity: a.opacity, label: a.label })) })
+        body: JSON.stringify({ prompt: visualPrompt, duration: Math.ceil(durationSeconds), model: model || '', modelChain: Array.isArray(modelChain) && modelChain.length > 0 ? modelChain : undefined, styleContext: styleContext || '', width: vidWidth, height: vidHeight, assets: assetList.map(a => ({ filename: a.publicFilename, use: a.suggestedUse, position: a.position, size: a.size, animation: a.animation, opacity: a.opacity, label: a.label })), langHint: wantsEnglish ? 'en' : 'es', forceVideo: forceVideo || false })
       });
 
       if (response.status === 429) {

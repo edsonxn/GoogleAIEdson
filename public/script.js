@@ -17865,11 +17865,12 @@ function _updateTriangleUI(w) {
   // Sync hidden brollRemotionEvery for settings save compat (0=all broll, 1=some remotion)
   const hiddenEvery = document.getElementById('brollRemotionEvery');
   if (hiddenEvery) hiddenEvery.value = w.broll >= 0.99 ? '0' : '1';
-  // Sync web images toggle visual to reflect triangle state
+  // Show/hide compact asset-type panel when web vertex > 0
+  const clipTypePanel = document.getElementById('clipTypePanel');
+  if (clipTypePanel) clipTypePanel.style.display = w.web > 0.04 ? 'block' : 'none';
+  // Legacy compat — keep hidden web toggle synced so any existing code reading it still works
   const webToggle = document.getElementById('brollAIWebImagesToggle');
   if (webToggle) webToggle.checked = w.web > 0.04;
-  const prefetchBtn = document.getElementById('prefetchWebImagesBtn');
-  if (prefetchBtn) prefetchBtn.style.display = w.web > 0.04 ? 'flex' : 'none';
 }
 
 function initClipMixTriangle() {
@@ -18004,7 +18005,7 @@ async function _runAIClipGeneration(sectionIndex, clipIndex, forceWebImages = nu
   showNotification(`Generando clip con IA${activeCount > 1 ? ` (${activeCount} en paralelo)` : ''}...`, 'info');
 
   try {
-    const aiModel = document.getElementById('tlAIModelSelect')?.value || '';
+    const modelChain = _getModelChain();
     const useStyleCtx = document.getElementById('tlStyleContextToggle')?.checked && _lastAIClipCode;
     // forceWebImages=null means use triangle weight (already determined by caller), else use explicit value
     const webImagesOn = forceWebImages !== null
@@ -18019,10 +18020,12 @@ async function _runAIClipGeneration(sectionIndex, clipIndex, forceWebImages = nu
         sectionIndex,
         clipIndex,
         styleInstructions: document.getElementById('brollAIStyleInput')?.value.trim() || _brollAIStyleInstructions || '',
-        model: aiModel,
+        modelChain,
         styleContext: useStyleCtx ? _lastAIClipCode : '',
-        useAssets: webImagesOn ? (document.getElementById('brollAIUseImagesToggle')?.checked || false) : false,
-        useWebImages: webImagesOn,
+        useWebImages: webImagesOn && (document.getElementById('clipTypeWebImages')?.checked !== false),
+        useStockVideo: webImagesOn && (document.getElementById('clipTypeStockVideo')?.checked || false),
+        useBrollVideo: webImagesOn && (document.getElementById('clipTypeBrollVideo')?.checked || false),
+        useAssets: false,
         isVertical: _brollShortsMode
       })
     });
@@ -18045,7 +18048,16 @@ async function _runAIClipGeneration(sectionIndex, clipIndex, forceWebImages = nu
     }
 
     const flatIdx = _brollFlatClips.findIndex(f => f.sectionIndex === sectionIndex && f.clipIndex === clipIndex);
-    if (flatIdx !== -1) selectBrollClip(flatIdx);
+    if (flatIdx !== -1) {
+      // Highlight the clip in the timeline but don't auto-play — user may be watching another clip or have paused
+      _brollCurrentFlatIdx = flatIdx;
+      document.querySelectorAll('.tl-clip.selected').forEach(e => e.classList.remove('selected'));
+      const clipElSel = document.querySelector(`.tl-clip[data-flat="${flatIdx}"]`);
+      if (clipElSel) {
+        clipElSel.classList.add('selected');
+        clipElSel.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+      }
+    }
 
     showNotification(`AI clip generado: "${(data.transcription || '').slice(0, 50)}..."`, 'success');
   } catch (error) {
@@ -18140,7 +18152,8 @@ async function regenerateSectionByPhrases(sectionIndex) {
       body: JSON.stringify({
         folderName: _brollPreviewFolderName,
         previewId: _brollPreviewId,
-        sectionIndex
+        sectionIndex,
+        minClipDuration: parseInt(document.getElementById('videoMinClipDuration')?.value) || 4
       })
     });
     const data = await response.json();
@@ -18177,21 +18190,41 @@ async function _autoQueueRemotionClips(filterSectionIndex = null) {
     await prefetchWebImages(true);
   }
 
-  const mainClips = _brollFlatClips.filter(f =>
-    !f.isPause && (filterSectionIndex === null || f.sectionIndex === filterSectionIndex)
-  );
-  const N = mainClips.length;
+  // Apply mix PER SECTION with randomized positions so B-Roll isn't always first.
+  const sections = _brollPreviewSections || [];
+  for (let sIdx = 0; sIdx < sections.length; sIdx++) {
+    if (filterSectionIndex !== null && sIdx !== filterSectionIndex) continue;
 
-  for (let i = 0; i < N; i++) {
-    const f = (i + 0.5) / N;
-    if (f < wBroll) continue; // stays as B-roll
+    const sectionClips = _brollFlatClips.filter(
+      f => !f.isPause && f.sectionIndex === sIdx
+    );
+    const N = sectionClips.length;
+    if (N === 0) continue;
 
-    // Determine if this remotion clip gets web images
-    const remotionFraction = (f - wBroll) / (totalRemotion || 1);
-    const useWebForThisClip = wWeb > 0.04 && remotionFraction >= wRemotion / (totalRemotion || 1);
+    // Calculate how many clips of each type this section gets
+    const nBroll    = Math.round(wBroll * N);
+    const nWeb      = Math.round(wWeb * N);
+    const nRemotion = N - nBroll - nWeb; // remainder avoids rounding drift
 
-    const { sectionIndex, clipIndex } = mainClips[i];
-    generateAIClip(sectionIndex, clipIndex, useWebForThisClip);
+    // Build type array and shuffle it so positions are random, not sequential
+    const types = [
+      ...Array(nBroll).fill('broll'),
+      ...Array(Math.max(0, nWeb)).fill('web'),
+      ...Array(Math.max(0, nRemotion)).fill('remotion'),
+    ];
+    // Fisher-Yates shuffle
+    for (let i = types.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [types[i], types[j]] = [types[j], types[i]];
+    }
+
+    for (let i = 0; i < N; i++) {
+      const type = types[i] || 'broll';
+      if (type === 'broll') continue; // stays as B-Roll, no AI generation needed
+      const useWeb = type === 'web';
+      const { sectionIndex, clipIndex } = sectionClips[i];
+      generateAIClip(sectionIndex, clipIndex, useWeb);
+    }
   }
 }
 
@@ -18318,8 +18351,118 @@ const _CONFIG_FIELDS = [
   ['tlAIModelSelect',        'select'],
   ['tlStyleContextToggle',   'checkbox'],
   ['brollAIStyleInput',      'textarea'],
-  ['brollAIUseImagesToggle', 'checkbox'],
+  ['clipTypeWebImages',   'checkbox'],
+  ['clipTypeStockVideo',  'checkbox'],
+  ['clipTypeBrollVideo',  'checkbox'],
 ];
+
+// ──────────────────────────────────────────────────
+// Model fallback chain builder
+// ──────────────────────────────────────────────────
+const MODEL_CHAIN_KEY = 'hv_modelChain';
+
+const MODEL_OPTIONS = [
+  { value: '',                       label: '3.1 Lite (Gratis)',        tier: 'free'  },
+  { value: 'gemini-2.5-flash',       label: '2.5 Flash (Gratis)',       tier: 'free'  },
+  { value: 'gemini-3-flash-preview', label: '3 Flash Preview (Gratis)', tier: 'free'  },
+  { value: 'flash',                  label: '3.5 Flash (Gratis)',       tier: 'free'  },
+  { value: 'gemini-2.5-pro',         label: '2.5 Pro ($1.25/M)',        tier: 'paid'  },
+  { value: 'gemini-3.1-pro-preview', label: '3.1 Pro Preview ($2/M)',   tier: 'paid'  },
+  { value: 'ollama',                 label: 'Ollama (local)',            tier: 'local' },
+];
+
+const TIER_OF = (v) => MODEL_OPTIONS.find(o => o.value === v)?.tier || 'free';
+
+const DEFAULT_MODEL_CHAIN = [
+  { model: 'flash', tier: 'free' },
+  { model: 'gemini-2.5-pro', tier: 'paid' },
+];
+
+function _getModelChain() {
+  try {
+    const raw = localStorage.getItem(MODEL_CHAIN_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        // back-compat: fill missing tier from model default
+        return parsed.map(e => ({ ...e, tier: e.tier || TIER_OF(e.model) }));
+      }
+    }
+  } catch {}
+  return DEFAULT_MODEL_CHAIN;
+}
+
+function _saveModelChain(chain) {
+  try { localStorage.setItem(MODEL_CHAIN_KEY, JSON.stringify(chain)); } catch {}
+}
+
+function _buildModelSelectHTML(selectedValue) {
+  return MODEL_OPTIONS.map(o =>
+    `<option value="${o.value}"${o.value === selectedValue ? ' selected' : ''}>${o.label}</option>`
+  ).join('');
+}
+
+function _renderModelChain() {
+  const list = document.getElementById('modelChainList');
+  if (!list) return;
+  const chain = _getModelChain();
+  list.innerHTML = chain.map((entry, i) => {
+    const tier = entry.tier || TIER_OF(entry.model);
+    const tierLabel = tier === 'free' ? 'GRATIS' : tier === 'paid' ? 'PAGO' : 'LOCAL';
+    return `<div class="model-chain-row" data-idx="${i}">
+      <span class="chain-num">${i + 1}</span>
+      <select onchange="_onChainModelChange(${i}, this.value)">${_buildModelSelectHTML(entry.model)}</select>
+      <button class="chain-tier ${tier}" title="Click para cambiar entre Gratis/Pago" onclick="_toggleChainTier(${i})">${tierLabel}</button>
+      <button class="chain-btn" title="Subir" onclick="_moveChainRow(${i}, -1)">&#8593;</button>
+      <button class="chain-btn" title="Bajar" onclick="_moveChainRow(${i}, 1)">&#8595;</button>
+      <button class="chain-btn chain-remove" title="Eliminar" onclick="_removeChainRow(${i})">&#10005;</button>
+    </div>`;
+  }).join('');
+}
+
+function _onChainModelChange(idx, value) {
+  const chain = _getModelChain();
+  if (!chain[idx]) return;
+  chain[idx].model = value;
+  // Auto-set tier default when model changes, but don't override if user already chose
+  chain[idx].tier = TIER_OF(value);
+  _saveModelChain(chain);
+  _renderModelChain();
+}
+
+function _toggleChainTier(idx) {
+  const chain = _getModelChain();
+  if (!chain[idx]) return;
+  const current = chain[idx].tier || TIER_OF(chain[idx].model);
+  // Cycle: free → paid → free (skip 'local' for Ollama)
+  chain[idx].tier = current === 'free' ? 'paid' : 'free';
+  _saveModelChain(chain);
+  _renderModelChain();
+}
+
+function _moveChainRow(idx, dir) {
+  const chain = _getModelChain();
+  const newIdx = idx + dir;
+  if (newIdx < 0 || newIdx >= chain.length) return;
+  [chain[idx], chain[newIdx]] = [chain[newIdx], chain[idx]];
+  _saveModelChain(chain);
+  _renderModelChain();
+}
+
+function _removeChainRow(idx) {
+  const chain = _getModelChain();
+  if (chain.length <= 1) return; // keep at least one
+  chain.splice(idx, 1);
+  _saveModelChain(chain);
+  _renderModelChain();
+}
+
+function addModelChainRow() {
+  const chain = _getModelChain();
+  chain.push({ model: 'flash', tier: 'free' });
+  _saveModelChain(chain);
+  _renderModelChain();
+}
 
 function _saveConfig() {
   const cfg = { brollShortsMode: _brollShortsMode };
@@ -18351,6 +18494,7 @@ function _attachConfigListeners() {
     const evt = type === 'textarea' ? 'input' : 'change';
     el.addEventListener(evt, _saveConfig);
   }
+  _renderModelChain();
 }
 
 function setBrollMode(mode) {
@@ -19674,21 +19818,37 @@ async function regenerateAllBrollClips() {
         await prefetchWebImages(true);
       }
 
-      // Use triangle weights to distribute clips; if we had ai clips but triangle is all-broll, force 50/50
+      // Use triangle weights to distribute clips per section (not globally)
       const effectiveWeights = (_clipMixWeights.remotion + _clipMixWeights.web) > 0.01
         ? _clipMixWeights
         : { broll: 0.5, remotion: 0.5, web: 0 };
-      const mainClips = _brollFlatClips.filter(f => !f.isPause);
-      const N = mainClips.length;
-      for (let i = 0; i < N; i++) {
-        const f = (i + 0.5) / N;
-        if (f < effectiveWeights.broll) continue;
-        const remotionFraction = (f - effectiveWeights.broll) / ((effectiveWeights.remotion + effectiveWeights.web) || 1);
-        const useWeb = effectiveWeights.web > 0.04 && remotionFraction >= effectiveWeights.remotion / ((effectiveWeights.remotion + effectiveWeights.web) || 1);
-        const { sectionIndex, clipIndex } = mainClips[i];
-        generateAIClip(sectionIndex, clipIndex, useWeb);
+      let totalQueued = 0;
+      for (let sIdx = 0; sIdx < (_brollPreviewSections || []).length; sIdx++) {
+        const sectionClips = _brollFlatClips.filter(f => !f.isPause && f.sectionIndex === sIdx);
+        const N = sectionClips.length;
+        if (N === 0) continue;
+
+        const nBroll    = Math.round(effectiveWeights.broll * N);
+        const nWeb      = Math.round(effectiveWeights.web * N);
+        const nRemotion = N - nBroll - nWeb;
+        const types = [
+          ...Array(nBroll).fill('broll'),
+          ...Array(Math.max(0, nWeb)).fill('web'),
+          ...Array(Math.max(0, nRemotion)).fill('remotion'),
+        ];
+        for (let i = types.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [types[i], types[j]] = [types[j], types[i]];
+        }
+        for (let i = 0; i < N; i++) {
+          const type = types[i] || 'broll';
+          if (type === 'broll') continue;
+          const { sectionIndex, clipIndex } = sectionClips[i];
+          generateAIClip(sectionIndex, clipIndex, type === 'web');
+          totalQueued++;
+        }
       }
-      showNotification(`Timeline regenerado — generando ${mainClips.filter((_, i) => effectiveEvery === 1 || i % effectiveEvery === 0).length} clips Remotion IA...`, 'success');
+      showNotification(`Timeline regenerado — generando ${totalQueued} clips Remotion IA...`, 'success');
     } else {
       showNotification('Timeline regenerado', 'success');
     }

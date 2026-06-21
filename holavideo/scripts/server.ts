@@ -833,7 +833,7 @@ async function pickAndFillTemplate(
   return { success: false };
 }
 
-async function generateVideo(prompt: string, durationSeconds: number, styleContext?: string, preferredModel?: string, outputFilename?: string, width = 1280, height = 720, allowImages = false, injectedCode?: string, slotId = 0): Promise<{ success: boolean; modelUsed?: string; cost?: number; inputTokens?: number; outputTokens?: number; isPaid?: boolean; error?: string }> {
+async function generateVideo(prompt: string, durationSeconds: number, styleContext?: string, preferredModel?: string, outputFilename?: string, width = 1280, height = 720, allowImages = false, injectedCode?: string, slotId = 0, modelChain?: { model: string }[]): Promise<{ success: boolean; modelUsed?: string; cost?: number; inputTokens?: number; outputTokens?: number; isPaid?: boolean; error?: string }> {
   const styleNote = styleContext
     ? `\n\nIMPORTANTE: Usa el MISMO estilo visual (colores, degradados, tipo de animaciones, formas) que el siguiente código de referencia. Adapta el contenido al nuevo prompt pero mantén la misma estética:\n\n${styleContext.slice(0, 2000)}`
     : '';
@@ -849,8 +849,12 @@ async function generateVideo(prompt: string, durationSeconds: number, styleConte
 
   if (injectedCode) {
     // Skip LLM — go straight to render with pre-filled template code
-  } else if (preferredModel === "ollama" || preferredModel.startsWith("ollama:")) {
-    const ollamaModel = preferredModel.startsWith("ollama:") ? preferredModel.slice(7) : "gemma4";
+  } else if (
+    preferredModel === "ollama" || (preferredModel && preferredModel.startsWith("ollama:")) ||
+    (Array.isArray(modelChain) && modelChain[0]?.model === "ollama")
+  ) {
+    const chainOllamaModel = Array.isArray(modelChain) && modelChain[0]?.model === "ollama" ? "gemma4" : undefined;
+    const ollamaModel = preferredModel?.startsWith("ollama:") ? preferredModel.slice(7) : (chainOllamaModel || "gemma4");
     console.log(`  🦙 Usando Ollama (${ollamaModel})...`);
     try {
       code = await tryWithOllama(prompt + styleNote, durationSeconds, width, height, ollamaModel);
@@ -863,39 +867,71 @@ async function generateVideo(prompt: string, durationSeconds: number, styleConte
 
   type Attempt = { keys: string[]; model: string; label: string; isPaid: boolean };
   const paid = PAID_KEY ? [PAID_KEY] : [];
+
+  // Map friendly/shorthand values to real model IDs
+  const ALIAS_MAP: Record<string, string> = {
+    '':                        MODEL_LITE,
+    'flash':                   MODEL_FLASH,
+    '3-flash-preview':         MODEL_3_FLASH,
+    'gemini-3-flash-preview':  MODEL_3_FLASH,
+    '2.5-flash':               MODEL_25_FLASH,
+    'gemini-2.5-flash':        MODEL_25_FLASH,
+    '2.5-pro':                 MODEL_25_PRO,
+    'gemini-2.5-pro':          MODEL_25_PRO,
+    '3.1-pro-preview':         MODEL_31_PRO,
+    'gemini-3.1-pro-preview':  MODEL_31_PRO,
+  };
+  const PAID_MODELS = new Set([MODEL_25_PRO, MODEL_31_PRO]);
+
+  const resolveModel = (v: string) => ALIAS_MAP[v] ?? v;
+
   let attempts: Attempt[];
 
-  if (preferredModel === "flash") {
+  if (Array.isArray(modelChain) && modelChain.length > 0) {
+    // Build attempts from user-configured chain. 'tier' field from UI overrides auto-detection.
+    attempts = modelChain.map((entry: { model: string; tier?: string }) => {
+      const resolved = resolveModel(entry.model || '');
+      // User can force any model to use paid or free keys via the UI badge
+      const userForcedPaid = entry.tier === 'paid';
+      const userForcedFree = entry.tier === 'free';
+      const isPaidModel = PAID_MODELS.has(resolved);
+      const usePaid = userForcedPaid || (!userForcedFree && isPaidModel);
+      return {
+        keys:   usePaid ? paid : FREE_KEYS,
+        model:  resolved,
+        label:  `${usePaid ? 'pago' : 'gratis'} + ${entry.model || 'lite'}`,
+        isPaid: usePaid,
+      };
+    }).filter(a => a.keys.length > 0);
+
+    if (attempts.length === 0) {
+      attempts = [{ keys: FREE_KEYS, model: MODEL_FLASH, label: 'gratis + flash (fallback)', isPaid: false }];
+    }
+  } else if (preferredModel === "flash") {
     attempts = [
-      { keys: FREE_KEYS, model: MODEL_FLASH,    label: "gratis + flash",        isPaid: false },
-      { keys: paid,       model: MODEL_FLASH,    label: "pago + flash",          isPaid: true  },
+      { keys: FREE_KEYS, model: MODEL_FLASH,    label: "gratis + flash",     isPaid: false },
+      { keys: paid,       model: MODEL_FLASH,    label: "pago + flash",       isPaid: true  },
     ];
   } else if (preferredModel === MODEL_3_FLASH || preferredModel === "3-flash-preview") {
     attempts = [
-      { keys: FREE_KEYS, model: MODEL_3_FLASH,  label: "gratis + 3-flash",      isPaid: false },
-      { keys: paid,       model: MODEL_3_FLASH,  label: "pago + 3-flash",        isPaid: true  },
+      { keys: FREE_KEYS, model: MODEL_3_FLASH,  label: "gratis + 3-flash",   isPaid: false },
+      { keys: paid,       model: MODEL_3_FLASH,  label: "pago + 3-flash",     isPaid: true  },
     ];
   } else if (preferredModel === MODEL_25_FLASH || preferredModel === "2.5-flash") {
     attempts = [
-      { keys: FREE_KEYS, model: MODEL_25_FLASH, label: "gratis + 2.5-flash",    isPaid: false },
-      { keys: paid,       model: MODEL_25_FLASH, label: "pago + 2.5-flash",      isPaid: true  },
+      { keys: FREE_KEYS, model: MODEL_25_FLASH, label: "gratis + 2.5-flash", isPaid: false },
+      { keys: paid,       model: MODEL_25_FLASH, label: "pago + 2.5-flash",   isPaid: true  },
     ];
   } else if (preferredModel === MODEL_25_PRO || preferredModel === "2.5-pro") {
-    // 2.5 Pro has limit:0 free tier in most projects — go straight to paid
-    attempts = [
-      { keys: paid,       model: MODEL_25_PRO,   label: "pago + 2.5-pro",        isPaid: true  },
-    ];
+    attempts = [{ keys: paid, model: MODEL_25_PRO, label: "pago + 2.5-pro",  isPaid: true }];
   } else if (preferredModel === MODEL_31_PRO || preferredModel === "3.1-pro-preview") {
-    // 3.1 Pro Preview is paid-only (no free tier)
-    attempts = [
-      { keys: paid,       model: MODEL_31_PRO,   label: "pago + 3.1-pro",        isPaid: true  },
-    ];
+    attempts = [{ keys: paid, model: MODEL_31_PRO, label: "pago + 3.1-pro",  isPaid: true }];
   } else {
-    // Default: Lite (free) → Flash (free) → Lite (paid)
+    // Default chain: Lite (free) → Flash (free) → Lite (paid)
     attempts = [
-      { keys: FREE_KEYS, model: MODEL_LITE,     label: "gratis + lite",         isPaid: false },
-      { keys: FREE_KEYS, model: MODEL_FLASH,    label: "gratis + flash",        isPaid: false },
-      { keys: paid,       model: MODEL_LITE,     label: "pago + lite",           isPaid: true  },
+      { keys: FREE_KEYS, model: MODEL_LITE,  label: "gratis + lite",  isPaid: false },
+      { keys: FREE_KEYS, model: MODEL_FLASH, label: "gratis + flash", isPaid: false },
+      { keys: paid,       model: MODEL_LITE,  label: "pago + lite",    isPaid: true  },
     ];
   }
 
@@ -932,6 +968,18 @@ async function generateVideo(prompt: string, durationSeconds: number, styleConte
   // Limpiar markdown fences
   code = code.replace(/^```(?:tsx?|javascript|jsx)?\n?/gm, "").replace(/```$/gm, "").trim();
 
+  // Auto-fix: replace <Video with <OffthreadVideo to avoid delayRender timeouts in headless render
+  if (/<Video[\s/>]/.test(code)) {
+    code = code
+      .replace(/<Video(\s)/g, '<OffthreadVideo$1')
+      .replace(/<Video\/>/g, '<OffthreadVideo />')
+      .replace(/<\/Video>/g, '</OffthreadVideo>')
+      .replace(/\bVideo\s*,/g, 'OffthreadVideo,')
+      .replace(/,\s*Video\b/g, ', OffthreadVideo')
+      .replace(/\bVideo\b(?=\s*from\s*['"]remotion['"])/g, 'OffthreadVideo');
+    console.log('🔧 Auto-fix: <Video> → <OffthreadVideo> para evitar timeout en render');
+  }
+
   // Escribir código en el archivo del slot asignado
   const compositionPath = path.join(PROJECT_ROOT, "src", `Composition_s${slotId}.tsx`);
   fs.writeFileSync(compositionPath, code, "utf-8");
@@ -955,7 +1003,7 @@ async function generateVideo(prompt: string, durationSeconds: number, styleConte
       Img: 'Img',
       Sequence: 'Sequence',
       Audio: 'Audio',
-      Video: 'Video',
+      OffthreadVideo: 'OffthreadVideo',
       spring: 'spring',
       measureSpring: 'measureSpring',
     };
@@ -972,21 +1020,51 @@ async function generateVideo(prompt: string, durationSeconds: number, styleConte
     }
   }
 
-  // Verify all staticFile() references exist in public/ before rendering
+  // Verify all staticFile() references exist in public/; auto-correct LLM filename hallucinations
+  const publicDir = path.join(PROJECT_ROOT, 'public');
+  const publicFiles = fs.readdirSync(publicDir);
+  const assetCandidates = publicFiles.filter(f =>
+    f.startsWith('hv_web_') || f.startsWith('person_') || f.startsWith('entity_') || f.startsWith('ra_manual_')
+  );
+
+  const charOverlapScore = (a: string, b: string): number => {
+    // Count shared characters at each position up to the shorter length
+    let common = 0;
+    const shorter = a.length <= b.length ? a : b;
+    const longer  = a.length <= b.length ? b : a;
+    for (let i = 0; i < shorter.length; i++) {
+      if (longer[i] === shorter[i]) common++;
+    }
+    return common / Math.max(a.length, b.length);
+  };
+
   const staticFileRefs = [...code.matchAll(/staticFile\(['"`]([^'"`]+)['"`]\)/g)].map(m => m[1]);
   for (const ref of staticFileRefs) {
-    const filePath = path.join(PROJECT_ROOT, 'public', ref);
+    const filePath = path.join(publicDir, ref);
     if (!fs.existsSync(filePath)) {
-      console.error(`❌ staticFile('${ref}') no existe en public/ — abortando render con imágenes`);
-      return { success: false, error: `Asset no encontrado: ${ref}` };
+      // LLM hallucinated a slightly different filename — find closest real match
+      const scored = assetCandidates
+        .map(c => ({ name: c, s: charOverlapScore(ref, c) }))
+        .sort((a, b) => b.s - a.s);
+      const best = scored[0];
+
+      if (best && best.s > 0.72) {
+        console.warn(`⚠️ staticFile('${ref}') → corrigiendo a '${best.name}' (sim ${(best.s*100).toFixed(0)}%)`);
+        code = code.replaceAll(ref, best.name);
+        fs.writeFileSync(compositionPath, code, 'utf-8');
+      } else {
+        console.error(`❌ staticFile('${ref}') no existe en public/ y sin coincidencia suficiente — abortando`);
+        return { success: false, error: `Asset no encontrado: ${ref}` };
+      }
+    } else {
+      console.log(`✅ Asset verificado: ${ref} (${Math.round(fs.statSync(filePath).size / 1024)}KB)`);
     }
-    console.log(`✅ Asset verificado: ${ref} (${Math.round(fs.statSync(filePath).size / 1024)}KB)`);
   }
 
   // Renderizar — con retry automático si el código tiene errores
   const outFile = outputFilename || "video.mp4";
   const renderOnce = () => execSync(
-    `npx remotion render src/index_s${slotId}.ts MyComp out/${outFile} --overwrite`,
+    `npx remotion render src/index_s${slotId}.ts MyComp out/${outFile} --overwrite --timeout=90000`,
     { cwd: PROJECT_ROOT, stdio: ["ignore", "pipe", "pipe"], timeout: 300000, maxBuffer: 50 * 1024 * 1024 }
   );
 
@@ -1086,7 +1164,7 @@ app.get("/", (_req, res) => {
 });
 
 app.post("/api/generate", async (req, res) => {
-  const { prompt, duration, model, styleContext, styleName, width, height, assets } = req.body;
+  const { prompt, duration, model, modelChain, styleContext, styleName, width, height, assets, langHint, forceVideo } = req.body;
   const vidWidth = (typeof width === 'number' && width > 0) ? width : 1280;
   const vidHeight = (typeof height === 'number' && height > 0) ? height : 720;
 
@@ -1125,6 +1203,7 @@ app.post("/api/generate", async (req, res) => {
   // Build multi-asset instructions
   const assetList: any[] = Array.isArray(assets) ? assets : [];
   let imageNote = '';
+  let hasVideo = assetList.some((a: any) => a.use === 'video' || a.filename?.match(/\.(mp4|webm|mov)$/i));
   if (assetList.length) {
     console.log(`🖼️ Con ${assetList.length} asset(s): ${assetList.map((a: any) => a.filename).join(', ')}`);
 
@@ -1155,16 +1234,27 @@ app.post("/api/generate", async (req, res) => {
     const descriptions = assetList.map((a: any, i: number) => {
       const pos = positionCSS[a.position] || positionCSS.center;
       const anim = animDesc[a.animation] || animDesc['fade-in'];
-      const sizeStyle = a.use === 'background' ? '' : `width: "${a.size || '40%'}"`;
-      const overlayNote = a.use === 'background'
+      const isVideo = a.use === 'video' || a.filename?.match(/\.(mp4|webm|mov)$/i);
+      const videoCreativeOptions = [
+        'panel flotante animado: recuadro con border-radius y box-shadow, entra desde un lado con translate, puede rotar levemente',
+        'ventana PiP (picture-in-picture): esquina inferior-derecha, ~35% de ancho, con borde de color y sombra brillante',
+        'pantalla de TV/monitor: con efecto de marco, puede tener scanlines CSS encima',
+        'múltiples clips del mismo video: 2-3 recuadros en paralelo con distinto tamaño y retraso en su animación de entrada',
+        'clip hexagonal o circular: usando clip-path CSS para forma no rectangular',
+        'panel lateral: ocupa 40% del ancho derecho o izquierdo, el texto va al lado contrario',
+        'fondo completo fullscreen: si encaja narrativamente, como capa base con overlay oscuro encima',
+      ];
+      const videoCreativePick = videoCreativeOptions[i % videoCreativeOptions.length];
+      const overlayNote = isVideo
+        ? `VIDEO — usa <OffthreadVideo src={staticFile('${a.filename}')} muted style={{...}} />. Úsalo creativamente: ${videoCreativePick}. Puedes animarlo con interpolate (translateX, translateY, scale, rotate). NUNCA uses overflow:"hidden" en su contenedor (rompe el render). El atributo muted es OBLIGATORIO.`
+        : a.use === 'background'
         ? 'Pon un div semitransparente encima (background: "rgba(0,0,0,0.4)") para que el texto sea legible.'
         : a.use === 'icon'
         ? 'Tamaño compacto (120-200px). Si es PNG con fondo transparente se integra directamente.'
         : `Es el elemento protagonista. CSS OBLIGATORIO para el <Img>: objectFit: "contain", height: "auto", maxHeight: "85%", maxWidth: "${a.size || '38%'}", width: "auto" — NUNCA uses overflow:"hidden" en el contenedor. Aplica: filter: "drop-shadow(0 0 18px rgba(0,200,255,0.5))".`;
-      return `ASSET ${i + 1}: staticFile('${a.filename}') — "${a.label}"
-  Rol: ${a.use} | Posición: { ${pos} }
-  Animación: ${anim}
-  ${overlayNote}`;
+      return `ASSET ${i + 1}: staticFile('${a.filename}') — "${a.label}" [${isVideo ? 'VIDEO MP4' : 'IMAGEN'}]
+  Rol: ${a.use} | Posición sugerida: { ${pos} }
+  ${isVideo ? '' : `Animación: ${anim}\n  `}${overlayNote}`;
     }).join('\n\n');
 
     const elementAssets = assetList.filter((a: any) => a.use === 'element');
@@ -1176,23 +1266,33 @@ app.post("/api/generate", async (req, res) => {
     } else if (hasRealImage) {
       overrideNote = `\n\n🚨 REGLA ABSOLUTA — IMAGEN REAL DISPONIBLE: Aunque el prompt mencione "silueta", "SVG", "figura abstracta" o "ícono" para representar al sujeto, DEBES mostrar la IMAGEN REAL con <Img src={staticFile('...')} />. Esto aplica a personas, logos de marcas e imágenes de productos. NO dibujes siluetas ni formas geométricas como sustituto — usa el asset real.\n`;
     }
-    imageNote = `\n\n${overrideNote}TIENES ${assetList.length} IMAGEN(ES) REAL(ES) — DEBES USARLAS TODAS EN LA ANIMACIÓN:
+    imageNote = `\n\n${overrideNote}TIENES ${assetList.length} ASSET(S) — DEBES USARLOS TODOS EN LA ANIMACIÓN:
 
 ${descriptions}
 
 REGLAS DE COMPOSICIÓN:
+- Los assets de tipo "video" son elementos de composición CREATIVOS. No tienen que ser fondos — pueden ser paneles, marcos, PiP, formas recortadas, elementos que se mueven. Usa <OffthreadVideo> de remotion (NUNCA <Video> ni <video> HTML). Anima su posición, tamaño y forma con interpolate/useCurrentFrame.
 - Los assets de tipo "background" van en la capa más baja (z-index bajo o primero en el JSX).
 - Los assets de tipo "element" van encima del fondo, posicionados según su rol en la escena.
 - Los assets de tipo "icon" van en la capa superior, pequeños y flotando.
-- Combina las imágenes con texto animado, overlays de color y efectos CSS para crear una composición dinámica.
-- Cada imagen DEBE estar visible y animada — no las omitas.
+- Si hay VARIOS assets de video, dale a cada uno un rol visual distinto (fondo + panel flotante, o dos paneles lado a lado, etc.).
+- Combina los assets con texto animado, overlays de color y efectos CSS para crear una composición dinámica.
+- Cada asset DEBE estar visible — no los omitas.
 
-Importa: import { AbsoluteFill, Img, Sequence, staticFile, useCurrentFrame, useVideoConfig, interpolate, Easing } from 'remotion';
-Usa <Img src={staticFile('filename')} style={{...}} /> (NO <img> HTML).`;
+Importa: import { AbsoluteFill, Img, ${hasVideo ? 'OffthreadVideo, ' : ''}Sequence, staticFile, useCurrentFrame, useVideoConfig, interpolate, Easing } from 'remotion';
+${hasVideo ? "Para videos: <OffthreadVideo src={staticFile('filename.mp4')} muted style={{...}} /> (NUNCA <Video> ni <video> HTML — solo OffthreadVideo evita timeouts al renderizar).\n" : ''}Usa <Img src={staticFile('filename')} style={{...}} /> para imágenes (NO <img> HTML).`;
   }
 
   try {
-    const result = await generateVideo(prompt.trim() + imageNote, durationSeconds, styleContext, model, filename, vidWidth, vidHeight, assetList.length > 0, undefined, slot);
+    const langNote = langHint === 'en'
+      ? '\n\n⚠️ IMPORTANT: ALL text strings rendered in the video MUST be in ENGLISH. No Spanish words in any text content.'
+      : '';
+
+    const forceVideoNote = forceVideo && hasVideo
+      ? '\n\n🎬 MODO VIDEO OBLIGATORIO: La animación DEBE incluir al menos un <OffthreadVideo> visible y prominente. No es opcional. Puedes usarlo como fondo fullscreen, como panel flotante animado, como recuadro PiP, como elemento que entra deslizándose, o cualquier composición creativa. Lo que NO puedes hacer es omitirlo o que quede oculto detrás de otro elemento. El video debe ser visualmente prominente en algún momento del clip.'
+      : '';
+
+    const result = await generateVideo(prompt.trim() + imageNote + langNote + forceVideoNote, durationSeconds, styleContext, model, filename, vidWidth, vidHeight, assetList.length > 0, undefined, slot, Array.isArray(modelChain) && modelChain.length > 0 ? modelChain : undefined);
     if (result.success) {
       console.log(`✅ Video generado [slot ${slot}]`);
 

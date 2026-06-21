@@ -12598,3 +12598,56 @@ body.prompts-panel-active .container {
   background: rgba(167,139,250,0.22);
   border-color: #a78bfa;
 }
+
+/* ── Model chain builder ─────────────────────────── */
+.model-chain-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(30,41,59,0.6);
+  border: 1px solid #1e293b;
+  border-radius: 5px;
+  padding: 3px 5px;
+}
+.model-chain-row .chain-num {
+  font-size: 0.65rem;
+  color: #475569;
+  min-width: 14px;
+  text-align: center;
+}
+.model-chain-row select {
+  flex: 1;
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 4px;
+  color: #e2e8f0;
+  font-size: 0.72rem;
+  padding: 2px 4px;
+}
+.model-chain-row .chain-tier {
+  font-size: 0.6rem;
+  font-weight: 700;
+  border-radius: 3px;
+  padding: 1px 5px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: opacity 0.15s, transform 0.1s;
+}
+.model-chain-row .chain-tier:hover { opacity: 0.8; transform: scale(0.97); }
+.model-chain-row .chain-tier:active { transform: scale(0.93); }
+.model-chain-row .chain-tier.free  { background: rgba(16,185,129,0.15); color: #34d399; border: 1px solid rgba(16,185,129,0.3); }
+.model-chain-row .chain-tier.paid  { background: rgba(251,191,36,0.13); color: #fbbf24; border: 1px solid rgba(251,191,36,0.3); }
+.model-chain-row .chain-tier.local { background: rgba(139,92,246,0.15); color: #a78bfa; border: 1px solid rgba(139,92,246,0.3); }
+.model-chain-row .chain-btn {
+  background: none;
+  border: none;
+  color: #475569;
+  cursor: pointer;
+  font-size: 0.75rem;
+  padding: 1px 3px;
+  border-radius: 3px;
+  line-height: 1;
+}
+.model-chain-row .chain-btn:hover { color: #94a3b8; background: rgba(255,255,255,0.05); }
+.model-chain-row .chain-btn.chain-remove:hover { color: #f87171; }

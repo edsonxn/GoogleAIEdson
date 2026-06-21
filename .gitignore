@@ -84,6 +84,14 @@ holavideo/public/hv_web_*.png
 holavideo/public/hv_web_*.webp
 holavideo/public/hv_web_manifest.json
 
+# ── Videos de stock descargados (Pexels/Pixabay) ──────────────────────
+holavideo/public/hv_vid_*.mp4
+holavideo/public/hv_vid_*.webm
+
+# ── Clips B-Roll verificados para Remotion ─────────────────────────────
+holavideo/public/hv_broll_*.mp4
+holavideo/public/hv_broll_*.webm
+
 # ── Fotos manuales de entidades (ra_manual_*) ─────────────
 holavideo/public/ra_manual_*.jpg
 holavideo/public/ra_manual_*.jpeg
