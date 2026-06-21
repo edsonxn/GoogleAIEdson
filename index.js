@@ -19185,8 +19185,8 @@ app.post('/api/generate-ai-clip', async (req, res) => {
       }
     }
 
-    // Web images: per-clip search (accurate) + manifest cache (fast)
-    if (!imageAsset && useWebImages !== false) {
+    // Web images + stock video: run when either is enabled
+    if (!imageAsset && (useWebImages !== false || !skipStock)) {
       const manifestPath = path.join(holavideoPublic, 'hv_web_manifest.json');
       const clipKey = `sec${section.secNum}_clip${clip.index ?? clipIndex}`;
 
@@ -19231,8 +19231,10 @@ app.post('/api/generate-ai-clip', async (req, res) => {
         // No valid cache — do a fresh per-clip search using this clip's specific transcription
         console.log(`🔍 [WebImg] Buscando imágenes específicas para clip ${clipKey}...`);
         try {
-          const clipAssets = await searchAndDownloadRemotionImages(
-            transcription, clipKey, holavideoPublic, spawn, 3, previewId, sectionContext, skipStock
+          // maxApproved=0 when only stock video is needed: skips image downloads but still searches stock
+        const maxImgApproved = useWebImages !== false ? 3 : 0;
+        const clipAssets = await searchAndDownloadRemotionImages(
+            transcription, clipKey, holavideoPublic, spawn, maxImgApproved, previewId, sectionContext, skipStock
           );
           if (clipAssets.length > 0) {
             imageAsset = { assets: clipAssets };
