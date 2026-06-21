@@ -18360,6 +18360,7 @@ const _CONFIG_FIELDS = [
   ['clipTypeWebImages',   'checkbox'],
   ['clipTypeStockVideo',  'checkbox'],
   ['clipTypeBrollVideo',  'checkbox'],
+  ['videoMinClipDuration', 'number'],
 ];
 
 // ──────────────────────────────────────────────────
@@ -18490,6 +18491,11 @@ function _loadConfig() {
     if (type === 'checkbox') el.checked = !!cfg[id];
     else el.value = cfg[id];
   }
+  // Sync slider labels after restoring values
+  const _minClipEl = document.getElementById('videoMinClipDuration');
+  const _minClipLbl = document.getElementById('videoMinClipDurationLabel');
+  if (_minClipEl && _minClipLbl) _minClipLbl.textContent = _minClipEl.value + 's';
+
   if (cfg.brollShortsMode !== undefined) setBrollMode(cfg.brollShortsMode ? 'shorts' : 'normal');
 }
 
