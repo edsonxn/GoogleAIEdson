@@ -20619,9 +20619,50 @@ function toggleChatterboxPanel() {
   }
 }
 
+// ── Per-voice settings persistence ──────────────────────────────────────────
+const _CB_VOICE_PREFS_KEY = 'chatterbox_voice_prefs';
+
+function _cbLoadVoicePrefs() {
+  try { return JSON.parse(localStorage.getItem(_CB_VOICE_PREFS_KEY) || '{}'); }
+  catch { return {}; }
+}
+
+function _cbSaveCurrentVoicePrefs() {
+  const voice = document.getElementById('chatterboxVoiceSelect')?.value;
+  if (!voice) return;
+  const prefs = _cbLoadVoicePrefs();
+  prefs[voice] = {
+    exaggeration: parseFloat(document.getElementById('chatterboxExaggeration')?.value ?? 0.5),
+    cfgWeight:    parseFloat(document.getElementById('chatterboxCfgWeight')?.value ?? 0.5),
+  };
+  localStorage.setItem(_CB_VOICE_PREFS_KEY, JSON.stringify(prefs));
+}
+
+function _cbApplyVoicePrefs(voice) {
+  if (!voice) return;
+  const prefs = _cbLoadVoicePrefs();
+  const p = prefs[voice];
+  if (!p) return;
+  const exEl  = document.getElementById('chatterboxExaggeration');
+  const exLbl = document.getElementById('chatterboxExaggerationLabel');
+  const cfEl  = document.getElementById('chatterboxCfgWeight');
+  const cfLbl = document.getElementById('chatterboxCfgWeightLabel');
+  if (exEl) { exEl.value = p.exaggeration; if (exLbl) exLbl.textContent = p.exaggeration.toFixed(2); }
+  if (cfEl) { cfEl.value = p.cfgWeight;    if (cfLbl) cfLbl.textContent = p.cfgWeight.toFixed(2); }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('autoGenerateChatterboxAudio')?.addEventListener('change', toggleChatterboxPanel);
   loadChatterboxVoices();
+
+  // Save prefs when sliders change
+  document.getElementById('chatterboxExaggeration')?.addEventListener('input', _cbSaveCurrentVoicePrefs);
+  document.getElementById('chatterboxCfgWeight')?.addEventListener('input', _cbSaveCurrentVoicePrefs);
+
+  // Load prefs when voice changes
+  document.getElementById('chatterboxVoiceSelect')?.addEventListener('change', (e) => {
+    _cbApplyVoicePrefs(e.target.value);
+  });
 });
 
 const originalToggleApplio = window.toggleApplioVoiceDropdown;
