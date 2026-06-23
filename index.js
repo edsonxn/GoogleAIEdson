@@ -27097,7 +27097,7 @@ function _ytOAuth2Client() {
   const cfg = creds.installed || creds.web || {};
   const client = new googleApis.auth.OAuth2(
     cfg.client_id, cfg.client_secret,
-    cfg.redirect_uris?.[0] || YT_REDIRECT_URI
+    YT_REDIRECT_URI  // always use our local callback endpoint
   );
   try {
     const tokens = JSON.parse(fs.readFileSync(YT_TOKENS_PATH, 'utf8'));
@@ -27161,7 +27161,7 @@ app.get('/oauth2callback', async (req, res) => {
 
 // POST /youtube/upload
 app.post('/youtube/upload', async (req, res) => {
-  const { videoPath, title, description, tags, privacyStatus, publishAt, categoryId } = req.body;
+  const { videoPath, folderName, title, description, tags, privacyStatus, publishAt, categoryId } = req.body;
   if (!videoPath || !title) return res.status(400).json({ error: 'Faltan videoPath y title' });
 
   const client = _ytOAuth2Client();
@@ -27169,11 +27169,21 @@ app.post('/youtube/upload', async (req, res) => {
     return res.status(401).json({ error: 'No autenticado con YouTube' });
   }
 
-  const absPath = path.isAbsolute(videoPath)
-    ? videoPath
-    : path.join(__dirname, videoPath);
+  // Resolve the video file — try several candidate locations
+  const outputsDir = process.env.OUTPUTS_DIR || path.join(process.cwd(), 'public', 'outputs');
+  const candidates = [
+    // Absolute path as-is
+    path.isAbsolute(videoPath) ? videoPath : null,
+    // Project folder (most common for broll renders)
+    folderName ? path.join(outputsDir, folderName, videoPath) : null,
+    // Direct in outputs root
+    path.join(outputsDir, videoPath),
+    // Legacy: project root
+    path.join(__dirname, videoPath),
+  ].filter(Boolean);
 
-  if (!fs.existsSync(absPath)) return res.status(404).json({ error: `Video no encontrado: ${absPath}` });
+  const absPath = candidates.find(p => fs.existsSync(p));
+  if (!absPath) return res.status(404).json({ error: `Video no encontrado. Rutas probadas:\n${candidates.join('\n')}` });
 
   try {
     const yt = googleApis.youtube({ version: 'v3', auth: client });

@@ -20733,7 +20733,8 @@ window.toggleApplioVoiceDropdown = function() {
 // YOUTUBE UPLOAD PANEL
 // ─────────────────────────────────────────────────────────────────────────────
 
-let _ytVideoPath = null;   // absolute/relative path of the video to upload
+let _ytVideoPath   = null;
+let _ytFolderName  = null;
 let _ytAuthenticated = false;
 
 // Called from showBrollTranslatePanel after render completes
@@ -20741,8 +20742,8 @@ async function showYouTubeUploadPanel(videoFile, folderName) {
   const panel = document.getElementById('youtubeUploadPanel');
   if (!panel) return;
 
-  // Build server-side path that index.js can locate
-  _ytVideoPath = videoFile;
+  _ytVideoPath  = videoFile;
+  _ytFolderName = folderName;
 
   // Reset upload state
   document.getElementById('ytUploadProgress').style.display = 'none';
@@ -20936,7 +20937,7 @@ async function ytStartUpload() {
     const res = await fetch('/youtube/upload', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ videoPath: _ytVideoPath, title, description, tags, privacyStatus, publishAt: publishAtISO }),
+      body: JSON.stringify({ videoPath: _ytVideoPath, folderName: _ytFolderName, title, description, tags, privacyStatus, publishAt: publishAtISO }),
     });
     const data = await res.json();
 
