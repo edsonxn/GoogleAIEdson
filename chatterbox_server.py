@@ -16,8 +16,10 @@ _REPO_SRC = r'C:\chatterbox\repo\src'
 if os.path.isdir(_REPO_SRC):
     sys.path.insert(0, _REPO_SRC)
 
+import re
 import torch
 import torchaudio as ta
+import numpy as np
 
 _model = None
 _lock  = threading.Lock()
@@ -84,10 +86,40 @@ class Handler(BaseHTTPRequestHandler):
                 kw = {'exaggeration': exaggeration, 'cfg_weight': cfg_weight}
                 if voice and os.path.isfile(voice):
                     kw['audio_prompt_path'] = voice
-                wav = m.generate(text, **kw)
+
+                # Split into ~250-char chunks to bypass the ~15s per-call limit
+                sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', text) if s.strip()]
+                if not sentences:
+                    sentences = [text]
+
+                chunks = []
+                cur = ''
+                for s in sentences:
+                    if len(cur) + len(s) + 1 <= 250:
+                        cur = (cur + ' ' + s).strip()
+                    else:
+                        if cur:
+                            chunks.append(cur)
+                        cur = s
+                if cur:
+                    chunks.append(cur)
+
+                print(f'[Chatterbox] Generando {len(chunks)} chunk(s)...', flush=True)
+                silence = np.zeros(int(m.sr * 0.3), dtype=np.float32)
+                wavs = []
+                for i, chunk in enumerate(chunks):
+                    print(f'[Chatterbox] Chunk {i+1}/{len(chunks)}: {chunk[:60]}', flush=True)
+                    w = m.generate(chunk, **kw)
+                    wavs.append(w.squeeze(0).cpu().numpy() if hasattr(w, 'squeeze') else np.array(w))
+                    if i < len(chunks) - 1:
+                        wavs.append(silence)
+                    kw.pop('audio_prompt_path', None)  # keep voice consistent across chunks
+
+                full = np.concatenate(wavs)
+                tensor = torch.from_numpy(full).unsqueeze(0)
                 out_dir = os.path.dirname(output)
                 if out_dir: os.makedirs(out_dir, exist_ok=True)
-                ta.save(output, wav, m.sr)
+                ta.save(output, tensor, m.sr)
             self._json(200, {'success': True, 'output': output})
         except Exception as e:
             print(f'[Chatterbox] Error: {e}', flush=True)
