@@ -17273,13 +17273,31 @@ if (downloadProjectZipBtn) {
   let brollQuickTriggered = false;
   const brollQuickBtn = document.getElementById('brollQuickBtn');
   if (brollQuickBtn) {
-    brollQuickBtn.addEventListener('click', () => {
-      // Abrir el panel de B-Roll y disparar análisis
+    brollQuickBtn.addEventListener('click', async () => {
       const panel = document.getElementById('brollPanel');
-      if (panel) {
-        panel.style.display = 'block';
-        panel.open = true;
+      if (panel) { panel.style.display = 'block'; panel.open = true; }
+
+      const folderName = window.currentProject?.folderName || window.currentProject?.projectKey || (typeof window.currentProject === 'string' ? window.currentProject : null);
+
+      if (folderName) {
+        try {
+          const resumeRes = await fetch(`/api/broll/check-resume/${encodeURIComponent(folderName)}`);
+          const resumeData = await resumeRes.json();
+
+          if (resumeData.canResume && resumeData.pending > 0) {
+            // There are pending downloads from a previous run — skip analyze+search
+            const skipMsg = resumeData.done > 0
+              ? `Reanudando descarga: ${resumeData.done} ya descargados, faltan ${resumeData.pending}.`
+              : `Iniciando descarga de ${resumeData.pending} videos del plan guardado.`;
+            setBrollStatus(skipMsg);
+            brollSections = resumeData.sections;
+            startBrollDownload();
+            return;
+          }
+        } catch {}
       }
+
+      // Normal flow: analyze + search + download
       brollQuickTriggered = true;
       brollAnalyzeBtn.click();
     });

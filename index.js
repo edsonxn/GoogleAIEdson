@@ -24506,6 +24506,44 @@ app.get('/api/broll/status/:folderName', (req, res) => {
   }
 });
 
+// GET /api/broll/check-resume/:folderName — Check if a previous download can be resumed
+app.get('/api/broll/check-resume/:folderName', (req, res) => {
+  const { folderName } = req.params;
+  const projectPath = resolveProjectPath(folderName);
+  if (!projectPath) return res.json({ canResume: false });
+
+  const planPath = path.join(projectPath, 'broll_plan.json');
+  if (!fs.existsSync(planPath)) return res.json({ canResume: false });
+
+  let plan;
+  try { plan = JSON.parse(fs.readFileSync(planPath, 'utf8')); } catch { return res.json({ canResume: false }); }
+
+  // Read completed URLs from status file
+  const doneUrls = new Set();
+  const doneTerms = new Set();
+  const statusPath = path.join(projectPath, 'broll_download_status.json');
+  try {
+    if (fs.existsSync(statusPath)) {
+      const st = JSON.parse(fs.readFileSync(statusPath, 'utf8'));
+      (st.videos || []).filter(v => v.status === 'done').forEach(v => doneUrls.add(v.url));
+      (st.imageTasks || []).filter(t => t.status === 'done').forEach(t => doneTerms.add(t.term));
+    }
+  } catch {}
+
+  let totalUrls = 0, pendingUrls = 0;
+  (plan.sections || []).forEach(sec => {
+    (sec.urls || []).forEach(url => { totalUrls++; if (!doneUrls.has(url)) pendingUrls++; });
+  });
+
+  res.json({
+    canResume: totalUrls > 0,
+    totalPlanned: totalUrls,
+    done: totalUrls - pendingUrls,
+    pending: pendingUrls,
+    sections: plan.sections || []
+  });
+});
+
 // POST /api/broll/verify — Verify all sections have B-Roll and re-download for missing ones
 app.post('/api/broll/verify', async (req, res) => {
   const { folderName, totalSections, maxVideos = 3, maxImages = 0, resolution = '720p' } = req.body;
@@ -24727,6 +24765,26 @@ async function brollDownloadAll(jobId, resolution) {
   setTimeout(() => brollDownloadProgress.delete(jobId), 5 * 60 * 1000);
 }
 
+function _saveBrollStatusSnapshot(job) {
+  try {
+    if (!job.folder || !fs.existsSync(job.folder)) return;
+    const snap = {
+      updatedAt: new Date().toISOString(),
+      videos: job.videos.map(v => ({
+        url: v.url, title: v.title || '', section: v.section || '',
+        // treat active downloads as pending so they're retried on resume
+        status: (v.status === 'downloading' || v.status === 'merging') ? 'pending' : (v.status || 'pending'),
+        error: v.error || '', outputDir: v.outputDir
+      })),
+      imageTasks: (job.imageTasks || []).map(t => ({
+        term: t.term, section: t.section || '', status: t.status,
+        downloaded: t.downloaded || 0, error: t.error || ''
+      }))
+    };
+    fs.writeFileSync(path.join(job.folder, 'broll_download_status.json'), JSON.stringify(snap, null, 2), 'utf8');
+  } catch {}
+}
+
 async function brollDownloadAllVideos(job, resolution) {
   if (job.videos.length === 0) return;
   const { spawn } = await import('child_process');
@@ -24742,6 +24800,7 @@ async function brollDownloadAllVideos(job, resolution) {
       job.videos[i].status = 'error';
       job.videos[i].error = err.message;
     }
+    _saveBrollStatusSnapshot(job);  // persist after every video
     await next();
   }
 
@@ -24765,6 +24824,7 @@ async function brollDownloadAllImages(job) {
       job.imageTasks[i].status = 'error';
       job.imageTasks[i].error = err.message;
     }
+    _saveBrollStatusSnapshot(job);  // persist after every image task
     await next();
   }
 
