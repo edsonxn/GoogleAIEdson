@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
 """
-Chatterbox TTS HTTP server — carga el modelo una vez, atiende POST /generate.
+Chatterbox TTS HTTP server -- carga el modelo una vez, atiende POST /generate.
 Puerto por defecto: 7171
 """
 import sys, os, json, threading, argparse
+
+# Forzar UTF-8 en stdout/stderr para evitar UnicodeEncodeError en Windows (CP1252)
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+if hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
@@ -31,7 +37,7 @@ def _load():
     dev = _device()
     print(f'[Chatterbox] Cargando modelo en {dev}...', flush=True)
     _model = ChatterboxTTS.from_pretrained(device=dev)
-    print('[Chatterbox] Modelo listo ✓', flush=True)
+    print('[Chatterbox] Modelo listo OK', flush=True)
 
 def _get():
     if _model is None: _load()
