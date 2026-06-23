@@ -102,6 +102,7 @@ class Handler(BaseHTTPRequestHandler):
         language     = body.get('language', 'es') or 'es'
         exaggeration = float(body.get('exaggeration', 0.5))
         cfg_weight   = float(body.get('cfg_weight', 0.5))
+        temperature  = float(body.get('temperature', 0.8))
 
         if not text:   self._json(400, {'error': 'text requerido'}); return
         if not output: self._json(400, {'error': 'output requerido'}); return
@@ -142,6 +143,7 @@ class Handler(BaseHTTPRequestHandler):
                         audio_prompt_path=current_prompt,
                         exaggeration=exaggeration,
                         cfg_weight=cfg_weight,
+                        temperature=temperature,
                     )
                     wavs.append(w.squeeze(0).cpu().numpy() if hasattr(w, 'squeeze') else np.array(w))
                     if i < len(chunks) - 1:

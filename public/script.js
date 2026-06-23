@@ -2678,9 +2678,10 @@ async function runAutoGeneration() {
   const selectedQwenVoice = document.getElementById("qwenVoiceSelect")?.value || "";
   const generateChatterboxAudio = document.getElementById("autoGenerateChatterboxAudio")?.checked || false;
   const chatterboxVoice = document.getElementById("chatterboxVoiceSelect")?.value || "";
-  const chatterboxLanguage = document.getElementById("chatterboxLanguage")?.value || "es";
+  const chatterboxLanguage    = document.getElementById("chatterboxLanguage")?.value || "es";
   const chatterboxExaggeration = parseFloat(document.getElementById("chatterboxExaggeration")?.value ?? 0.5);
-  const chatterboxCfgWeight   = parseFloat(document.getElementById("chatterboxCfgWeight")?.value ?? 0.5);
+  const chatterboxCfgWeight    = parseFloat(document.getElementById("chatterboxCfgWeight")?.value ?? 0.5);
+  const chatterboxTemperature  = parseFloat(document.getElementById("chatterboxTemperature")?.value ?? 0.8);
   const selectedApplioVoice = document.getElementById("applioVoiceSelect").value;
   const selectedApplioModel = document.getElementById("applioModelSelect").value;
   const applioPitch = parseInt(document.getElementById("applioPitch").value) || 0;
@@ -2876,6 +2877,7 @@ async function runAutoGeneration() {
         chatterboxLanguage,
         chatterboxExaggeration,
         chatterboxCfgWeight,
+        chatterboxTemperature,
         applioVoice: selectedApplioVoice,
         applioModel: selectedApplioModel,
         applioPitch,
@@ -2962,6 +2964,7 @@ async function runAutoGeneration() {
         chatterboxLanguage,
         chatterboxExaggeration,
         chatterboxCfgWeight,
+        chatterboxTemperature,
       })
     });
 
@@ -3129,6 +3132,7 @@ async function runAutoGeneration() {
       chatterboxLanguage,
       chatterboxExaggeration,
       chatterboxCfgWeight,
+      chatterboxTemperature,
       useGoogleAudio: generateAudio,
   voiceAssignments,
   randomGoogleVoice: useRandomVoices,
@@ -3316,6 +3320,7 @@ async function runAutoGeneration() {
         chatterboxLanguage,
         chatterboxExaggeration,
         chatterboxCfgWeight,
+        chatterboxTemperature,
         applioVoice: selectedApplioVoice,
         applioModel: selectedApplioModel,
         applioPitch: applioPitch,
@@ -3349,6 +3354,7 @@ async function runAutoGeneration() {
             chatterboxLanguage,
             chatterboxExaggeration,
             chatterboxCfgWeight,
+            chatterboxTemperature,
             applioVoice: selectedApplioVoice,
             applioModel: selectedApplioModel,
             applioPitch: applioPitch,
@@ -3468,6 +3474,7 @@ async function runAutoGeneration() {
                 chatterboxLanguage: project.chatterboxLanguage || 'es',
                 chatterboxExaggeration: project.chatterboxExaggeration ?? 0.5,
                 chatterboxCfgWeight: project.chatterboxCfgWeight ?? 0.5,
+                chatterboxTemperature: project.chatterboxTemperature ?? 0.8,
               } : project.isQwen ? {
                 script: scriptContent,
                 topic: project.projectName,
@@ -3990,6 +3997,7 @@ async function generateSectionApplioAudio(section) {
         chatterboxLanguage: document.getElementById("chatterboxLanguage")?.value || "es",
         chatterboxExaggeration: parseFloat(document.getElementById("chatterboxExaggeration")?.value ?? 0.5),
         chatterboxCfgWeight: parseFloat(document.getElementById("chatterboxCfgWeight")?.value ?? 0.5),
+        chatterboxTemperature: parseFloat(document.getElementById("chatterboxTemperature")?.value ?? 0.8),
       })
     });
 
@@ -15006,6 +15014,7 @@ async function regenerateAllAudios() {
       const chatterboxLanguage = document.getElementById('chatterboxLanguage')?.value || 'es';
       const chatterboxExaggeration = parseFloat(document.getElementById('chatterboxExaggeration')?.value ?? 0.5);
       const chatterboxCfgWeight = parseFloat(document.getElementById('chatterboxCfgWeight')?.value ?? 0.5);
+      const chatterboxTemperature = parseFloat(document.getElementById('chatterboxTemperature')?.value ?? 0.8);
 
       const response = await fetch('/generate-missing-applio-audios', {
         method: 'POST',
@@ -15017,6 +15026,7 @@ async function regenerateAllAudios() {
           chatterboxLanguage,
           chatterboxExaggeration,
           chatterboxCfgWeight,
+          chatterboxTemperature,
           totalSections: window.currentProject.completedSections.length,
           scriptStyle,
           customStyleInstructions,
@@ -20667,8 +20677,9 @@ function _cbSaveCurrentVoicePrefs() {
   if (!voice) return;
   const prefs = _cbLoadVoicePrefs();
   prefs[voice] = {
-    exaggeration: parseFloat(document.getElementById('chatterboxExaggeration')?.value ?? 0.5),
-    cfgWeight:    parseFloat(document.getElementById('chatterboxCfgWeight')?.value ?? 0.5),
+    exaggeration:  parseFloat(document.getElementById('chatterboxExaggeration')?.value ?? 0.5),
+    cfgWeight:     parseFloat(document.getElementById('chatterboxCfgWeight')?.value ?? 0.5),
+    temperature:   parseFloat(document.getElementById('chatterboxTemperature')?.value ?? 0.8),
   };
   localStorage.setItem(_CB_VOICE_PREFS_KEY, JSON.stringify(prefs));
 }
@@ -20682,8 +20693,11 @@ function _cbApplyVoicePrefs(voice) {
   const exLbl = document.getElementById('chatterboxExaggerationLabel');
   const cfEl  = document.getElementById('chatterboxCfgWeight');
   const cfLbl = document.getElementById('chatterboxCfgWeightLabel');
-  if (exEl) { exEl.value = p.exaggeration; if (exLbl) exLbl.textContent = p.exaggeration.toFixed(2); }
-  if (cfEl) { cfEl.value = p.cfgWeight;    if (cfLbl) cfLbl.textContent = p.cfgWeight.toFixed(2); }
+  const tmpEl  = document.getElementById('chatterboxTemperature');
+  const tmpLbl = document.getElementById('chatterboxTemperatureLabel');
+  if (exEl)  { exEl.value  = p.exaggeration;          if (exLbl)  exLbl.textContent  = p.exaggeration.toFixed(2); }
+  if (cfEl)  { cfEl.value  = p.cfgWeight;              if (cfLbl)  cfLbl.textContent  = p.cfgWeight.toFixed(2); }
+  if (tmpEl) { tmpEl.value = p.temperature ?? 0.8;     if (tmpLbl) tmpLbl.textContent = (p.temperature ?? 0.8).toFixed(2); }
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -20693,6 +20707,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Save prefs when sliders change
   document.getElementById('chatterboxExaggeration')?.addEventListener('input', _cbSaveCurrentVoicePrefs);
   document.getElementById('chatterboxCfgWeight')?.addEventListener('input', _cbSaveCurrentVoicePrefs);
+  document.getElementById('chatterboxTemperature')?.addEventListener('input', _cbSaveCurrentVoicePrefs);
 
   // Load prefs when voice changes
   document.getElementById('chatterboxVoiceSelect')?.addEventListener('change', (e) => {
