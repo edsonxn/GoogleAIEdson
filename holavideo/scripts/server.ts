@@ -256,7 +256,7 @@ export const MyComposition = () => {
 const SYSTEM_PROMPT_WITH_IMAGES = SYSTEM_PROMPT
   .replace(
     '- PROHIBIDO usar Img, staticFile, o cualquier imagen/archivo externo. No existen imágenes en el proyecto.\n- Dibuja TODO con divs, CSS (bordes, degradados, border-radius, box-shadow), SVG inline o emojis.\n- Para representar objetos, animales o personas usa emojis grandes, formas geométricas o SVG paths simples.',
-    '- Tienes imágenes reales disponibles vía staticFile() — úsalas como parte central de la animación.\n- Importa: import { AbsoluteFill, Img, Sequence, staticFile, useCurrentFrame, useVideoConfig, interpolate, Easing } from \'remotion\';\n- Usa <Img> de remotion (NO <img> HTML). Combina las imágenes con overlays CSS, texto animado y efectos de opacidad/zoom/posición.\n- Dibuja elementos adicionales con divs, CSS, SVG inline o emojis encima de las imágenes.\n- ANTI-CRASH CRÍTICO: staticFile() SOLO acepta string literal — NUNCA variables. Escribe staticFile(\'nombre-exacto.png\') con el nombre del asset directamente. NUNCA staticFile(variable) ni staticFile(props.src) ni staticFile(asset?.filename).'
+    '- Tienes imágenes reales disponibles vía staticFile() — úsalas como parte central de la animación.\n- Importa: import { AbsoluteFill, Img, Sequence, staticFile, useCurrentFrame, useVideoConfig, interpolate, Easing } from \'remotion\';\n- Usa <Img> de remotion (NO <img> HTML). Combina las imágenes con overlays CSS, texto animado y efectos de zoom/posición/escala.\n- PROHIBIDO: NUNCA apliques opacity < 1 directamente en el elemento <Img>. Las imágenes reales SIEMPRE deben estar al 100% de opacidad (opacity: 1). Puedes animar posición, escala, translateX/Y, pero NUNCA la opacidad del <Img> mismo.\n- Si necesitas un efecto de entrada, usa translateY/translateX o scale — NO opacity en el <Img>.\n- Dibuja elementos adicionales con divs, CSS, SVG inline o emojis encima de las imágenes.\n- ANTI-CRASH CRÍTICO: staticFile() SOLO acepta string literal — NUNCA variables. Escribe staticFile(\'nombre-exacto.png\') con el nombre del asset directamente. NUNCA staticFile(variable) ni staticFile(props.src) ni staticFile(asset?.filename).'
   );
 
 const OLLAMA_SYSTEM_PROMPT = `Eres un experto en Remotion (framework de video con React).
@@ -1221,7 +1221,7 @@ app.post("/api/generate", async (req, res) => {
 
     const animDesc: Record<string, string> = {
       'slow-zoom-in':      'zoom suave (scale: 1 → 1.08 durante toda la duración, usando interpolate)',
-      'fade-in':           'fade-in (opacity: 0 → 1 en los primeros 20 frames)',
+      'fade-in':           'entrada suave desde abajo (translateY: 30px → 0 en los primeros 20 frames, opacity del CONTENEDOR 0 → 1, NUNCA del <Img> directo)',
       'slide-from-left':   'entra deslizándose desde la izquierda (translateX: -400px → 0 en 25 frames con Easing.out(Easing.cubic))',
       'slide-from-right':  'entra deslizándose desde la derecha (translateX: 400px → 0 en 25 frames con Easing.out(Easing.cubic))',
       'slide-from-bottom': 'entra desde abajo (translateY: 300px → 0 en 25 frames con Easing.out(Easing.cubic))',
@@ -1251,7 +1251,7 @@ app.post("/api/generate", async (req, res) => {
         ? 'Pon un div semitransparente encima (background: "rgba(0,0,0,0.4)") para que el texto sea legible.'
         : a.use === 'icon'
         ? 'Tamaño compacto (120-200px). Si es PNG con fondo transparente se integra directamente.'
-        : `Es el elemento protagonista. CSS OBLIGATORIO para el <Img>: objectFit: "contain", height: "auto", maxHeight: "85%", maxWidth: "${a.size || '38%'}", width: "auto" — NUNCA uses overflow:"hidden" en el contenedor. Aplica: filter: "drop-shadow(0 0 18px rgba(0,200,255,0.5))".`;
+        : `Es el elemento protagonista. CSS OBLIGATORIO para el <Img>: objectFit: "contain", opacity: 1, height: "auto", maxHeight: "85%", maxWidth: "${a.size || '38%'}", width: "auto" — NUNCA uses overflow:"hidden" en el contenedor. NUNCA uses opacity < 1 en el <Img>. Aplica: filter: "drop-shadow(0 0 18px rgba(0,200,255,0.5))". Para animación de entrada usa translateY/translateX/scale, NO opacity.`;
       return `ASSET ${i + 1}: staticFile('${a.filename}') — "${a.label}" [${isVideo ? 'VIDEO MP4' : 'IMAGEN'}]
   Rol: ${a.use} | Posición sugerida: { ${pos} }
   ${isVideo ? '' : `Animación: ${anim}\n  `}${overlayNote}`;
