@@ -20,6 +20,7 @@ import axios from 'axios';
 import os from 'os';
 import textToSpeech from '@google-cloud/text-to-speech';
 import { AsyncLocalStorage } from 'async_hooks';
+import { google as googleApis } from 'googleapis';
 
 // ── Per-clip cost tracking via AsyncLocalStorage ──────────────────────────────
 // Any paid Gemini call made while a clip is being generated adds an entry here.
@@ -27079,4 +27080,138 @@ app.post('/api/manual-translate-video', upload.fields(manualUploadFields), async
         sendStatus('Error: ' + error.message, null, false, error.message);
         res.end();
     }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// YOUTUBE UPLOAD
+// ─────────────────────────────────────────────────────────────────────────────
+
+const YT_CREDS_PATH   = path.join(__dirname, 'youtube_client_secrets.json');
+const YT_TOKENS_PATH  = path.join(__dirname, 'youtube_tokens.json');
+const YT_REDIRECT_URI = 'http://localhost:3000/oauth2callback';
+
+function _ytOAuth2Client() {
+  let creds;
+  try { creds = JSON.parse(fs.readFileSync(YT_CREDS_PATH, 'utf8')); }
+  catch { return null; }
+  const cfg = creds.installed || creds.web || {};
+  const client = new googleApis.auth.OAuth2(
+    cfg.client_id, cfg.client_secret,
+    cfg.redirect_uris?.[0] || YT_REDIRECT_URI
+  );
+  try {
+    const tokens = JSON.parse(fs.readFileSync(YT_TOKENS_PATH, 'utf8'));
+    client.setCredentials(tokens);
+    client.on('tokens', updated => {
+      try {
+        const prev = JSON.parse(fs.readFileSync(YT_TOKENS_PATH, 'utf8'));
+        fs.writeFileSync(YT_TOKENS_PATH, JSON.stringify({ ...prev, ...updated }, null, 2));
+      } catch {}
+    });
+  } catch {}
+  return client;
+}
+
+// GET /youtube/auth-status
+app.get('/youtube/auth-status', async (req, res) => {
+  const client = _ytOAuth2Client();
+  if (!client) return res.json({ authenticated: false, missingCredentials: true });
+  const tokens = client.credentials;
+  if (!tokens?.access_token && !tokens?.refresh_token) return res.json({ authenticated: false });
+  try {
+    const yt = googleApis.youtube({ version: 'v3', auth: client });
+    const ch = await yt.channels.list({ part: ['snippet'], mine: true, maxResults: 1 });
+    const channel = ch.data.items?.[0];
+    res.json({ authenticated: true, channelName: channel?.snippet?.title || '', channelId: channel?.id || '' });
+  } catch {
+    res.json({ authenticated: false });
+  }
+});
+
+// GET /youtube/auth-url
+app.get('/youtube/auth-url', (req, res) => {
+  const client = _ytOAuth2Client();
+  if (!client) return res.status(400).json({ error: 'Falta youtube_client_secrets.json' });
+  const url = client.generateAuthUrl({
+    access_type: 'offline',
+    scope: ['https://www.googleapis.com/auth/youtube.upload', 'https://www.googleapis.com/auth/youtube.readonly'],
+    prompt: 'consent',
+  });
+  res.json({ url });
+});
+
+// GET /oauth2callback  (Google redirect here after user approves)
+app.get('/oauth2callback', async (req, res) => {
+  const { code } = req.query;
+  if (!code) return res.status(400).send('Falta code');
+  const client = _ytOAuth2Client();
+  if (!client) return res.status(500).send('No hay credenciales configuradas');
+  try {
+    const { tokens } = await client.getToken(code);
+    fs.writeFileSync(YT_TOKENS_PATH, JSON.stringify(tokens, null, 2));
+    res.send(`<html><body style="font-family:sans-serif;background:#0f172a;color:#06b6d4;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;font-size:1.3rem;">
+      <div style="text-align:center"><span style="font-size:3rem">✅</span><br><br>Canal de YouTube conectado exitosamente.<br><br>
+      <span style="font-size:0.9rem;color:#94a3b8;">Puedes cerrar esta ventana.</span></div>
+      <script>window.opener?.postMessage('youtube_auth_ok','*'); setTimeout(()=>window.close(),2000);</script>
+    </body></html>`);
+  } catch (e) {
+    res.status(500).send('Error obteniendo token: ' + e.message);
+  }
+});
+
+// POST /youtube/upload
+app.post('/youtube/upload', async (req, res) => {
+  const { videoPath, title, description, tags, privacyStatus, publishAt, categoryId } = req.body;
+  if (!videoPath || !title) return res.status(400).json({ error: 'Faltan videoPath y title' });
+
+  const client = _ytOAuth2Client();
+  if (!client || (!client.credentials?.access_token && !client.credentials?.refresh_token)) {
+    return res.status(401).json({ error: 'No autenticado con YouTube' });
+  }
+
+  const absPath = path.isAbsolute(videoPath)
+    ? videoPath
+    : path.join(__dirname, videoPath);
+
+  if (!fs.existsSync(absPath)) return res.status(404).json({ error: `Video no encontrado: ${absPath}` });
+
+  try {
+    const yt = googleApis.youtube({ version: 'v3', auth: client });
+    const fileSize = fs.statSync(absPath).size;
+
+    console.log(`📤 [YouTube] Subiendo "${title}" (${(fileSize / 1024 / 1024).toFixed(1)} MB)...`);
+
+    const uploadRes = await yt.videos.insert({
+      part: ['snippet', 'status'],
+      requestBody: {
+        snippet: {
+          title,
+          description: description || '',
+          tags: Array.isArray(tags) ? tags : (tags || '').split(',').map(t => t.trim()).filter(Boolean),
+          categoryId: categoryId || '22',
+          defaultLanguage: 'es',
+        },
+        status: {
+          privacyStatus: privacyStatus || 'private',
+          ...(privacyStatus === 'scheduled' && publishAt ? { publishAt, privacyStatus: 'private', selfDeclaredMadeForKids: false } : {}),
+        },
+      },
+      media: {
+        mimeType: 'video/mp4',
+        body: fs.createReadStream(absPath),
+      },
+    }, {
+      onUploadProgress: evt => {
+        const pct = Math.round((evt.bytesRead / fileSize) * 100);
+        console.log(`📤 [YouTube] ${pct}% subido...`);
+      },
+    });
+
+    const videoId = uploadRes.data.id;
+    console.log(`✅ [YouTube] Video subido: https://youtube.com/watch?v=${videoId}`);
+    res.json({ success: true, videoId, url: `https://www.youtube.com/watch?v=${videoId}` });
+  } catch (e) {
+    console.error('[YouTube] Error al subir:', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });

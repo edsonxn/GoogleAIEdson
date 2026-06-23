@@ -20103,6 +20103,8 @@ function showBrollTranslatePanel(videoFile, folderName, bgMusicFile, bgMusicVolu
     panel.style.display = 'block';
     loadTranslateApplioVoices().then(() => restoreBrollTranslatePrefs());
   }
+  // Show YouTube upload panel for this rendered video
+  showYouTubeUploadPanel(videoFile, folderName);
 }
 
 function onTranslateTtsChange() {
@@ -20727,5 +20729,240 @@ window.toggleApplioVoiceDropdown = function() {
 };
 // ==============================
 
+// ─────────────────────────────────────────────────────────────────────────────
+// YOUTUBE UPLOAD PANEL
+// ─────────────────────────────────────────────────────────────────────────────
+
+let _ytVideoPath = null;   // absolute/relative path of the video to upload
+let _ytAuthenticated = false;
+
+// Called from showBrollTranslatePanel after render completes
+async function showYouTubeUploadPanel(videoFile, folderName) {
+  const panel = document.getElementById('youtubeUploadPanel');
+  if (!panel) return;
+
+  // Build server-side path that index.js can locate
+  _ytVideoPath = videoFile;
+
+  // Reset upload state
+  document.getElementById('ytUploadProgress').style.display = 'none';
+  document.getElementById('ytUploadResult').style.display = 'none';
+  document.getElementById('ytUploadBar').style.width = '0%';
+  document.getElementById('ytUploadBtn').disabled = false;
+  document.getElementById('ytUploadBtn').style.opacity = '1';
+
+  // Pre-fill from existing YouTube metadata if available
+  _ytPrefillMetadata();
+
+  panel.style.display = 'block';
+
+  // Check auth status in background
+  _ytRefreshAuthBadge();
+}
+
+function _ytPrefillMetadata() {
+  const meta = window.lastGeneratedYouTubeMetadata?.content
+    || window.currentProject?.youtubeMetadata?.content;
+
+  const titleOptions = document.getElementById('ytTitleOptions');
+  titleOptions.innerHTML = '';
+
+  if (meta) {
+    const parsed = _ytParseMetadata(meta);
+
+    // Title radio buttons
+    parsed.titles.forEach((t, i) => {
+      const row = document.createElement('label');
+      row.style.cssText = 'display:flex; align-items:flex-start; gap:8px; cursor:pointer; padding:6px 10px; border-radius:7px; border:1px solid rgba(255,255,255,0.07); background:#111827; transition:background 0.15s;';
+      row.onmouseenter = () => row.style.background = '#1e293b';
+      row.onmouseleave = () => { if (!row.querySelector('input').checked) row.style.background = '#111827'; };
+      row.innerHTML = `<input type="radio" name="ytTitle" value="${_ytEscape(t)}" style="margin-top:2px; accent-color:#ff4444;"
+          onchange="document.getElementById('ytCustomTitle').value=''; document.querySelectorAll('#ytTitleOptions label').forEach(l=>l.style.background='#111827'); this.closest('label').style.background='#1a2a1a';">
+        <span style="font-size:0.8rem; color:#cbd5e1; line-height:1.4;">${_ytEscape(t)}</span>`;
+      titleOptions.appendChild(row);
+    });
+
+    // Auto-select first title
+    const firstRadio = titleOptions.querySelector('input[type="radio"]');
+    if (firstRadio) {
+      firstRadio.checked = true;
+      firstRadio.closest('label').style.background = '#1a2a1a';
+    }
+
+    // Description
+    document.getElementById('ytDescription').value = parsed.description;
+
+    // Tags
+    document.getElementById('ytTags').value = parsed.tags.join(', ');
+  } else {
+    titleOptions.innerHTML = '<p style="color:#64748b; font-size:0.8rem; padding:6px 0;">Genera los metadatos de YouTube primero para ver títulos sugeridos.</p>';
+  }
+}
+
+// Minimal metadata parser (re-uses same logic as parseMetadata in script.js)
+function _ytParseMetadata(metadata) {
+  const lines = metadata.split('\n');
+  let section = '';
+  const titles = [], tags = [];
+  let description = '';
+  const normalize = t => t.normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase();
+
+  for (let line of lines) {
+    line = line.trim();
+    const N = normalize(line);
+    if (N.includes('TITULOS CLICKBAIT') || N.includes('CLICKBAIT TITLES')) { section = 'titles'; continue; }
+    if (N.includes('DESCRIPCION') || N.includes('DESCRIPTION')) { section = 'desc'; continue; }
+    if (N.includes('ETIQUETAS') || N.includes('TAGS')) { section = 'tags'; continue; }
+    if (N.includes('MINIATURA') || N.includes('THUMBNAIL')) { section = 'thumb'; continue; }
+
+    if (!line || line.startsWith('**')) continue;
+    if (section === 'titles') { const c = line.replace(/^\d+\.\s*/, ''); if (c) titles.push(c); }
+    else if (section === 'desc') description += line + '\n';
+    else if (section === 'tags') tags.push(...line.split(',').map(t => t.trim()).filter(Boolean));
+  }
+  return { titles: titles.slice(0, 10), description: description.trim(), tags: tags.slice(0, 25) };
+}
+
+function _ytEscape(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function ytDeselectAllTitles() {
+  document.querySelectorAll('#ytTitleOptions input[type="radio"]').forEach(r => {
+    r.checked = false;
+    r.closest('label').style.background = '#111827';
+  });
+}
+
+function ytToggleSchedule() {
+  const val = document.getElementById('ytPrivacy').value;
+  const block = document.getElementById('ytScheduleBlock');
+  block.style.display = val === 'scheduled' ? 'block' : 'none';
+}
+
+async function _ytRefreshAuthBadge() {
+  const dot = document.getElementById('ytAuthDot');
+  const label = document.getElementById('ytAuthLabel');
+  try {
+    const r = await fetch('/youtube/auth-status');
+    const d = await r.json();
+    _ytAuthenticated = d.authenticated;
+    if (d.missingCredentials) {
+      dot.style.background = '#f59e0b';
+      label.textContent = 'Falta credenciales';
+      label.style.color = '#f59e0b';
+    } else if (d.authenticated) {
+      dot.style.background = '#4ade80';
+      label.textContent = d.channelName ? `✓ ${d.channelName}` : '✓ Conectado';
+      label.style.color = '#4ade80';
+    } else {
+      dot.style.background = '#64748b';
+      label.textContent = 'Conectar canal';
+      label.style.color = '#94a3b8';
+    }
+  } catch {
+    dot.style.background = '#64748b';
+    label.textContent = 'Sin conexión';
+  }
+}
+
+async function ytConnectOrDisconnect() {
+  if (_ytAuthenticated) return; // already connected — could show disconnect dialog
+  try {
+    const r = await fetch('/youtube/auth-url');
+    const d = await r.json();
+    if (d.error) { alert('Error: ' + d.error + '\n\nAsegúrate de tener youtube_client_secrets.json en la raíz del proyecto.'); return; }
+    const popup = window.open(d.url, 'yt_auth', 'width=550,height=700');
+    // Listen for the postMessage from oauth callback page
+    const onMsg = (e) => {
+      if (e.data === 'youtube_auth_ok') {
+        window.removeEventListener('message', onMsg);
+        if (popup && !popup.closed) popup.close();
+        _ytRefreshAuthBadge();
+      }
+    };
+    window.addEventListener('message', onMsg);
+    // Also poll in case postMessage doesn't fire
+    const poll = setInterval(() => {
+      if (popup?.closed) { clearInterval(poll); window.removeEventListener('message', onMsg); _ytRefreshAuthBadge(); }
+    }, 1200);
+  } catch (e) { alert('Error obteniendo URL de autenticación: ' + e.message); }
+}
+
+async function ytStartUpload() {
+  const selectedRadio = document.querySelector('#ytTitleOptions input[type="radio"]:checked');
+  const customTitle = document.getElementById('ytCustomTitle').value.trim();
+  const title = selectedRadio ? selectedRadio.value : customTitle;
+
+  if (!title) { alert('Selecciona o escribe un título.'); return; }
+  if (!_ytVideoPath) { alert('No hay video para subir.'); return; }
+  if (!_ytAuthenticated) {
+    const ok = confirm('No estás conectado a YouTube. ¿Conectar ahora?');
+    if (ok) ytConnectOrDisconnect();
+    return;
+  }
+
+  const description = document.getElementById('ytDescription').value;
+  const tagsRaw = document.getElementById('ytTags').value;
+  const tags = tagsRaw.split(',').map(t => t.trim()).filter(Boolean);
+  const privacy = document.getElementById('ytPrivacy').value;
+  const publishAt = privacy === 'scheduled' ? document.getElementById('ytPublishAt').value : null;
+
+  if (privacy === 'scheduled' && !publishAt) { alert('Selecciona fecha y hora para programar el video.'); return; }
+
+  // UI: show progress
+  const btn = document.getElementById('ytUploadBtn');
+  btn.disabled = true;
+  btn.style.opacity = '0.5';
+  document.getElementById('ytUploadProgress').style.display = 'block';
+  document.getElementById('ytUploadResult').style.display = 'none';
+  document.getElementById('ytUploadStatus').textContent = 'Subiendo video... puede tardar varios minutos.';
+  document.getElementById('ytUploadPercent').textContent = '';
+
+  // Animate bar indeterminately until response
+  let barW = 0;
+  const barEl = document.getElementById('ytUploadBar');
+  barEl.style.transition = 'none';
+  barEl.style.width = '0%';
+  const barTimer = setInterval(() => {
+    barW = Math.min(barW + (barW < 40 ? 1.2 : barW < 70 ? 0.5 : 0.15), 90);
+    barEl.style.width = barW + '%';
+  }, 400);
+
+  try {
+    const privacyStatus = privacy === 'scheduled' ? 'scheduled' : privacy;
+    const publishAtISO = publishAt ? new Date(publishAt).toISOString() : null;
+
+    const res = await fetch('/youtube/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ videoPath: _ytVideoPath, title, description, tags, privacyStatus, publishAt: publishAtISO }),
+    });
+    const data = await res.json();
+
+    clearInterval(barTimer);
+    barEl.style.transition = 'width 0.4s ease';
+    barEl.style.width = '100%';
+
+    if (data.success) {
+      document.getElementById('ytUploadStatus').textContent = '¡Subido!';
+      document.getElementById('ytUploadPercent').textContent = '100%';
+      const result = document.getElementById('ytUploadResult');
+      result.style.display = 'block';
+      result.innerHTML = `<i class="fab fa-youtube"></i> Video publicado exitosamente —
+        <a href="${data.url}" target="_blank" style="color:#4ade80; text-decoration:underline;">${data.url}</a>`;
+    } else {
+      throw new Error(data.error || 'Error desconocido');
+    }
+  } catch (e) {
+    clearInterval(barTimer);
+    barEl.style.background = '#ef4444';
+    barEl.style.width = '100%';
+    document.getElementById('ytUploadStatus').textContent = 'Error: ' + e.message;
+    document.getElementById('ytUploadPercent').textContent = '';
+    btn.disabled = false;
+    btn.style.opacity = '1';
+  }
+}
 
 
