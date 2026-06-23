@@ -6971,10 +6971,10 @@ app.post('/generate-batch-audio', async (req, res) => {
 // ENDPOINT PARA GENERAR SOLO AUDIOS FALTANTES CON APPLIO
 app.post('/generate-missing-applio-audios', async (req, res) => {
   try {
-    const { folderName, applioVoice, applioModel, applioPitch, applioSpeed, totalSections, scriptStyle = 'professional', customStyleInstructions = '', wordsMin = 800, wordsMax = 1100, generateQwenAudio = false, qwenVoice = '', generateChatterboxAudio = false, chatterboxVoice = '', chatterboxExaggeration = 0.5, chatterboxCfgWeight = 0.5 } = req.body;
+    const { folderName, applioVoice, applioModel, applioPitch, applioSpeed, totalSections, scriptStyle = 'professional', customStyleInstructions = '', wordsMin = 800, wordsMax = 1100, generateQwenAudio = false, qwenVoice = '', generateChatterboxAudio: _useChatterboxFlag = false, chatterboxVoice = '', chatterboxExaggeration = 0.5, chatterboxCfgWeight = 0.5 } = req.body;
 
     const useQwen = generateQwenAudio === true;
-    const useChatterbox = generateChatterboxAudio === true;
+    const useChatterbox = _useChatterboxFlag === true;
     const providerLabel = useChatterbox ? 'Chatterbox' : useQwen ? 'Qwen' : 'Applio';
     
     console.log('\n' + '🔍'.repeat(20));
