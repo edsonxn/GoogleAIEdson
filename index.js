@@ -5159,7 +5159,8 @@ INSTRUCCIONES GENERALES:
 - Adapta tu estilo narrativo al tipo de contenido solicitado
 - APLICA ESTRICTAMENTE el estilo personalizado especificado arriba
 - Introduce el tema con fuerza y establece el tono general que seguirá el resto de secciones
-- Si puedes, anticipa tensiones o preguntas que resolverás más adelante sin revelar todavía las respuestas
+- Si puedes, anticipa tensiones o preguntas que resolverás más adelante de forma implícita, sin mencionar que habrá más secciones ni partes del video
+- PROHIBIDO: NO escribas frases como "en la siguiente sección", "en la próxima parte", "nos vemos en la parte 2" ni similares
 
 ESTRUCTURA REQUERIDA PARA LA SECCIÓN 1:
 - Exactamente 3 párrafos detallados
@@ -5191,8 +5192,9 @@ INSTRUCCIONES CRÍTICAS PARA CONTINUIDAD NARRATIVA:
 - Esta es la CONTINUACIÓN de un video que ya comenzó, NO hagas nueva introducción ni saludo, todo es parte del mismo video.
 - Integra de forma natural el contexto provisto arriba y evita repetir datos o situaciones
 - Usa transiciones naturales apropiadas para tu estilo personalizado
-- Refuerza conexiones con los capítulos anteriores y deja ganchos para los siguientes
+- Refuerza conexiones con los capítulos anteriores de forma implícita, fluyendo en el relato
 - Si necesitas mencionar algo ya dicho, hazlo como referencia rápida y expande con material nuevo
+- PROHIBIDO TERMINANTEMENTE: NO escribas frases como "en la siguiente sección", "en la próxima parte", "continuaremos luego", "en el siguiente video", "nos vemos en la parte X" ni ninguna variante que revele que el contenido está dividido en secciones. El oyente debe sentir que es un relato continuo y fluido.
 
 ESTRUCTURA REQUERIDA PARA LA SECCIÓN ${currentSection}:
 - Exactamente 3 párrafos detallados
@@ -5201,6 +5203,7 @@ ESTRUCTURA REQUERIDA PARA LA SECCIÓN ${currentSection}:
 - Progresa de manera lógica en el desarrollo del tema y agrega información fresca
 - Sigue el mismo estilo y enfoque que estableciste en las secciones anteriores
 - Explora nuevos aspectos sin repetir contenido ya cubierto
+- Termina la sección en un punto natural del relato, sin anunciar lo que viene después
 
 FORMATO DE RESPUESTA OBLIGATORIO:
 - Responde ÚNICAMENTE con el texto del guión
