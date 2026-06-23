@@ -26062,9 +26062,21 @@ ${JSON.stringify(batch)}`;
 
         responseText = responseText.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?\s*```$/i, '').trim();
 
-        const translated = JSON.parse(responseText);
-        if (!Array.isArray(translated) || translated.length !== batch.length) {
-            throw new Error(`Translation returned ${translated?.length} segments, expected ${batch.length}`);
+        let translated = JSON.parse(responseText);
+        if (!Array.isArray(translated)) {
+            throw new Error(`Translation did not return an array (got ${typeof translated})`);
+        }
+        if (translated.length !== batch.length) {
+            console.warn(`⚠️ Translation mismatch: got ${translated.length} segments, expected ${batch.length}. Reconciling...`);
+            if (translated.length > batch.length) {
+                // LLM split some segments — truncate excess
+                translated = translated.slice(0, batch.length);
+            } else {
+                // LLM merged/dropped segments — pad missing with originals
+                while (translated.length < batch.length) {
+                    translated.push(batch[translated.length]);
+                }
+            }
         }
         allTranslated.push(...translated);
     }
