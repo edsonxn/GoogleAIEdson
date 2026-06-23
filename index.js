@@ -19569,7 +19569,22 @@ app.post('/api/generate-ai-clip', async (req, res) => {
     if (manualPhotoAsset && !imageAsset) {
       imageAsset = { assets: [manualPhotoAsset] };
     } else if (manualPhotoAsset && imageAsset?.assets) {
-      imageAsset.assets.unshift(manualPhotoAsset); // manual photo takes priority
+      // Don't add if an entity asset is already the same image (entity_ is often a copy of ra_manual_)
+      let isDuplicate = false;
+      try {
+        const manualBuf = fs.readFileSync(manualPhotoAsset.absPath);
+        isDuplicate = imageAsset.assets.some(a => {
+          try {
+            const buf = fs.readFileSync(a.absPath);
+            return buf.length === manualBuf.length && buf.equals(manualBuf);
+          } catch { return false; }
+        });
+      } catch {}
+      if (isDuplicate) {
+        console.log(`⚠️ [Assets] Foto manual duplica asset de entidad — omitiendo: ${manualPhotoAsset.filename}`);
+      } else {
+        imageAsset.assets.unshift(manualPhotoAsset); // manual photo takes priority
+      }
     }
 
     // ── Separate B-Roll video from image assets before HolaVideo ──────────────
