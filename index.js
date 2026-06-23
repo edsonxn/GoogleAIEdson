@@ -21051,8 +21051,7 @@ async function verifyEntityImage(imagePath, entityName, entityType) {
       prompt = `¿Esta imagen muestra claramente el producto "${entityName}"? Responde SOLO con JSON: {"isLogo": true/false, "score": 1-10, "desc": "qué muestra en 5 palabras"}. Si es un edificio, persona, mapa o imagen genérica sin mostrar el producto, isLogo debe ser false.`;
     }
 
-    // Usar modelo con visión más capaz para verificación de logos
-    const { model: aiModel } = await getGoogleAI('gemini-3.1-pro-preview', { context: 'llm' });
+    const { model: aiModel } = await getGoogleAI('gemini-3.1-flash-lite', { context: 'llm' });
     const result = await aiModel.generateContent([{ inlineData: { mimeType, data: base64Data } }, prompt]);
     const text = result.response.text().trim().replace(/^```json?\n?/m, '').replace(/```$/m, '').trim();
     const analysis = JSON.parse(text);
