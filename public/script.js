@@ -20945,15 +20945,21 @@ function ytAddChannel() {
   }).catch(e => alert('Error: ' + e.message));
 }
 
-// ─── Translated versions upload ──────────────────────────────────────────────
+// ─── Localizaciones (mismo video, título+descripción por idioma) ──────────────
 
-let _ytTranslations = [];  // [{lang, langName, flag, audioFile, videoFile}]
+let _ytTranslations    = [];   // [{lang, langName, flag, audioFile}]
+let _ytUploadedVideoId = null; // set after main upload succeeds
 
 async function _ytLoadTranslations() {
   const sec  = document.getElementById('ytTranslatedSection');
   const list = document.getElementById('ytTranslatedList');
   const cnt  = document.getElementById('ytTranslatedCount');
   if (!sec || !list || !_ytFolderName) return;
+
+  // Reset studio step
+  const studioStep = document.getElementById('ytStudioStep');
+  if (studioStep) studioStep.style.display = 'none';
+  _ytUploadedVideoId = null;
 
   try {
     const res  = await fetch(`/api/translated-videos/${encodeURIComponent(_ytFolderName)}`);
@@ -20969,149 +20975,101 @@ async function _ytLoadTranslations() {
     for (const t of _ytTranslations) {
       const row = document.createElement('div');
       row.id = `yt-tl-row-${t.lang}`;
-      row.style.cssText = 'background:#0a1628; border:1px solid rgba(255,255,255,0.07); border-radius:10px; padding:12px 14px; display:flex; flex-direction:column; gap:8px;';
-
+      row.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:8px; padding:7px 10px; background:#0a1628; border:1px solid rgba(255,255,255,0.06); border-radius:8px;';
       row.innerHTML = `
-        <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
-          <div style="display:flex; align-items:center; gap:8px; font-size:0.85rem; font-weight:600; color:#e2e8f0;">
-            ${t.flag} ${t.langName}
-            <span id="yt-tl-status-${t.lang}" style="font-size:0.7rem; font-weight:400; color:#64748b;">
-              ${t.videoFile ? '✓ Video listo' : '· Audio disponible'}
-            </span>
-          </div>
-          <button onclick="ytUploadTranslated('${t.lang}')"
-            id="yt-tl-btn-${t.lang}"
-            style="background:linear-gradient(135deg,#7f0000,#cc0000); border:none; border-radius:7px; color:#fff; font-size:0.75rem; font-weight:600; padding:6px 14px; cursor:pointer; white-space:nowrap; display:flex; align-items:center; gap:5px;">
-            <i class="fab fa-youtube"></i> Subir
-          </button>
+        <div style="display:flex; align-items:center; gap:7px; font-size:0.82rem; color:#cbd5e1;">
+          ${t.flag} <strong>${t.langName}</strong>
+          <span style="font-size:0.68rem; color:#64748b;">· ${t.audioFile}</span>
         </div>
-        <input type="text" id="yt-tl-title-${t.lang}" placeholder="Traduciendo título..." value=""
-          style="width:100%; box-sizing:border-box; background:#111827; border:1px solid rgba(255,255,255,0.08); border-radius:7px; color:#cbd5e1; font-size:0.79rem; padding:7px 10px; outline:none;" />
-        <div id="yt-tl-result-${t.lang}" style="display:none; font-size:0.75rem; padding:6px 10px; border-radius:6px; margin-top:-2px;"></div>
+        <span id="yt-tl-status-${t.lang}" style="font-size:0.72rem; color:#64748b;">pendiente</span>
       `;
       list.appendChild(row);
-
-      // Auto-translate title for this language
-      _ytAutoTranslateTitleFor(t.lang);
     }
   } catch {}
 }
 
-async function _ytAutoTranslateTitleFor(lang) {
-  const input = document.getElementById(`yt-tl-title-${lang}`);
-  if (!input) return;
+// Called from ytStartUpload after a successful upload
+async function _ytApplyLocalizations(videoId) {
+  if (_ytTranslations.length === 0) return;
 
-  // Get current main title
-  const radio = document.querySelector('#ytTitleOptions input[type="radio"]:checked');
-  const customTitle = document.getElementById('ytCustomTitle')?.value?.trim();
-  const mainTitle = radio?.value || customTitle;
-  if (!mainTitle) { input.placeholder = 'Genera metadatos primero'; return; }
+  const studioStep  = document.getElementById('ytStudioStep');
+  const studioLink  = document.getElementById('ytStudioLink');
+  const studioFiles = document.getElementById('ytStudioFileList');
 
+  // Get main title + description + tags from the panel
+  const selectedRadio = document.querySelector('#ytTitleOptions input[type="radio"]:checked');
+  const mainTitle       = selectedRadio?.value || document.getElementById('ytCustomTitle')?.value?.trim() || '';
+  const mainDescription = document.getElementById('ytDescription')?.value || '';
+  const mainTagsRaw     = document.getElementById('ytTags')?.value || '';
+  const mainTags        = mainTagsRaw.split(',').map(t => t.trim()).filter(Boolean);
+
+  // Translate all in one call to /translate-title (gets titles for all langs at once)
+  let titlesByLang = {};
   try {
-    const res  = await fetch('/translate-title', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+    const r = await fetch('/translate-title', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title: mainTitle })
     });
-    const translations = await res.json();
-    if (translations[lang]) input.value = translations[lang];
-    else input.placeholder = mainTitle;
-  } catch {
-    input.placeholder = mainTitle;
-  }
-}
+    titlesByLang = await r.json();
+  } catch {}
 
-async function ytUploadTranslated(lang) {
-  if (!_ytSelectedChannel) {
-    const ok = confirm('No hay canal seleccionado. ¿Conectar uno ahora?');
-    if (ok) ytAddChannel();
-    return;
-  }
-
-  const btn    = document.getElementById(`yt-tl-btn-${lang}`);
-  const status = document.getElementById(`yt-tl-status-${lang}`);
-  const result = document.getElementById(`yt-tl-result-${lang}`);
-  const titleEl = document.getElementById(`yt-tl-title-${lang}`);
-  const title  = titleEl?.value?.trim();
-
-  if (!title) { alert(`Espera a que se traduzca el título para ${lang} o escríbelo manualmente.`); return; }
-
-  btn.disabled = true;
-  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
-  result.style.display = 'none';
-
-  try {
-    // Step 1: create video file if not yet done
-    const translation = _ytTranslations.find(t => t.lang === lang);
-    let videoFile = translation?.videoFile;
-
-    if (!videoFile) {
-      status.textContent = '⚙️ Creando video...';
-      const createRes  = await fetch('/api/create-translated-video', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ folderName: _ytFolderName, lang, originalVideoFile: _ytVideoPath })
-      });
-      const createData = await createRes.json();
-      if (!createData.success) throw new Error(createData.error);
-      videoFile = createData.videoFile;
-      if (translation) translation.videoFile = videoFile;
-      status.textContent = '✓ Video listo';
-    }
-
-    // Step 2: translate description + tags
-    status.textContent = '🌐 Traduciendo metadatos...';
-    const mainDescription = document.getElementById('ytDescription')?.value || '';
-    const mainTagsRaw     = document.getElementById('ytTags')?.value || '';
-    const mainTags        = mainTagsRaw.split(',').map(t => t.trim()).filter(Boolean);
-
-    let description = mainDescription;
-    let tags        = mainTags;
+  // Build localizations array, translating description per language
+  const localizations = [];
+  for (const t of _ytTranslations) {
+    _ytSetLangStatus(t.lang, '🌐 traduciendo...');
+    const translatedTitle = titlesByLang[t.lang] || mainTitle;
+    let translatedDescription = mainDescription;
 
     try {
       const metaRes  = await fetch('/api/translate-youtube-metadata', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title, description: mainDescription, tags: mainTags, targetLang: lang })
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: translatedTitle, description: mainDescription, tags: mainTags, targetLang: t.lang })
       });
       const metaData = await metaRes.json();
-      if (metaData.success) {
-        description = metaData.description || mainDescription;
-        tags        = Array.isArray(metaData.tags) ? metaData.tags : mainTags;
-      }
+      if (metaData.success) translatedDescription = metaData.description || mainDescription;
     } catch {}
 
-    // Step 3: upload to YouTube
-    status.textContent = '📤 Subiendo...';
-    const privacy      = document.getElementById('ytPrivacy')?.value || 'public';
-    const publishAt    = privacy === 'scheduled' ? document.getElementById('ytPublishAt')?.value : null;
-    const privacyStatus = privacy === 'scheduled' ? 'scheduled' : privacy;
-
-    const upRes  = await fetch('/youtube/upload', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        videoPath: videoFile,
-        folderName: _ytFolderName,
-        channelId:  _ytSelectedChannel?.id,
-        title, description, tags, privacyStatus,
-        publishAt: publishAt ? new Date(publishAt).toISOString() : null
-      })
-    });
-    const upData = await upRes.json();
-    if (!upData.success) throw new Error(upData.error);
-
-    status.textContent = '✅ Publicado';
-    result.style.cssText = 'display:block; font-size:0.75rem; padding:6px 10px; border-radius:6px; background:rgba(0,200,100,0.08); border:1px solid rgba(0,200,100,0.2); color:#4ade80;';
-    result.innerHTML = `<i class="fab fa-youtube"></i> <a href="${upData.url}" target="_blank" style="color:#4ade80; text-decoration:underline;">${upData.url}</a>`;
-    btn.innerHTML = '<i class="fas fa-check"></i> Subido';
-  } catch (err) {
-    status.textContent = '❌ Error';
-    result.style.cssText = 'display:block; font-size:0.75rem; padding:6px 10px; border-radius:6px; background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.2); color:#f87171;';
-    result.textContent = err.message;
-    btn.disabled = false;
-    btn.innerHTML = '<i class="fab fa-youtube"></i> Reintentar';
+    localizations.push({ lang: t.lang, title: translatedTitle, description: translatedDescription });
+    _ytSetLangStatus(t.lang, '⏳ esperando API...');
   }
+
+  // Send all localizations in one API call
+  try {
+    const locRes  = await fetch('/youtube/add-localizations', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ videoId, channelId: _ytSelectedChannel?.id, localizations })
+    });
+    const locData = await locRes.json();
+    if (locData.success) {
+      for (const t of _ytTranslations) _ytSetLangStatus(t.lang, '✅ listo');
+    } else {
+      for (const t of _ytTranslations) _ytSetLangStatus(t.lang, '⚠️ ' + (locData.error || 'error'));
+    }
+  } catch (e) {
+    for (const t of _ytTranslations) _ytSetLangStatus(t.lang, '❌ error');
+  }
+
+  // Show "now upload audio in YouTube Studio" step
+  if (studioStep) {
+    if (studioLink) {
+      studioLink.href = `https://studio.youtube.com/video/${videoId}/translations`;
+    }
+    if (studioFiles) {
+      studioFiles.innerHTML = _ytTranslations.map(t =>
+        `<div style="display:flex; align-items:center; gap:6px;">
+          <i class="fas fa-file-audio" style="color:#06b6d4; font-size:0.7rem;"></i>
+          <code style="background:#1e293b; padding:1px 5px; border-radius:3px; font-size:0.72rem;">${t.audioFile}</code>
+          <span style="color:#64748b;">→ ${t.flag} ${t.langName}</span>
+        </div>`
+      ).join('');
+    }
+    studioStep.style.display = 'block';
+  }
+}
+
+function _ytSetLangStatus(lang, msg) {
+  const el = document.getElementById(`yt-tl-status-${lang}`);
+  if (el) el.textContent = msg;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -21178,6 +21136,14 @@ async function ytStartUpload() {
       result.style.display = 'block';
       result.innerHTML = `<i class="fab fa-youtube"></i> Video publicado exitosamente —
         <a href="${data.url}" target="_blank" style="color:#4ade80; text-decoration:underline;">${data.url}</a>`;
+
+      // Apply translated titles+descriptions to the same video
+      _ytUploadedVideoId = data.videoId;
+      if (_ytTranslations.length > 0) {
+        document.getElementById('ytUploadStatus').textContent = 'Añadiendo localizaciones...';
+        await _ytApplyLocalizations(data.videoId);
+        document.getElementById('ytUploadStatus').textContent = '¡Listo!';
+      }
     } else {
       throw new Error(data.error || 'Error desconocido');
     }

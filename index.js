@@ -27442,3 +27442,35 @@ app.post('/youtube/upload', async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+
+// POST /youtube/add-localizations — add translated title+description to an existing video
+app.post('/youtube/add-localizations', async (req, res) => {
+  const { videoId, channelId, localizations } = req.body;
+  // localizations: [{lang:'en', title:'...', description:'...'}]
+  if (!videoId || !Array.isArray(localizations) || localizations.length === 0) {
+    return res.status(400).json({ error: 'videoId y localizations[] requeridos' });
+  }
+
+  const client = _ytOAuth2Client(channelId);
+  if (!client || (!client.credentials?.access_token && !client.credentials?.refresh_token)) {
+    return res.status(401).json({ error: 'Canal no autenticado' });
+  }
+
+  const locObj = {};
+  for (const { lang, title, description } of localizations) {
+    if (lang && title) locObj[lang] = { title, description: description || '' };
+  }
+
+  try {
+    const yt = googleApis.youtube({ version: 'v3', auth: client });
+    const updateRes = await yt.videos.update({
+      part: ['localizations'],
+      requestBody: { id: videoId, localizations: locObj }
+    });
+    console.log(`🌐 [YouTube] Localizaciones añadidas a ${videoId}:`, Object.keys(locObj).join(', '));
+    res.json({ success: true, localizations: updateRes.data.localizations });
+  } catch (e) {
+    console.error('[YouTube] Error añadiendo localizaciones:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
