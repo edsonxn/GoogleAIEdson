@@ -18680,6 +18680,12 @@ function renderBrollTimeline() {
     style.textContent = `
       .tl-clip.tl-clip-dragover { outline: 2px dashed #22d3ee; outline-offset: -2px; background: rgba(34,211,238,0.1) !important; }
       .tl-clip.tl-clip-dragging { opacity: 0.4; }
+      .tl-interstitial-drop { border: 1.5px dashed rgba(168,85,247,0.4); border-radius: 8px; padding: 5px 12px; color: rgba(168,85,247,0.6); font-size: 0.68rem; cursor: pointer; transition: all 0.2s; white-space: nowrap; display: flex; align-items: center; gap: 5px; margin-top: 5px; }
+      .tl-interstitial-drop.dragover { border-color: rgba(168,85,247,0.95); background: rgba(168,85,247,0.1); color: rgb(168,85,247); }
+      .tl-interstitial-drop.uploading { border-color: rgba(168,85,247,0.6); color: rgba(168,85,247,0.8); animation: pulse 1s infinite; }
+      .tl-interstitial-card { background: rgba(168,85,247,0.12); border: 1px solid rgba(168,85,247,0.4); border-radius: 8px; padding: 6px 10px; font-size: 0.7rem; color: #c4b5fd; display: flex; align-items: center; gap: 6px; margin-top: 5px; max-width: 180px; }
+      .tl-interstitial-card .ic-remove { background: none; border: none; color: rgba(168,85,247,0.6); cursor: pointer; padding: 0; font-size: 0.85rem; line-height: 1; flex-shrink: 0; }
+      .tl-interstitial-card .ic-remove:hover { color: #f87171; }
     `;
     document.head.appendChild(style);
   }
@@ -18809,22 +18815,39 @@ function renderBrollTimeline() {
       }
     }
 
-    // Pause control between sections (not after the last one)
+    // Pause control + interstitial dropzone between sections (not after the last one)
     if (si < _brollPreviewSections.length - 1) {
       const pauseVal = Math.round(sec.pauseAfter || 0);
+      const ic = sec.interstitialClip;
+      const icHtml = ic
+        ? `<div class="tl-interstitial-card" id="tl-ic-card-${si}">
+            <i class="fas fa-film" style="color:#a855f7;flex-shrink:0;"></i>
+            <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${ic.fileName}">${ic.fileName}</span>
+            <span style="color:#7c3aed;flex-shrink:0;">${ic.duration ? ic.duration.toFixed(1)+'s' : ''}</span>
+            <button class="ic-remove" onclick="removeInterstitialClip(${si})" title="Quitar comercial">×</button>
+          </div>`
+        : `<div class="tl-interstitial-drop" id="tl-ic-drop-${si}"
+              ondragover="event.preventDefault();event.stopPropagation();this.classList.add('dragover')"
+              ondragleave="this.classList.remove('dragover')"
+              ondrop="dropInterstitialClip(event,${si})">
+            <i class="fas fa-film"></i> Arrastra comercial aquí
+          </div>`;
       html += `<div class="tl-pause-divider">
         <div class="tl-pause-divider-line"></div>
-        <div class="tl-pause-control">
-          <button class="tl-pause-btn tl-pause-btn-minus" onclick="adjustBrollPause(${si}, -3)" title="Quitar clip de pausa (3s)">
-            <i class="fas fa-minus"></i>
-          </button>
-          <div class="tl-pause-value-wrap">
-            <span class="tl-pause-value">${pauseVal}</span>
-            <span class="tl-pause-unit">PAUSA</span>
+        <div style="display:flex;flex-direction:column;align-items:center;gap:0;">
+          <div class="tl-pause-control">
+            <button class="tl-pause-btn tl-pause-btn-minus" onclick="adjustBrollPause(${si}, -3)" title="Quitar clip de pausa (3s)">
+              <i class="fas fa-minus"></i>
+            </button>
+            <div class="tl-pause-value-wrap">
+              <span class="tl-pause-value">${pauseVal}</span>
+              <span class="tl-pause-unit">PAUSA</span>
+            </div>
+            <button class="tl-pause-btn tl-pause-btn-plus" onclick="adjustBrollPause(${si}, 3)" title="Agregar clip de pausa (3s)">
+              <i class="fas fa-plus"></i>
+            </button>
           </div>
-          <button class="tl-pause-btn tl-pause-btn-plus" onclick="adjustBrollPause(${si}, 3)" title="Agregar clip de pausa (3s)">
-            <i class="fas fa-plus"></i>
-          </button>
+          ${icHtml}
         </div>
         <div class="tl-pause-divider-line"></div>
       </div>`;
@@ -19045,6 +19068,65 @@ function renderBrollTimeline() {
     loadPoolGrids();
   }
   _skipPoolReload = false;
+}
+
+// ─── Interstitial clip drop/remove ───────────────────────────────────────────
+
+async function dropInterstitialClip(event, sectionIndex) {
+  event.preventDefault();
+  const dropEl = document.getElementById(`tl-ic-drop-${sectionIndex}`);
+  if (dropEl) { dropEl.classList.remove('dragover'); dropEl.classList.add('uploading'); dropEl.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Subiendo...'; }
+
+  const file = event.dataTransfer.files[0];
+  if (!file) { if (dropEl) renderBrollTimeline(); return; }
+
+  const validExts = ['.mp4','.webm','.mkv','.avi','.mov'];
+  if (!validExts.includes('.' + file.name.split('.').pop().toLowerCase())) {
+    showNotification('Solo se aceptan archivos de video (.mp4, .webm, .mkv, .avi, .mov)', 'error');
+    renderBrollTimeline();
+    return;
+  }
+
+  const folderName = _brollPreviewFolderName;
+  if (!folderName) { renderBrollTimeline(); return; }
+
+  try {
+    const formData = new FormData();
+    formData.append('clip', file);
+    formData.append('folderName', folderName);
+    formData.append('sectionIndex', sectionIndex);
+    formData.append('previewId', _brollPreviewId || '');
+
+    const res  = await fetch('/api/broll-upload-interstitial', { method: 'POST', body: formData });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error);
+
+    // Store in memory
+    if (_brollPreviewSections?.[sectionIndex]) {
+      _brollPreviewSections[sectionIndex].interstitialClip = data;
+    }
+    showNotification(`Comercial asignado entre secciones: ${data.fileName} (${data.duration?.toFixed(1)}s)`, 'success');
+    renderBrollTimeline();
+  } catch (err) {
+    showNotification('Error subiendo comercial: ' + err.message, 'error');
+    renderBrollTimeline();
+  }
+}
+
+async function removeInterstitialClip(sectionIndex) {
+  const folderName = _brollPreviewFolderName;
+  try {
+    await fetch('/api/broll-remove-interstitial', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folderName, sectionIndex, previewId: _brollPreviewId || '' })
+    });
+  } catch {}
+
+  if (_brollPreviewSections?.[sectionIndex]) {
+    delete _brollPreviewSections[sectionIndex].interstitialClip;
+  }
+  renderBrollTimeline();
 }
 
 // ═══ Pool Grid System (Side Panels) ═══

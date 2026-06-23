@@ -17946,6 +17946,98 @@ app.post('/api/broll-upload-assets', multer({ dest: path.join(process.cwd(), 'te
   }
 });
 
+// POST /api/broll-upload-interstitial — Upload a commercial/interstitial clip for a section gap
+app.post('/api/broll-upload-interstitial', multer({ dest: path.join(process.cwd(), 'temp', 'broll_assets') }).single('clip'), async (req, res) => {
+  try {
+    const { folderName, sectionIndex, previewId } = req.body;
+    if (!folderName || sectionIndex == null || !req.file) return res.status(400).json({ error: 'folderName, sectionIndex y clip requeridos' });
+
+    const projectPath = resolveProjectPath(folderName);
+    if (!projectPath) return res.status(404).json({ error: 'Proyecto no encontrado' });
+
+    // Save file into project's interstitials/ folder
+    const interDir = path.join(projectPath, 'interstitials');
+    if (!fs.existsSync(interDir)) fs.mkdirSync(interDir, { recursive: true });
+
+    const ext      = path.extname(req.file.originalname) || '.mp4';
+    const fileName = `interstitial_sec${sectionIndex}${ext}`;
+    const filePath = path.join(interDir, fileName);
+    fs.copyFileSync(req.file.path, filePath);
+    fs.unlinkSync(req.file.path);
+
+    // Get duration
+    let duration = 0;
+    try {
+      await new Promise((resolve) => {
+        const { spawn } = require('child_process');
+        const proc = spawn('ffprobe', ['-v','error','-show_entries','format=duration','-of','default=noprint_wrappers=1:nokey=1', filePath]);
+        let out = '';
+        proc.stdout.on('data', d => out += d.toString());
+        proc.on('close', () => { duration = parseFloat(out) || 0; resolve(); });
+      });
+    } catch {}
+
+    const clipData = { fileName, filePath, duration };
+
+    // Persist into preview JSON and memory
+    const previewJsonPath = path.join(projectPath, 'broll_preview.json');
+    const updatePreview = (preview) => {
+      const si = parseInt(sectionIndex);
+      if (preview?.sections?.[si]) preview.sections[si].interstitialClip = clipData;
+      return preview;
+    };
+
+    if (fs.existsSync(previewJsonPath)) {
+      const preview = updatePreview(JSON.parse(fs.readFileSync(previewJsonPath, 'utf8')));
+      fs.writeFileSync(previewJsonPath, JSON.stringify(preview, null, 2), 'utf8');
+    }
+    if (previewId) {
+      const mem = brollPreviewData.get(previewId);
+      if (mem) { updatePreview(mem); brollPreviewData.set(previewId, mem); }
+    }
+
+    res.json({ success: true, ...clipData });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/broll-remove-interstitial — Remove a commercial clip from a section gap
+app.delete('/api/broll-remove-interstitial', (req, res) => {
+  try {
+    const { folderName, sectionIndex, previewId } = req.body;
+    if (!folderName || sectionIndex == null) return res.status(400).json({ error: 'folderName y sectionIndex requeridos' });
+
+    const projectPath = resolveProjectPath(folderName);
+    if (!projectPath) return res.status(404).json({ error: 'Proyecto no encontrado' });
+
+    const si = parseInt(sectionIndex);
+    const previewJsonPath = path.join(projectPath, 'broll_preview.json');
+
+    const clearInterstitial = (preview) => {
+      if (preview?.sections?.[si]) {
+        const ic = preview.sections[si].interstitialClip;
+        if (ic?.filePath && fs.existsSync(ic.filePath)) { try { fs.unlinkSync(ic.filePath); } catch {} }
+        delete preview.sections[si].interstitialClip;
+      }
+      return preview;
+    };
+
+    if (fs.existsSync(previewJsonPath)) {
+      const preview = clearInterstitial(JSON.parse(fs.readFileSync(previewJsonPath, 'utf8')));
+      fs.writeFileSync(previewJsonPath, JSON.stringify(preview, null, 2), 'utf8');
+    }
+    if (previewId) {
+      const mem = brollPreviewData.get(previewId);
+      if (mem) { clearInterstitial(mem); brollPreviewData.set(previewId, mem); }
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/render-broll-video — Render from confirmed preview sequence
 app.post('/api/render-broll-video', async (req, res) => {
   try {
@@ -18256,6 +18348,45 @@ async function renderFromPreview(preview, projectPath, projectName, sessionId, c
           }
         }
       }
+
+      // ── Interstitial clip (commercial) between sections ─────────────────────
+      if (sec.interstitialClip && fs.existsSync(sec.interstitialClip.filePath)) {
+        updateProgress(Math.round(progressBase + (80 / totalSections) * 0.95), `Sección ${sec.secNum}: procesando comercial...`);
+        const ic = sec.interstitialClip;
+        const icVideoPath  = path.join(tempDir, `sec${sec.secNum}_interstitial_video.mp4`);
+        const icAudioPath  = path.join(tempDir, `sec${sec.secNum}_interstitial_audio.wav`);
+
+        // Re-encode to match output format
+        await new Promise((resolve, reject) => {
+          const proc = spawn('ffmpeg', [
+            '-y', '-i', ic.filePath,
+            '-c:v', 'libx264', '-preset', cfg.preset, '-crf', String(cfg.crf),
+            '-vf', `scale=${cfg.resolution}:force_original_aspect_ratio=decrease,pad=${cfg.resolution}:(ow-iw)/2:(oh-ih)/2,fps=30`,
+            '-an', icVideoPath
+          ]);
+          let stderr = '';
+          proc.stderr.on('data', d => stderr += d.toString());
+          proc.on('close', code => code === 0 ? resolve() : reject(new Error(`Interstitial video encode: ${stderr.slice(-200)}`)));
+          proc.on('error', reject);
+        });
+
+        // Extract original audio
+        await new Promise((resolve, reject) => {
+          const proc = spawn('ffmpeg', [
+            '-y', '-i', ic.filePath,
+            '-vn', '-c:a', 'pcm_s16le', '-ar', '44100', '-ac', '2', icAudioPath
+          ]);
+          let stderr = '';
+          proc.stderr.on('data', d => stderr += d.toString());
+          proc.on('close', code => code === 0 ? resolve() : reject(new Error(`Interstitial audio extract: ${stderr.slice(-200)}`)));
+          proc.on('error', reject);
+        });
+
+        if (fs.existsSync(icVideoPath) && fs.existsSync(icAudioPath)) {
+          sectionVideos.push({ numero: sec.secNum + 0.7, videoPath: icVideoPath, audioPath: icAudioPath, isInterstitial: true });
+          console.log(`🎬 Interstitial clip sec${sec.secNum}: ${ic.fileName} (${ic.duration?.toFixed(1)}s)`);
+        }
+      }
     }
 
     if (sectionVideos.length === 0) throw new Error('No se pudo generar ningún video de sección');
@@ -18297,7 +18428,15 @@ async function renderFromPreview(preview, projectPath, projectName, sessionId, c
       const videoDur = await getMediaDuration(sv.videoPath);
       const normalizedPath = path.join(tempDir, `audio_final_${svi}.wav`);
 
-      if (sv.isPause || !sv.audioPath || !fs.existsSync(sv.audioPath)) {
+      if (sv.isInterstitial && sv.audioPath && fs.existsSync(sv.audioPath)) {
+        // Interstitial (commercial): use its own audio, trim/pad to match re-encoded video duration
+        await new Promise((resolve, reject) => {
+          const args = ['-y', '-i', sv.audioPath, '-af', 'apad', '-t', String(videoDur), '-c:a', 'pcm_s16le', '-ar', '44100', '-ac', '2', normalizedPath];
+          const proc = spawn('ffmpeg', args);
+          proc.on('close', code => code === 0 ? resolve() : reject(new Error('Interstitial audio trim failed')));
+          proc.on('error', reject);
+        });
+      } else if (sv.isPause || !sv.audioPath || !fs.existsSync(sv.audioPath)) {
         // Pause sections: generate exact-length silence
         await new Promise((resolve, reject) => {
           const args = ['-y', '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo', '-t', String(videoDur), '-c:a', 'pcm_s16le', normalizedPath];
