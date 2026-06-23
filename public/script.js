@@ -2678,6 +2678,7 @@ async function runAutoGeneration() {
   const selectedQwenVoice = document.getElementById("qwenVoiceSelect")?.value || "";
   const generateChatterboxAudio = document.getElementById("autoGenerateChatterboxAudio")?.checked || false;
   const chatterboxVoice = document.getElementById("chatterboxVoiceSelect")?.value || "";
+  const chatterboxLanguage = document.getElementById("chatterboxLanguage")?.value || "es";
   const chatterboxExaggeration = parseFloat(document.getElementById("chatterboxExaggeration")?.value ?? 0.5);
   const chatterboxCfgWeight   = parseFloat(document.getElementById("chatterboxCfgWeight")?.value ?? 0.5);
   const selectedApplioVoice = document.getElementById("applioVoiceSelect").value;
@@ -2872,6 +2873,7 @@ async function runAutoGeneration() {
         qwenVoice: selectedQwenVoice,
         generateChatterboxAudio,
         chatterboxVoice,
+        chatterboxLanguage,
         chatterboxExaggeration,
         chatterboxCfgWeight,
         applioVoice: selectedApplioVoice,
@@ -2957,6 +2959,7 @@ async function runAutoGeneration() {
         qwenVoice: selectedQwenVoice,
         generateChatterboxAudio,
         chatterboxVoice,
+        chatterboxLanguage,
         chatterboxExaggeration,
         chatterboxCfgWeight,
       })
@@ -3123,6 +3126,7 @@ async function runAutoGeneration() {
       qwenVoice: selectedQwenVoice,
       generateChatterboxAudio,
       chatterboxVoice,
+      chatterboxLanguage,
       chatterboxExaggeration,
       chatterboxCfgWeight,
       useGoogleAudio: generateAudio,
@@ -3948,6 +3952,7 @@ async function generateSectionApplioAudio(section) {
         applioSpeed: applioSpeed,
         generateChatterboxAudio: document.getElementById("autoGenerateChatterboxAudio")?.checked || false,
         chatterboxVoice: document.getElementById("chatterboxVoiceSelect")?.value || "",
+        chatterboxLanguage: document.getElementById("chatterboxLanguage")?.value || "es",
         chatterboxExaggeration: parseFloat(document.getElementById("chatterboxExaggeration")?.value ?? 0.5),
         chatterboxCfgWeight: parseFloat(document.getElementById("chatterboxCfgWeight")?.value ?? 0.5),
       })
@@ -14963,6 +14968,7 @@ async function regenerateAllAudios() {
       showNotification('🗣️ Verificando audios de Chatterbox...', 'info');
 
       const chatterboxVoice = document.getElementById('chatterboxVoiceSelect')?.value || '';
+      const chatterboxLanguage = document.getElementById('chatterboxLanguage')?.value || 'es';
       const chatterboxExaggeration = parseFloat(document.getElementById('chatterboxExaggeration')?.value ?? 0.5);
       const chatterboxCfgWeight = parseFloat(document.getElementById('chatterboxCfgWeight')?.value ?? 0.5);
 
@@ -14973,6 +14979,7 @@ async function regenerateAllAudios() {
           folderName,
           generateChatterboxAudio: true,
           chatterboxVoice,
+          chatterboxLanguage,
           chatterboxExaggeration,
           chatterboxCfgWeight,
           totalSections: window.currentProject.completedSections.length,

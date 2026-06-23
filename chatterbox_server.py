@@ -76,6 +76,7 @@ class Handler(BaseHTTPRequestHandler):
         text         = body.get('text', '').strip()
         output       = body.get('output', '').strip()
         voice        = body.get('voice') or None
+        language     = body.get('language', 'es') or 'es'
         exaggeration = float(body.get('exaggeration', 0.5))
         cfg_weight   = float(body.get('cfg_weight', 0.5))
 
@@ -111,7 +112,10 @@ class Handler(BaseHTTPRequestHandler):
                 wavs = []
                 for i, chunk in enumerate(chunks):
                     print(f'[Chatterbox] Chunk {i+1}/{len(chunks)}: {chunk[:60]}', flush=True)
-                    w = m.generate(chunk, **kw)
+                    try:
+                        w = m.generate(chunk, language_id=language, **kw)
+                    except TypeError:
+                        w = m.generate(chunk, **kw)
                     wavs.append(w.squeeze(0).cpu().numpy() if hasattr(w, 'squeeze') else np.array(w))
                     if i < len(chunks) - 1:
                         wavs.append(silence)

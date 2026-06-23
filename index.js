@@ -1776,8 +1776,8 @@ async function startChatterbox() {
   }
 }
 
-async function generateChatterboxAudio(text, outputPath, voicePath, exaggeration = 0.5, cfgWeight = 0.5) {
-  const body = { text, output: outputPath, exaggeration, cfg_weight: cfgWeight };
+async function generateChatterboxAudio(text, outputPath, voicePath, exaggeration = 0.5, cfgWeight = 0.5, language = 'es') {
+  const body = { text, output: outputPath, exaggeration, cfg_weight: cfgWeight, language };
   if (voicePath && fs.existsSync(voicePath)) body.voice = voicePath;
   const resp = await fetch(`${CHATTERBOX_URL}/generate`, {
     method: 'POST',
@@ -5813,6 +5813,7 @@ async function performBatchAudioGeneration(params = {}) {
     qwenVoice = '',
     generateChatterboxAudio: useChatterbox = false,
     chatterboxVoice = '',
+    chatterboxLanguage = 'es',
     chatterboxExaggeration = 0.5,
     chatterboxCfgWeight = 0.5,
     voice,
@@ -6155,6 +6156,7 @@ function launchParallelBatchGenerationTask(entry, sharedConfig = {}) {
     useApplio: Boolean(sharedConfig.generateApplioAudio || sharedConfig.useApplio),
     generateChatterboxAudio: Boolean(sharedConfig.generateChatterboxAudio),
     chatterboxVoice: sharedConfig.chatterboxVoice || '',
+    chatterboxLanguage: sharedConfig.chatterboxLanguage || 'es',
     chatterboxExaggeration: sharedConfig.chatterboxExaggeration ?? 0.5,
     chatterboxCfgWeight: sharedConfig.chatterboxCfgWeight ?? 0.5,
   };
@@ -6195,6 +6197,7 @@ function launchParallelBatchGenerationTask(entry, sharedConfig = {}) {
           qwenVoice: sharedConfig.qwenVoice || '',
           generateChatterboxAudio: shouldGenerateChatterbox,
           chatterboxVoice: sharedConfig.chatterboxVoice || '',
+          chatterboxLanguage: sharedConfig.chatterboxLanguage || 'es',
           chatterboxExaggeration: sharedConfig.chatterboxExaggeration ?? 0.5,
           chatterboxCfgWeight: sharedConfig.chatterboxCfgWeight ?? 0.5,
           voice: payload.voice,
@@ -6971,7 +6974,7 @@ app.post('/generate-batch-audio', async (req, res) => {
 // ENDPOINT PARA GENERAR SOLO AUDIOS FALTANTES CON APPLIO
 app.post('/generate-missing-applio-audios', async (req, res) => {
   try {
-    const { folderName, applioVoice, applioModel, applioPitch, applioSpeed, totalSections, scriptStyle = 'professional', customStyleInstructions = '', wordsMin = 800, wordsMax = 1100, generateQwenAudio = false, qwenVoice = '', generateChatterboxAudio: _useChatterboxFlag = false, chatterboxVoice = '', chatterboxExaggeration = 0.5, chatterboxCfgWeight = 0.5 } = req.body;
+    const { folderName, applioVoice, applioModel, applioPitch, applioSpeed, totalSections, scriptStyle = 'professional', customStyleInstructions = '', wordsMin = 800, wordsMax = 1100, generateQwenAudio = false, qwenVoice = '', generateChatterboxAudio: _useChatterboxFlag = false, chatterboxVoice = '', chatterboxLanguage = 'es', chatterboxExaggeration = 0.5, chatterboxCfgWeight = 0.5 } = req.body;
 
     const useQwen = generateQwenAudio === true;
     const useChatterbox = _useChatterboxFlag === true;
@@ -7170,8 +7173,8 @@ app.post('/generate-missing-applio-audios', async (req, res) => {
         if (useChatterbox) {
           // Generar audio con Chatterbox TTS
           const voicePath = chatterboxVoice ? path.join(CHATTERBOX_VOICES_DIR, chatterboxVoice) : null;
-          console.log(`🗣️ Generando audio con Chatterbox TTS (voz: ${chatterboxVoice || 'default'})...`);
-          await generateChatterboxAudio(cleanScript, filePath, voicePath, parseFloat(chatterboxExaggeration), parseFloat(chatterboxCfgWeight));
+          console.log(`🗣️ Generando audio con Chatterbox TTS (voz: ${chatterboxVoice || 'default'}, lang: ${chatterboxLanguage})...`);
+          await generateChatterboxAudio(cleanScript, filePath, voicePath, parseFloat(chatterboxExaggeration), parseFloat(chatterboxCfgWeight), chatterboxLanguage);
           result = { success: fs.existsSync(filePath) };
         } else if (useQwen) {
           // Generar audio con Qwen TTS
