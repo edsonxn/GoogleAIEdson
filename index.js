@@ -27083,76 +27083,130 @@ app.post('/api/manual-translate-video', upload.fields(manualUploadFields), async
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// YOUTUBE UPLOAD
+// YOUTUBE UPLOAD  (multi-channel)
+// Each connected channel stores its tokens in youtube_tokens_{channelId}.json
+// The first connected channel also writes youtube_tokens.json for backwards compat.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const YT_CREDS_PATH   = path.join(__dirname, 'youtube_client_secrets.json');
-const YT_TOKENS_PATH  = path.join(__dirname, 'youtube_tokens.json');
+const YT_TOKENS_PATH  = path.join(__dirname, 'youtube_tokens.json');   // legacy / fallback
 const YT_REDIRECT_URI = 'http://localhost:3000/oauth2callback';
 
-function _ytOAuth2Client() {
-  let creds;
-  try { creds = JSON.parse(fs.readFileSync(YT_CREDS_PATH, 'utf8')); }
+function _ytTokenPath(channelId) {
+  if (!channelId || channelId === 'main') return YT_TOKENS_PATH;
+  return path.join(__dirname, `youtube_tokens_${channelId}.json`);
+}
+
+function _ytReadCreds() {
+  try { return JSON.parse(fs.readFileSync(YT_CREDS_PATH, 'utf8')); }
   catch { return null; }
+}
+
+function _ytOAuth2Client(channelId) {
+  const creds = _ytReadCreds();
+  if (!creds) return null;
   const cfg = creds.installed || creds.web || {};
-  const client = new googleApis.auth.OAuth2(
-    cfg.client_id, cfg.client_secret,
-    YT_REDIRECT_URI  // always use our local callback endpoint
-  );
+  const client = new googleApis.auth.OAuth2(cfg.client_id, cfg.client_secret, YT_REDIRECT_URI);
+  const tokPath = _ytTokenPath(channelId);
   try {
-    const tokens = JSON.parse(fs.readFileSync(YT_TOKENS_PATH, 'utf8'));
-    client.setCredentials(tokens);
+    client.setCredentials(JSON.parse(fs.readFileSync(tokPath, 'utf8')));
     client.on('tokens', updated => {
       try {
-        const prev = JSON.parse(fs.readFileSync(YT_TOKENS_PATH, 'utf8'));
-        fs.writeFileSync(YT_TOKENS_PATH, JSON.stringify({ ...prev, ...updated }, null, 2));
+        const prev = JSON.parse(fs.readFileSync(tokPath, 'utf8'));
+        fs.writeFileSync(tokPath, JSON.stringify({ ...prev, ...updated }, null, 2));
       } catch {}
     });
   } catch {}
   return client;
 }
 
-// GET /youtube/auth-status
-app.get('/youtube/auth-status', async (req, res) => {
-  const client = _ytOAuth2Client();
-  if (!client) return res.json({ authenticated: false, missingCredentials: true });
-  const tokens = client.credentials;
-  if (!tokens?.access_token && !tokens?.refresh_token) return res.json({ authenticated: false });
+// Discover all token files and return their channel info
+async function _ytGetConnectedChannels() {
+  const files = fs.readdirSync(__dirname).filter(f => /^youtube_tokens.*\.json$/.test(f));
+  const seen = new Set();
+  const channels = [];
+  for (const f of files) {
+    const channelId = f === 'youtube_tokens.json' ? 'main'
+      : f.replace('youtube_tokens_', '').replace('.json', '');
+    try {
+      const client = _ytOAuth2Client(channelId === 'main' ? null : channelId);
+      if (!client.credentials?.access_token && !client.credentials?.refresh_token) continue;
+      const yt = googleApis.youtube({ version: 'v3', auth: client });
+      const r = await yt.channels.list({ part: ['snippet', 'id', 'statistics'], mine: true, maxResults: 1 });
+      const ch = r.data.items?.[0];
+      if (!ch || seen.has(ch.id)) continue;
+      seen.add(ch.id);
+      channels.push({
+        id: ch.id,
+        name: ch.snippet.title,
+        thumbnail: ch.snippet.thumbnails?.default?.url || null,
+        subscribers: ch.statistics?.subscriberCount || '0',
+        tokenFile: f,
+      });
+    } catch {}
+  }
+  return channels;
+}
+
+// GET /youtube/channels
+app.get('/youtube/channels', async (req, res) => {
+  if (!_ytReadCreds()) return res.json({ missingCredentials: true, channels: [] });
   try {
-    const yt = googleApis.youtube({ version: 'v3', auth: client });
-    const ch = await yt.channels.list({ part: ['snippet'], mine: true, maxResults: 1 });
-    const channel = ch.data.items?.[0];
-    res.json({ authenticated: true, channelName: channel?.snippet?.title || '', channelId: channel?.id || '' });
-  } catch {
-    res.json({ authenticated: false });
+    const channels = await _ytGetConnectedChannels();
+    res.json({ channels });
+  } catch (e) {
+    res.json({ channels: [], error: e.message });
   }
 });
 
-// GET /youtube/auth-url
+// GET /youtube/auth-url  — starts OAuth for a new channel
 app.get('/youtube/auth-url', (req, res) => {
-  const client = _ytOAuth2Client();
-  if (!client) return res.status(400).json({ error: 'Falta youtube_client_secrets.json' });
+  const creds = _ytReadCreds();
+  if (!creds) return res.status(400).json({ error: 'Falta youtube_client_secrets.json' });
+  const cfg = creds.installed || creds.web || {};
+  const client = new googleApis.auth.OAuth2(cfg.client_id, cfg.client_secret, YT_REDIRECT_URI);
   const url = client.generateAuthUrl({
     access_type: 'offline',
     scope: ['https://www.googleapis.com/auth/youtube.upload', 'https://www.googleapis.com/auth/youtube.readonly'],
-    prompt: 'consent',
+    prompt: 'consent select_account',   // always show account chooser
   });
   res.json({ url });
 });
 
-// GET /oauth2callback  (Google redirect here after user approves)
+// GET /oauth2callback  — saves token, then discovers which channel it belongs to
 app.get('/oauth2callback', async (req, res) => {
   const { code } = req.query;
   if (!code) return res.status(400).send('Falta code');
-  const client = _ytOAuth2Client();
-  if (!client) return res.status(500).send('No hay credenciales configuradas');
+  const creds = _ytReadCreds();
+  if (!creds) return res.status(500).send('No hay credenciales configuradas');
+  const cfg = creds.installed || creds.web || {};
+  const client = new googleApis.auth.OAuth2(cfg.client_id, cfg.client_secret, YT_REDIRECT_URI);
   try {
     const { tokens } = await client.getToken(code);
-    fs.writeFileSync(YT_TOKENS_PATH, JSON.stringify(tokens, null, 2));
+    client.setCredentials(tokens);
+
+    // Discover the channel ID so we can save to the right file
+    const yt = googleApis.youtube({ version: 'v3', auth: client });
+    let channelId = null;
+    let channelName = '';
+    try {
+      const r = await yt.channels.list({ part: ['snippet', 'id'], mine: true, maxResults: 1 });
+      channelId = r.data.items?.[0]?.id || null;
+      channelName = r.data.items?.[0]?.snippet?.title || '';
+    } catch {}
+
+    // Save per-channel token
+    const tokPath = channelId ? _ytTokenPath(channelId) : YT_TOKENS_PATH;
+    fs.writeFileSync(tokPath, JSON.stringify(tokens, null, 2));
+    // Also keep legacy youtube_tokens.json updated (used as fallback)
+    if (!fs.existsSync(YT_TOKENS_PATH)) fs.writeFileSync(YT_TOKENS_PATH, JSON.stringify(tokens, null, 2));
+
     res.send(`<html><body style="font-family:sans-serif;background:#0f172a;color:#06b6d4;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;font-size:1.3rem;">
-      <div style="text-align:center"><span style="font-size:3rem">✅</span><br><br>Canal de YouTube conectado exitosamente.<br><br>
+      <div style="text-align:center"><span style="font-size:3rem">✅</span><br><br>
+      <strong style="color:#fff">${channelName || 'Canal'}</strong> conectado.<br><br>
       <span style="font-size:0.9rem;color:#94a3b8;">Puedes cerrar esta ventana.</span></div>
-      <script>window.opener?.postMessage('youtube_auth_ok','*'); setTimeout(()=>window.close(),2000);</script>
+      <script>window.opener?.postMessage({type:'youtube_auth_ok',channelId:'${channelId}',channelName:${JSON.stringify(channelName)}},'*');
+      setTimeout(()=>window.close(),2000);</script>
     </body></html>`);
   } catch (e) {
     res.status(500).send('Error obteniendo token: ' + e.message);
@@ -27161,24 +27215,19 @@ app.get('/oauth2callback', async (req, res) => {
 
 // POST /youtube/upload
 app.post('/youtube/upload', async (req, res) => {
-  const { videoPath, folderName, title, description, tags, privacyStatus, publishAt, categoryId } = req.body;
+  const { videoPath, folderName, channelId, title, description, tags, privacyStatus, publishAt, categoryId } = req.body;
   if (!videoPath || !title) return res.status(400).json({ error: 'Faltan videoPath y title' });
 
-  const client = _ytOAuth2Client();
+  const client = _ytOAuth2Client(channelId);
   if (!client || (!client.credentials?.access_token && !client.credentials?.refresh_token)) {
-    return res.status(401).json({ error: 'No autenticado con YouTube' });
+    return res.status(401).json({ error: 'Canal no autenticado. Conéctalo primero.' });
   }
 
   // Resolve the video file — try several candidate locations
-  const outputsDir = globalOutputDir;
   const candidates = [
-    // Absolute path as-is
     path.isAbsolute(videoPath) ? videoPath : null,
-    // Project folder (most common for broll renders)
-    folderName ? path.join(outputsDir, folderName, videoPath) : null,
-    // Direct in outputs root
-    path.join(outputsDir, videoPath),
-    // Legacy: project root
+    folderName ? path.join(globalOutputDir, folderName, videoPath) : null,
+    path.join(globalOutputDir, videoPath),
     path.join(__dirname, videoPath),
   ].filter(Boolean);
 
@@ -27188,8 +27237,7 @@ app.post('/youtube/upload', async (req, res) => {
   try {
     const yt = googleApis.youtube({ version: 'v3', auth: client });
     const fileSize = fs.statSync(absPath).size;
-
-    console.log(`📤 [YouTube] Subiendo "${title}" (${(fileSize / 1024 / 1024).toFixed(1)} MB)...`);
+    console.log(`📤 [YouTube] Subiendo "${title}" a canal ${channelId || 'default'} (${(fileSize/1024/1024).toFixed(1)} MB)...`);
 
     const uploadRes = await yt.videos.insert({
       part: ['snippet', 'status'],
@@ -27202,26 +27250,23 @@ app.post('/youtube/upload', async (req, res) => {
           defaultLanguage: 'es',
         },
         status: {
-          privacyStatus: privacyStatus || 'private',
-          ...(privacyStatus === 'scheduled' && publishAt ? { publishAt, privacyStatus: 'private', selfDeclaredMadeForKids: false } : {}),
+          privacyStatus: privacyStatus === 'scheduled' ? 'private' : (privacyStatus || 'private'),
+          ...(privacyStatus === 'scheduled' && publishAt ? { publishAt } : {}),
         },
       },
-      media: {
-        mimeType: 'video/mp4',
-        body: fs.createReadStream(absPath),
-      },
+      media: { mimeType: 'video/mp4', body: fs.createReadStream(absPath) },
     }, {
       onUploadProgress: evt => {
         const pct = Math.round((evt.bytesRead / fileSize) * 100);
-        console.log(`📤 [YouTube] ${pct}% subido...`);
+        console.log(`📤 [YouTube] ${pct}%`);
       },
     });
 
     const videoId = uploadRes.data.id;
-    console.log(`✅ [YouTube] Video subido: https://youtube.com/watch?v=${videoId}`);
+    console.log(`✅ [YouTube] https://youtube.com/watch?v=${videoId}`);
     res.json({ success: true, videoId, url: `https://www.youtube.com/watch?v=${videoId}` });
   } catch (e) {
-    console.error('[YouTube] Error al subir:', e.message);
+    console.error('[YouTube] Error:', e.message);
     res.status(500).json({ error: e.message });
   }
 });

@@ -20733,9 +20733,10 @@ window.toggleApplioVoiceDropdown = function() {
 // YOUTUBE UPLOAD PANEL
 // ─────────────────────────────────────────────────────────────────────────────
 
-let _ytVideoPath   = null;
-let _ytFolderName  = null;
-let _ytAuthenticated = false;
+let _ytVideoPath      = null;
+let _ytFolderName     = null;
+let _ytSelectedChannel = null;   // { id, name, thumbnail }
+let _ytChannels        = [];     // all connected channels
 
 // Called from showBrollTranslatePanel after render completes
 async function showYouTubeUploadPanel(videoFile, folderName) {
@@ -20757,8 +20758,8 @@ async function showYouTubeUploadPanel(videoFile, folderName) {
 
   panel.style.display = 'block';
 
-  // Check auth status in background
-  _ytRefreshAuthBadge();
+  // Load channels
+  _ytLoadChannels();
 }
 
 function _ytPrefillMetadata() {
@@ -20841,53 +20842,95 @@ function ytToggleSchedule() {
   block.style.display = val === 'scheduled' ? 'block' : 'none';
 }
 
-async function _ytRefreshAuthBadge() {
-  const dot = document.getElementById('ytAuthDot');
-  const label = document.getElementById('ytAuthLabel');
+async function _ytLoadChannels() {
+  const list = document.getElementById('ytChannelList');
+  if (!list) return;
+  list.innerHTML = '<div style="color:#64748b;font-size:0.78rem;padding:6px;">Cargando...</div>';
   try {
-    const r = await fetch('/youtube/auth-status');
+    const r = await fetch('/youtube/channels');
     const d = await r.json();
-    _ytAuthenticated = d.authenticated;
     if (d.missingCredentials) {
-      dot.style.background = '#f59e0b';
-      label.textContent = 'Falta credenciales';
-      label.style.color = '#f59e0b';
-    } else if (d.authenticated) {
-      dot.style.background = '#4ade80';
-      label.textContent = d.channelName ? `✓ ${d.channelName}` : '✓ Conectado';
-      label.style.color = '#4ade80';
-    } else {
-      dot.style.background = '#64748b';
-      label.textContent = 'Conectar canal';
-      label.style.color = '#94a3b8';
+      list.innerHTML = '<div style="color:#f59e0b;font-size:0.78rem;padding:6px;"><i class="fas fa-exclamation-triangle"></i> Falta youtube_client_secrets.json</div>';
+      return;
     }
-  } catch {
-    dot.style.background = '#64748b';
-    label.textContent = 'Sin conexión';
+    _ytChannels = d.channels || [];
+    _ytRenderChannelList();
+    // Auto-select first channel
+    if (_ytChannels.length > 0 && !_ytSelectedChannel) {
+      _ytSelectChannel(_ytChannels[0]);
+    }
+    // Update header badge
+    _ytUpdateBadge();
+  } catch (e) {
+    list.innerHTML = `<div style="color:#ef4444;font-size:0.78rem;padding:6px;">Error: ${e.message}</div>`;
   }
 }
 
-async function ytConnectOrDisconnect() {
-  if (_ytAuthenticated) return; // already connected — could show disconnect dialog
-  try {
-    const r = await fetch('/youtube/auth-url');
-    const d = await r.json();
-    if (d.error) { alert('Error: ' + d.error + '\n\nAsegúrate de tener youtube_client_secrets.json en la raíz del proyecto.'); return; }
+function _ytRenderChannelList() {
+  const list = document.getElementById('ytChannelList');
+  if (!list) return;
+  if (_ytChannels.length === 0) {
+    list.innerHTML = '<div style="color:#64748b;font-size:0.78rem;padding:6px;">No hay canales conectados. Añade uno abajo.</div>';
+    return;
+  }
+  list.innerHTML = '';
+  _ytChannels.forEach(ch => {
+    const isSelected = _ytSelectedChannel?.id === ch.id;
+    const row = document.createElement('div');
+    row.style.cssText = `display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;cursor:pointer;border:1px solid ${isSelected ? 'rgba(255,68,68,0.5)' : 'rgba(255,255,255,0.07)'};background:${isSelected ? 'rgba(255,68,68,0.08)' : '#111827'};transition:all 0.15s;`;
+    row.onclick = () => _ytSelectChannel(ch);
+    const thumb = ch.thumbnail
+      ? `<img src="${ch.thumbnail}" style="width:30px;height:30px;border-radius:50%;object-fit:cover;">`
+      : `<div style="width:30px;height:30px;border-radius:50%;background:#1e293b;display:flex;align-items:center;justify-content:center;"><i class="fab fa-youtube" style="color:#ff4444;font-size:0.8rem;"></i></div>`;
+    const subs = parseInt(ch.subscribers || 0);
+    const subsLabel = subs >= 1000000 ? (subs/1000000).toFixed(1)+'M' : subs >= 1000 ? (subs/1000).toFixed(1)+'K' : subs;
+    row.innerHTML = `${thumb}
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:0.82rem;color:#e2e8f0;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${ch.name}</div>
+        <div style="font-size:0.7rem;color:#64748b;">${subsLabel} suscriptores</div>
+      </div>
+      ${isSelected ? '<i class="fas fa-check-circle" style="color:#ff4444;font-size:0.9rem;flex-shrink:0;"></i>' : ''}`;
+    list.appendChild(row);
+  });
+}
+
+function _ytSelectChannel(ch) {
+  _ytSelectedChannel = ch;
+  _ytRenderChannelList();
+  _ytUpdateBadge();
+}
+
+function _ytUpdateBadge() {
+  const dot   = document.getElementById('ytAuthDot');
+  const label = document.getElementById('ytAuthLabel');
+  if (!dot || !label) return;
+  if (_ytSelectedChannel) {
+    dot.style.background = '#4ade80';
+    label.textContent = `✓ ${_ytSelectedChannel.name}`;
+    label.style.color = '#4ade80';
+  } else {
+    dot.style.background = '#64748b';
+    label.textContent = 'Sin canal';
+    label.style.color = '#94a3b8';
+  }
+}
+
+function ytAddChannel() {
+  fetch('/youtube/auth-url').then(r => r.json()).then(d => {
+    if (d.error) { alert('Error: ' + d.error); return; }
     const popup = window.open(d.url, 'yt_auth', 'width=550,height=700');
-    // Listen for the postMessage from oauth callback page
     const onMsg = (e) => {
-      if (e.data === 'youtube_auth_ok') {
+      if (e.data?.type === 'youtube_auth_ok') {
         window.removeEventListener('message', onMsg);
         if (popup && !popup.closed) popup.close();
-        _ytRefreshAuthBadge();
+        _ytLoadChannels();
       }
     };
     window.addEventListener('message', onMsg);
-    // Also poll in case postMessage doesn't fire
     const poll = setInterval(() => {
-      if (popup?.closed) { clearInterval(poll); window.removeEventListener('message', onMsg); _ytRefreshAuthBadge(); }
+      if (popup?.closed) { clearInterval(poll); window.removeEventListener('message', onMsg); _ytLoadChannels(); }
     }, 1200);
-  } catch (e) { alert('Error obteniendo URL de autenticación: ' + e.message); }
+  }).catch(e => alert('Error: ' + e.message));
 }
 
 async function ytStartUpload() {
@@ -20897,9 +20940,9 @@ async function ytStartUpload() {
 
   if (!title) { alert('Selecciona o escribe un título.'); return; }
   if (!_ytVideoPath) { alert('No hay video para subir.'); return; }
-  if (!_ytAuthenticated) {
-    const ok = confirm('No estás conectado a YouTube. ¿Conectar ahora?');
-    if (ok) ytConnectOrDisconnect();
+  if (!_ytSelectedChannel) {
+    const ok = confirm('No hay canal seleccionado. ¿Conectar uno ahora?');
+    if (ok) ytAddChannel();
     return;
   }
 
@@ -20937,7 +20980,7 @@ async function ytStartUpload() {
     const res = await fetch('/youtube/upload', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ videoPath: _ytVideoPath, folderName: _ytFolderName, title, description, tags, privacyStatus, publishAt: publishAtISO }),
+      body: JSON.stringify({ videoPath: _ytVideoPath, folderName: _ytFolderName, channelId: _ytSelectedChannel?.id, title, description, tags, privacyStatus, publishAt: publishAtISO }),
     });
     const data = await res.json();
 

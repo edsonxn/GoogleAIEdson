@@ -1359,7 +1359,7 @@
             </h3>
             <div style="display:flex; align-items:center; gap:10px;">
               <!-- Auth status badge -->
-              <div id="ytAuthBadge" style="display:flex; align-items:center; gap:6px; font-size:0.75rem; padding:4px 10px; border-radius:20px; background:#1e293b; cursor:pointer;" onclick="ytConnectOrDisconnect()">
+              <div id="ytAuthBadge" style="display:flex; align-items:center; gap:6px; font-size:0.75rem; padding:4px 10px; border-radius:20px; background:#1e293b; cursor:default;">
                 <span id="ytAuthDot" style="width:7px;height:7px;border-radius:50%;background:#64748b;display:inline-block;"></span>
                 <span id="ytAuthLabel">Verificando...</span>
               </div>
@@ -1368,6 +1368,19 @@
           </div>
 
           <div style="padding:18px 20px; display:flex; flex-direction:column; gap:14px;">
+
+            <!-- Selector de canal -->
+            <div>
+              <div style="font-size:0.7rem; color:#94a3b8; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">
+                <i class="fab fa-youtube" style="color:#ff4444;"></i> Canal de destino
+              </div>
+              <div id="ytChannelList" style="display:flex; flex-direction:column; gap:6px;">
+                <div style="color:#64748b; font-size:0.8rem; padding:8px;">Cargando canales...</div>
+              </div>
+              <button onclick="ytAddChannel()" style="margin-top:8px; background:none; border:1px dashed rgba(255,255,255,0.15); border-radius:8px; color:#64748b; font-size:0.78rem; padding:7px 12px; cursor:pointer; width:100%; display:flex; align-items:center; justify-content:center; gap:6px; transition:border-color 0.2s;" onmouseenter="this.style.borderColor='rgba(255,68,68,0.4)';this.style.color='#ff4444'" onmouseleave="this.style.borderColor='rgba(255,255,255,0.15)';this.style.color='#64748b'">
+                <i class="fas fa-plus"></i> Conectar otro canal
+              </button>
+            </div>
 
             <!-- Título: selector de opciones generadas -->
             <div>
