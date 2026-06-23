@@ -27170,7 +27170,7 @@ app.post('/youtube/upload', async (req, res) => {
   }
 
   // Resolve the video file — try several candidate locations
-  const outputsDir = process.env.OUTPUTS_DIR || path.join(process.cwd(), 'public', 'outputs');
+  const outputsDir = globalOutputDir;
   const candidates = [
     // Absolute path as-is
     path.isAbsolute(videoPath) ? videoPath : null,
