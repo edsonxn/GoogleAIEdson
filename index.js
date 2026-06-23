@@ -21044,22 +21044,26 @@ async function verifyEntityImage(imagePath, entityName, entityType) {
 
     let prompt;
     if (entityType === 'marca') {
-      prompt = `Evalúa esta imagen como logo de la marca "${entityName}" para usar en un video profesional. Responde SOLO con JSON: {"relevant": true/false, "score": 1-10, "desc": "qué muestra en 5 palabras"}.\n\nCriterios OBLIGATORIOS para relevant=true:\n1. Es el logotipo/símbolo/wordmark reconocible de "${entityName}" (no un edificio, foto, producto, persona, captura de pantalla ni imagen genérica)\n2. La imagen es LIMPIA y LEGIBLE — no es una foto de mala calidad, escaneado sucio, dibujo a mano rough, logotipo muy antiguo/pixelado o versión beta/prototipo\n3. El fondo es liso (blanco, negro, transparente) o el logo se puede distinguir claramente del fondo\n\nSi la imagen muestra el logo pero es de baja calidad, muy antigua, tiene ruido visual excesivo o es difícil de leer claramente, relevant DEBE ser false y score <= 4.`;
+      prompt = `Analiza esta imagen. ¿Es el LOGOTIPO oficial (logo, símbolo, wordmark, isotipo) de la marca "${entityName}"?\n\nResponde SOLO con JSON: {"isLogo": true/false, "score": 1-10, "desc": "qué muestra en 5 palabras"}\n\nRechaza (isLogo=false) si:\n- Es una foto de un producto, computadora, dispositivo, edificio, tienda, persona, mapa, anuncio publicitario o escena genérica\n- Muestra hardware, software en uso, capturas de pantalla o imágenes de campaña\n- El logo no es legible o está muy degradado\n\nAcepta (isLogo=true) SOLO si muestra explícitamente el símbolo/wordmark/isotipo de la marca con fondo liso o transparente.`;
     } else if (entityType === 'persona') {
-      prompt = `¿Esta imagen es un retrato o foto de la persona "${entityName}"? Responde SOLO con JSON: {"relevant": true/false, "score": 1-10, "desc": "qué muestra en 5 palabras"}. Si es un edificio, objeto, paisaje o grupo de personas, relevant debe ser false.`;
+      prompt = `¿Esta imagen es un retrato o foto de la persona "${entityName}"? Responde SOLO con JSON: {"isLogo": true/false, "score": 1-10, "desc": "qué muestra en 5 palabras"}. Si es un edificio, objeto, paisaje o grupo de personas sin identificar a "${entityName}", isLogo debe ser false.`;
     } else {
-      prompt = `¿Esta imagen muestra claramente el producto "${entityName}"? Responde SOLO con JSON: {"relevant": true/false, "score": 1-10, "desc": "qué muestra en 5 palabras"}. Si es un edificio, persona, mapa o imagen genérica sin mostrar el producto, relevant debe ser false.`;
+      prompt = `¿Esta imagen muestra claramente el producto "${entityName}"? Responde SOLO con JSON: {"isLogo": true/false, "score": 1-10, "desc": "qué muestra en 5 palabras"}. Si es un edificio, persona, mapa o imagen genérica sin mostrar el producto, isLogo debe ser false.`;
     }
 
-    const { model: aiModel } = await getGoogleAI('gemini-3.1-flash-lite', { context: 'llm' });
+    // Usar modelo con visión más capaz para verificación de logos
+    const { model: aiModel } = await getGoogleAI('gemini-3.1-pro-preview', { context: 'llm' });
     const result = await aiModel.generateContent([{ inlineData: { mimeType, data: base64Data } }, prompt]);
     const text = result.response.text().trim().replace(/^```json?\n?/m, '').replace(/```$/m, '').trim();
     const analysis = JSON.parse(text);
-    console.log(`🔍 Verificación imagen "${entityName}": relevant=${analysis.relevant} (${analysis.score}/10) — ${analysis.desc}`);
-    return analysis.relevant === true && analysis.score >= 5;
+    const passed = analysis.isLogo === true && analysis.score >= 5;
+    console.log(`🔍 Verificación imagen "${entityName}" (${entityType}): isLogo=${analysis.isLogo} (${analysis.score}/10) — ${analysis.desc} → ${passed ? 'ACEPTADA' : 'RECHAZADA'}`);
+    return passed;
   } catch (err) {
-    console.warn(`⚠️ Verificación de imagen falló: ${err.message?.slice(0, 60)} — usando imagen de todas formas`);
-    return true; // En caso de error, aceptar la imagen
+    console.warn(`⚠️ Verificación de imagen falló: ${err.message?.slice(0, 60)}`);
+    // Para marcas: rechazar si no se puede verificar (evitar fotos de productos)
+    // Para otros tipos: aceptar por si acaso
+    return entityType !== 'marca';
   }
 }
 
@@ -21530,12 +21534,30 @@ async function searchWikipediaImage(entityName, entityType = 'persona', holavide
       console.log(`🗑️ Caché global corrupta para "${entityName}" (${cachedSize}B) — eliminando y re-descargando`);
       try { fs.unlinkSync(cachedPath); } catch {}
     } else {
-      const filename = path.basename(cachedPath);
-      const destPath = path.join(holavideoPublicDir, filename);
-      if (!fs.existsSync(holavideoPublicDir)) fs.mkdirSync(holavideoPublicDir, { recursive: true });
-      fs.copyFileSync(cachedPath, destPath);
-      console.log(`📦 Asset desde caché global: ${filename} (${Math.round(cachedSize / 1024)}KB)`);
-      return { filename, publicFilename: filename, label: entityName, entityType, relativePath: filename, ...assetConfig, opacity: 1, absPath: destPath };
+      // Para marcas: re-verificar que la imagen cacheada sea realmente el logo
+      // (podría haberse guardado mal en una corrida anterior si la verificación falló)
+      if (entityType === 'marca') {
+        const cacheOk = await verifyEntityImage(cachedPath, entityName, entityType);
+        if (!cacheOk) {
+          console.log(`🗑️ Caché global rechazada para "${entityName}" — no es el logo correcto, eliminando y re-buscando`);
+          try { fs.unlinkSync(cachedPath); } catch {}
+          // Continúa con el flujo normal de búsqueda de logo
+        } else {
+          const filename = path.basename(cachedPath);
+          const destPath = path.join(holavideoPublicDir, filename);
+          if (!fs.existsSync(holavideoPublicDir)) fs.mkdirSync(holavideoPublicDir, { recursive: true });
+          fs.copyFileSync(cachedPath, destPath);
+          console.log(`📦 Logo verificado desde caché global: ${filename} (${Math.round(cachedSize / 1024)}KB)`);
+          return { filename, publicFilename: filename, label: entityName, entityType, relativePath: filename, ...assetConfig, opacity: 1, absPath: destPath };
+        }
+      } else {
+        const filename = path.basename(cachedPath);
+        const destPath = path.join(holavideoPublicDir, filename);
+        if (!fs.existsSync(holavideoPublicDir)) fs.mkdirSync(holavideoPublicDir, { recursive: true });
+        fs.copyFileSync(cachedPath, destPath);
+        console.log(`📦 Asset desde caché global: ${filename} (${Math.round(cachedSize / 1024)}KB)`);
+        return { filename, publicFilename: filename, label: entityName, entityType, relativePath: filename, ...assetConfig, opacity: 1, absPath: destPath };
+      }
     }
   }
 
