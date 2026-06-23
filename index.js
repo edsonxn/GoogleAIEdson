@@ -21242,21 +21242,24 @@ function findManualAsset(entityName, holavideoPublicDir, extraDirs = []) {
     for (const file of files) {
       const ext = path.extname(file).toLowerCase();
       if (!imageExts.has(ext)) continue;
-      const baseName = path.basename(file, ext).toLowerCase().replace(/[^a-z0-9]/g, '');
-      if (baseName.includes(normalizedName) || normalizedName.includes(baseName.replace(/^(entity|person|ra)/, ''))) {
-        const fullPath = path.join(dir, file);
-        const size = fs.statSync(fullPath).size;
-        if (size < 500) continue; // ignore empty/corrupt
-        // Skip files already in canonical entity_ format — those are system-managed
-        if (/^(entity_|person_)/.test(file) && dir === holavideoPublicDir) {
-          // Only use if it exactly matches the canonical name this entity would get
-          const safeLabel = entityName.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase().slice(0, 40);
-          const prefix = entityName.match(/persona/i) ? 'person' : 'entity';
-          if (file.startsWith(`${prefix}_${safeLabel}`)) return fullPath;
-          continue;
-        }
-        return fullPath;
+      const baseName = path.basename(file, ext).toLowerCase();
+      // Split on non-alphanumeric separators to get discrete tokens — prevents
+      // substring collisions like "orca" matching entity "rca"
+      const tokens = baseName.split(/[^a-z0-9]+/).filter(t => t.length > 0);
+      const tokenMatch = tokens.some(t => t === normalizedName);
+      // Also allow canonical entity_/person_ files that start with the entity slug
+      const canonicalSlug = entityName.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase().slice(0, 40);
+      const canonicalMatch = /^(entity_|person_)/.test(file) && baseName.replace(/^(entity_|person_)/, '').startsWith(canonicalSlug);
+      if (!tokenMatch && !canonicalMatch) continue;
+      const fullPath = path.join(dir, file);
+      const size = fs.statSync(fullPath).size;
+      if (size < 500) continue; // ignore empty/corrupt
+      // Skip system-managed canonical files unless exact slug match
+      if (/^(entity_|person_)/.test(file) && dir === holavideoPublicDir) {
+        if (canonicalMatch) return fullPath;
+        continue;
       }
+      return fullPath;
     }
   }
   return null;
