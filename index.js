@@ -27175,6 +27175,88 @@ app.post('/api/manual-translate-video', upload.fields(manualUploadFields), async
 // ─────────────────────────────────────────────────────────────────────────────
 // YOUTUBE UPLOAD  (multi-channel)
 // Each connected channel stores its tokens in youtube_tokens_{channelId}.json
+// ─────────────────────────────────────────────────────────────────────────────
+// Translated video helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+const _ytLangNames = { en:'English', fr:'French', de:'German', pt:'Portuguese', it:'Italian', ru:'Russian', zh:'Chinese', ko:'Korean', ja:'Japanese', es:'Spanish' };
+const _ytLangFlags = { en:'🇺🇸', fr:'🇫🇷', de:'🇩🇪', pt:'🇵🇹', it:'🇮🇹', ru:'🇷🇺', zh:'🇨🇳', ko:'🇰🇷', ja:'🇯🇵', es:'🇪🇸' };
+
+// GET /api/translated-videos/:folderName — list translated audio/video files available
+app.get('/api/translated-videos/:folderName', (req, res) => {
+  const { folderName } = req.params;
+  const outputDir = path.join(globalOutputDir, folderName);
+  if (!fs.existsSync(outputDir)) return res.json({ translations: [] });
+
+  const translations = [];
+  for (const [code, name] of Object.entries(_ytLangNames)) {
+    if (!fs.existsSync(path.join(outputDir, `${name}.wav`))) continue;
+    const videoFile = `${folderName}_${code}.mp4`;
+    translations.push({
+      lang: code, langName: name, flag: _ytLangFlags[code] || '',
+      audioFile: `${name}.wav`,
+      videoFile: fs.existsSync(path.join(outputDir, videoFile)) ? videoFile : null
+    });
+  }
+  res.json({ translations });
+});
+
+// POST /api/create-translated-video — mux original video + translated WAV → mp4
+app.post('/api/create-translated-video', async (req, res) => {
+  const { folderName, lang, originalVideoFile } = req.body;
+  if (!folderName || !lang || !originalVideoFile) return res.status(400).json({ error: 'folderName, lang y originalVideoFile requeridos' });
+
+  const outputDir = path.join(globalOutputDir, folderName);
+  const langName  = _ytLangNames[lang];
+  if (!langName) return res.status(400).json({ error: `Idioma desconocido: ${lang}` });
+
+  const audioPath  = path.join(outputDir, `${langName}.wav`);
+  const videoPath  = path.join(outputDir, originalVideoFile);
+  const outFile    = `${folderName}_${lang}.mp4`;
+  const outputPath = path.join(outputDir, outFile);
+
+  if (!fs.existsSync(audioPath)) return res.status(404).json({ error: `Audio ${langName}.wav no encontrado` });
+  if (!fs.existsSync(videoPath)) return res.status(404).json({ error: `Video ${originalVideoFile} no encontrado` });
+  if (fs.existsSync(outputPath)) return res.json({ success: true, videoFile: outFile, cached: true });
+
+  try {
+    const { spawn } = await import('child_process');
+    await new Promise((resolve, reject) => {
+      const ff = spawn('ffmpeg', [
+        '-y', '-i', videoPath, '-i', audioPath,
+        '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k',
+        '-map', '0:v:0', '-map', '1:a:0',
+        '-shortest', outputPath
+      ]);
+      let stderr = '';
+      ff.stderr.on('data', d => stderr += d.toString());
+      ff.on('close', code => code === 0 ? resolve() : reject(new Error(`FFmpeg: ${stderr.slice(-300)}`)));
+    });
+    res.json({ success: true, videoFile: outFile });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/translate-youtube-metadata — translate title + description to a target language
+app.post('/api/translate-youtube-metadata', async (req, res) => {
+  const { title, description, tags, targetLang } = req.body;
+  if (!title || !targetLang) return res.status(400).json({ error: 'title y targetLang requeridos' });
+
+  const langName = _ytLangNames[targetLang] || targetLang;
+  const prompt = `Translate these YouTube video metadata items to ${langName}. Keep the same energy and style. Adapt SEO naturally.\n\nTitle: "${title}"\nDescription: "${(description||'').slice(0,600)}"\nTags: ${(tags||[]).slice(0,20).join(', ')}\n\nReturn ONLY valid JSON (no markdown, no explanation):\n{"title":"...","description":"...","tags":["...","..."]}`;
+
+  try {
+    const { model } = await getGoogleAI('gemini-3.1-flash-lite', { context: 'llm' });
+    const result = await model.generateContent(prompt);
+    const text = result.response.text().replace(/```json|```/g, '').trim();
+    const parsed = JSON.parse(text);
+    res.json({ success: true, ...parsed });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // The first connected channel also writes youtube_tokens.json for backwards compat.
 // ─────────────────────────────────────────────────────────────────────────────
 
