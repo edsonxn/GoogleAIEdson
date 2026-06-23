@@ -3305,12 +3305,17 @@ async function runAutoGeneration() {
       console.log('Ã¢â€žÂ¹Ã¯Â¸Â Agregando proyecto principal a la cola de generación de audio (Fase 2 manual).');
       
       projectsToProcess.push({
-        projectKey: window.currentProject.projectKey, // Usar datos actualizados
+        projectKey: window.currentProject.projectKey,
         projectName: window.currentProject.topic,
         voice: effectivePrimaryVoice,
         isApplio: generateApplioAudio,
         isQwen: generateQwenAudio,
         qwenVoice: selectedQwenVoice,
+        isChatterbox: generateChatterboxAudio,
+        chatterboxVoice,
+        chatterboxLanguage,
+        chatterboxExaggeration,
+        chatterboxCfgWeight,
         applioVoice: selectedApplioVoice,
         applioModel: selectedApplioModel,
         applioPitch: applioPitch,
@@ -3339,6 +3344,11 @@ async function runAutoGeneration() {
             isApplio: generateApplioAudio,
             isQwen: generateQwenAudio,
             qwenVoice: selectedQwenVoice,
+            isChatterbox: generateChatterboxAudio,
+            chatterboxVoice,
+            chatterboxLanguage,
+            chatterboxExaggeration,
+            chatterboxCfgWeight,
             applioVoice: selectedApplioVoice,
             applioModel: selectedApplioModel,
             applioPitch: applioPitch,
@@ -3447,8 +3457,18 @@ async function runAutoGeneration() {
               }
               
               // Generar el audio
-              const endpoint = (project.isApplio || project.isQwen) ? "/generate-section-audio" : "/generate-audio";
-              const requestBody = project.isQwen ? {
+              const endpoint = (project.isApplio || project.isQwen || project.isChatterbox) ? "/generate-section-audio" : "/generate-audio";
+              const requestBody = project.isChatterbox ? {
+                script: scriptContent,
+                topic: project.projectName,
+                folderName: project.projectKey,
+                currentSection: sectionNum,
+                useChatterbox: true,
+                chatterboxVoice: project.chatterboxVoice || '',
+                chatterboxLanguage: project.chatterboxLanguage || 'es',
+                chatterboxExaggeration: project.chatterboxExaggeration ?? 0.5,
+                chatterboxCfgWeight: project.chatterboxCfgWeight ?? 0.5,
+              } : project.isQwen ? {
                 script: scriptContent,
                 topic: project.projectName,
                 folderName: project.projectKey,

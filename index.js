@@ -6298,7 +6298,7 @@ app.post('/generate-batch-automatic/multi', async (req, res) => {
 app.post('/generate-batch-automatic', async (req, res) => {
   try {
   const { topic, folderName, voice, totalSections, minWords, maxWords, imageCount, aspectRatio, promptModifier, imageModel, llmModel, skipImages, googleImages, localAIImages, geminiGeneratedImages, comfyUISettings, scriptStyle, customStyleInstructions, applioVoice, applioModel, applioPitch, applioSpeed, useApplio, generateQwenAudio, qwenVoice,
-          generateChatterboxAudio, chatterboxVoice, chatterboxExaggeration, chatterboxCfgWeight } = req.body;
+          generateChatterboxAudio, chatterboxVoice, chatterboxLanguage = 'es', chatterboxExaggeration = 0.5, chatterboxCfgWeight = 0.5 } = req.body;
     
     console.log('\n' + '='.repeat(80));
     console.log('🚀 INICIANDO GENERACIÓN AUTOMÁTICA POR LOTES');
@@ -6356,17 +6356,35 @@ app.post('/generate-batch-automatic', async (req, res) => {
       selectedStyle,
       totalSections,
       generateQwenAudioParam,
-      qwenVoiceParam
+      qwenVoiceParam,
+      useChatterboxParam = false,
+      chatterboxVoiceParam = '',
+      chatterboxLangParam = 'es',
+      chatterboxExagParam = 0.5,
+      chatterboxCfgParam = 0.5,
     ) => {
       try {
         console.log(`🎵 [PARALELO] Iniciando generación de audio para sección ${section}...`);
         const sectionFolderStructure = createProjectStructure(topic, section, projectKey);
         const cleanScript = scriptText.replace(/[*_#]/g, '').trim();
         let generatedAudioPath = null;
-        
+
         const startTime = Date.now();
 
-        if (generateQwenAudioParam) {
+        if (useChatterboxParam) {
+          // Chatterbox TTS
+          const fileName = `${projectKey}_seccion_${section}_chatterbox_${Date.now()}.wav`;
+          const filePath = path.join(sectionFolderStructure.sectionDir, fileName);
+          const voicePath = chatterboxVoiceParam ? path.join(CHATTERBOX_VOICES_DIR, chatterboxVoiceParam) : null;
+          console.log(`🗣️ [PARALELO] Generando audio Chatterbox sección ${section} (voz: ${chatterboxVoiceParam || 'default'}, lang: ${chatterboxLangParam})...`);
+          await generateChatterboxAudio(cleanScript, filePath, voicePath, parseFloat(chatterboxExagParam), parseFloat(chatterboxCfgParam), chatterboxLangParam);
+          if (fs.existsSync(filePath)) {
+            generatedAudioPath = path.relative('./public', filePath).replace(/\\/g, '/');
+            console.log(`✅ [PARALELO] Audio Chatterbox generado sección ${section}: ${generatedAudioPath}`);
+          } else {
+            console.error(`❌ [PARALELO] Chatterbox no creó el archivo para sección ${section}`);
+          }
+        } else if (generateQwenAudioParam) {
           // Qwen TTS
           const effectiveQwenVoice = qwenVoiceParam || '';
           const fileName = `${projectKey}_seccion_${section}_qwen_${Date.now()}.wav`;
@@ -6473,8 +6491,15 @@ app.post('/generate-batch-automatic', async (req, res) => {
     // Generar estructura de capítulos primero
     console.log(`📋 Generando estructura de ${sections} capítulos...`);
     
-    // Inicializar Applio si se va a usar para audio inmediato
-    if (useApplio) {
+    // Inicializar proveedor TTS si se va a usar para audio inmediato
+    if (generateChatterboxAudio) {
+      console.log('🗣️ Iniciando Chatterbox TTS para generación de audio en tiempo real...');
+      try {
+        const cbStarted = await startChatterbox();
+        if (!cbStarted) console.warn('⚠️ No se pudo iniciar Chatterbox, se intentará durante la generación');
+        else console.log('✅ Chatterbox iniciado correctamente');
+      } catch (e) { console.error('❌ Error iniciando Chatterbox:', e); }
+    } else if (useApplio) {
       console.log('🔄 Iniciando Applio para generación de audio en tiempo real...');
       try {
         const applioStarted = await startApplio();
