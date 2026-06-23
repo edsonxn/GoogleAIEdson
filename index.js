@@ -6970,10 +6970,11 @@ app.post('/generate-batch-audio', async (req, res) => {
 // ENDPOINT PARA GENERAR SOLO AUDIOS FALTANTES CON APPLIO
 app.post('/generate-missing-applio-audios', async (req, res) => {
   try {
-    const { folderName, applioVoice, applioModel, applioPitch, applioSpeed, totalSections, scriptStyle = 'professional', customStyleInstructions = '', wordsMin = 800, wordsMax = 1100, generateQwenAudio = false, qwenVoice = '' } = req.body;
-    
+    const { folderName, applioVoice, applioModel, applioPitch, applioSpeed, totalSections, scriptStyle = 'professional', customStyleInstructions = '', wordsMin = 800, wordsMax = 1100, generateQwenAudio = false, qwenVoice = '', generateChatterboxAudio = false, chatterboxVoice = '', chatterboxExaggeration = 0.5, chatterboxCfgWeight = 0.5 } = req.body;
+
     const useQwen = generateQwenAudio === true;
-    const providerLabel = useQwen ? 'Qwen' : 'Applio';
+    const useChatterbox = generateChatterboxAudio === true;
+    const providerLabel = useChatterbox ? 'Chatterbox' : useQwen ? 'Qwen' : 'Applio';
     
     console.log('\n' + '🔍'.repeat(20));
     console.log(`🔍 VERIFICANDO Y GENERANDO AUDIOS FALTANTES CON ${providerLabel}`);
@@ -7009,7 +7010,7 @@ app.post('/generate-missing-applio-audios', async (req, res) => {
       }
       
       // Buscar archivos de audio en la carpeta de la sección
-      const audioTag = useQwen ? '_qwen' : '_applio';
+      const audioTag = useChatterbox ? '_chatterbox' : useQwen ? '_qwen' : '_applio';
       let hasTargetAudio = false;
       
       if (fs.existsSync(sectionDir)) {
@@ -7055,7 +7056,11 @@ app.post('/generate-missing-applio-audios', async (req, res) => {
     }
     
     // Inicializar el proveedor de TTS solo si hay audios que generar
-    if (useQwen) {
+    if (useChatterbox) {
+      console.log('🗣️ Usando Chatterbox TTS para generación de audios faltantes...');
+      const cbReady = await startChatterbox();
+      if (!cbReady) throw new Error('No se pudo iniciar Chatterbox TTS');
+    } else if (useQwen) {
       console.log('🤖 Usando Qwen TTS para generación de audios faltantes...');
       const qwenReady = await startQwen();
       if (!qwenReady) {
@@ -7156,11 +7161,18 @@ app.post('/generate-missing-applio-audios', async (req, res) => {
         console.log(`🧹 Script limpio: ${cleanScript.substring(0, 100)}...`);
         
         // Generar audio con el proveedor seleccionado
-        const fileName = `${folderName}_seccion_${section.section}_${useQwen ? 'qwen' : 'applio'}_${Date.now()}.wav`;
+        const providerSuffix = useChatterbox ? 'chatterbox' : useQwen ? 'qwen' : 'applio';
+        const fileName = `${folderName}_seccion_${section.section}_${providerSuffix}_${Date.now()}.wav`;
         const filePath = path.join(sectionDir, fileName);
-        
+
         let result;
-        if (useQwen) {
+        if (useChatterbox) {
+          // Generar audio con Chatterbox TTS
+          const voicePath = chatterboxVoice ? path.join(CHATTERBOX_VOICES_DIR, chatterboxVoice) : null;
+          console.log(`🗣️ Generando audio con Chatterbox TTS (voz: ${chatterboxVoice || 'default'})...`);
+          await generateChatterboxAudio(cleanScript, filePath, voicePath, parseFloat(chatterboxExaggeration), parseFloat(chatterboxCfgWeight));
+          result = { success: fs.existsSync(filePath) };
+        } else if (useQwen) {
           // Generar audio con Qwen TTS
           const effectiveQwenVoice = qwenVoice || '';
           console.log(`🤖 Generando audio con Qwen TTS (voz: ${effectiveQwenVoice || 'default'})...`);

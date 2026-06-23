@@ -14775,9 +14775,10 @@ async function regenerateAllAudios() {
   const useGoogleTTS = document.getElementById('autoGenerateAudio')?.checked || false;
   const useApplio = document.getElementById('autoGenerateApplioAudio')?.checked || false;
   const useQwen = document.getElementById('autoGenerateQwenAudio')?.checked || false;
+  const useChatterbox = document.getElementById('autoGenerateChatterboxAudio')?.checked || false;
 
-  if (!useGoogleTTS && !useApplio && !useQwen) {
-    showError('Activa al menos una opción de audio (Google, Applio o Qwen) para continuar');
+  if (!useGoogleTTS && !useApplio && !useQwen && !useChatterbox) {
+    showError('Activa al menos una opción de audio (Google, Applio, Qwen o Chatterbox) para continuar');
     return;
   }
 
@@ -14957,11 +14958,52 @@ async function regenerateAllAudios() {
       }
     }
 
+    if (useChatterbox) {
+      console.log('🗣️ Verificando audios faltantes para Chatterbox TTS...');
+      showNotification('🗣️ Verificando audios de Chatterbox...', 'info');
+
+      const chatterboxVoice = document.getElementById('chatterboxVoiceSelect')?.value || '';
+      const chatterboxExaggeration = parseFloat(document.getElementById('chatterboxExaggeration')?.value ?? 0.5);
+      const chatterboxCfgWeight = parseFloat(document.getElementById('chatterboxCfgWeight')?.value ?? 0.5);
+
+      const response = await fetch('/generate-missing-applio-audios', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          folderName,
+          generateChatterboxAudio: true,
+          chatterboxVoice,
+          chatterboxExaggeration,
+          chatterboxCfgWeight,
+          totalSections: window.currentProject.completedSections.length,
+          scriptStyle,
+          customStyleInstructions,
+          wordsMin,
+          wordsMax
+        })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Error verificando/generando audios con Chatterbox');
+      }
+
+      summary.applio.generated += data.data?.generatedCount || 0;
+
+      if (data.data?.generatedCount > 0) {
+        showNotification(`✅ ${data.data.generatedCount} audios Chatterbox generados`, 'success');
+      } else {
+        showNotification('✅ Todos los audios de Chatterbox ya existían', 'info');
+      }
+    }
+
     const totalGenerated = summary.google.generated + summary.applio.generated;
     const methodsUsed = [
       useGoogleTTS ? `Google (${summary.google.generated})` : null,
       useApplio ? `Applio (${summary.applio.generated})` : null,
-      useQwen ? 'Qwen' : null
+      useQwen ? 'Qwen' : null,
+      useChatterbox ? 'Chatterbox' : null
     ].filter(Boolean).join(' + ');
 
     showNotification(`ðŸŽ‰ Regeneración completada (${methodsUsed || 'Sin métodos activos'}). Total generados: ${totalGenerated}`, 'success');
@@ -14986,8 +15028,9 @@ async function regenerateAllAudiosForProject(folderName) {
   const useGoogleTTS = document.getElementById('autoGenerateAudio')?.checked || false;
   const useApplio = document.getElementById('autoGenerateApplioAudio')?.checked || false;
   const useQwen = document.getElementById('autoGenerateQwenAudio')?.checked || false;
+  const useChatterbox = document.getElementById('autoGenerateChatterboxAudio')?.checked || false;
 
-  if (!useGoogleTTS && !useApplio && !useQwen) {
+  if (!useGoogleTTS && !useApplio && !useQwen && !useChatterbox) {
     console.log('ÃƒÂ¢Ã…¡Ã‚Â ÃƒÂ¯Ã‚Â¸Ã‚Â No hay opciones de audio activas para verificar en proyecto:', folderName);
     return;
   }
