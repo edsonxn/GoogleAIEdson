@@ -18422,15 +18422,8 @@ async function loadExistingBrollTimeline(folderName) {
       }
     }
 
-    // No existing preview - try generating one (project may have broll from Telegram)
-    res = await fetch('/api/generate-broll-preview', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ folderName, videoConfig: getVideoConfig() })
-    });
-    if (!res.ok) return; // No B-Roll material available
-    data = await res.json();
-    if (!data.sections || data.sections.length === 0) return;
+    // No existing preview — do NOT auto-generate on project load (only on "Video B-Roll" click)
+    return;
 
     _brollPreviewId = data.previewId;
     _brollPreviewSections = data.sections;

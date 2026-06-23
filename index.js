@@ -24386,33 +24386,51 @@ app.post('/api/broll/download', async (req, res) => {
 
   const jobId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
+  // Load previous download status to skip already-completed videos
+  const prevStatusPath = path.join(projectDir, 'broll_download_status.json');
+  let prevDoneUrls = new Set();
+  let prevDoneTerms = new Set();
+  try {
+    if (fs.existsSync(prevStatusPath)) {
+      const prev = JSON.parse(fs.readFileSync(prevStatusPath, 'utf8'));
+      (prev.videos || []).filter(v => v.status === 'done').forEach(v => prevDoneUrls.add(v.url));
+      (prev.imageTasks || []).filter(t => t.status === 'done').forEach(t => prevDoneTerms.add(t.term));
+    }
+  } catch {}
+
   const videos = [];
   const imageTasks = [];
 
   for (let i = 0; i < sections.length; i++) {
     const sec = sections[i];
-    // Usar sectionNumber si viene del nuevo sistema, si no usar el índice
     const secNum = sec.sectionNumber || (i + 1);
     const sectionDir = path.join(projectDir, `seccion_${secNum}`, 'broll');
     if (!fs.existsSync(sectionDir)) fs.mkdirSync(sectionDir, { recursive: true });
 
     const validUrls = (sec.urls || []).filter(u => /^https:\/\/(www\.)?youtube\.com\/watch\?v=/.test(u));
     for (const url of validUrls) {
-      videos.push({
-        url, outputDir: sectionDir, section: sec.section,
-        title: '', status: 'pending', percent: 0, speed: '', size: '', error: ''
-      });
+      if (prevDoneUrls.has(url)) {
+        // Already downloaded in a previous run — mark done immediately
+        videos.push({ url, outputDir: sectionDir, section: sec.section, title: '(ya descargado)', status: 'done', percent: 100, speed: '', size: '', error: '' });
+      } else {
+        videos.push({ url, outputDir: sectionDir, section: sec.section, title: '', status: 'pending', percent: 0, speed: '', size: '', error: '' });
+      }
     }
 
     if (maxImages > 0 && sec.imageTerms && sec.imageTerms.length > 0) {
       for (const term of sec.imageTerms) {
         imageTasks.push({
           term, maxImages, outputDir: sectionDir, section: sec.section,
-          status: 'pending', downloaded: 0, error: ''
+          status: prevDoneTerms.has(term) ? 'done' : 'pending',
+          downloaded: prevDoneTerms.has(term) ? maxImages : 0, error: ''
         });
       }
     }
   }
+
+  const newVideos = videos.filter(v => v.status === 'pending').length;
+  const newImages = imageTasks.filter(t => t.status === 'pending').length;
+  console.log(`📥 [B-Roll] ${videos.length} videos totales: ${videos.length - newVideos} ya descargados, ${newVideos} pendientes. ${newImages} tareas de imagen pendientes.`);
 
   if (videos.length === 0 && imageTasks.length === 0) {
     return res.status(400).json({ error: 'No hay contenido para descargar' });
@@ -24757,12 +24775,19 @@ async function brollDownloadAllImages(job) {
 
 function brollDownloadSingle(videoState, resolution, spawn) {
   return new Promise((resolve, reject) => {
+    // If already marked done (from previous status file), skip immediately
+    if (videoState.status === 'done') { resolve(); return; }
+
     videoState.status = 'downloading';
+
+    // Archive file at project root (two levels up from seccion_X/broll)
+    const archivePath = path.join(videoState.outputDir, '..', '..', 'broll_yt_archive.txt');
 
     const proc = spawn(YT_DLP_PATH, [
       '-f', `bestvideo[height<=${resolution}]+bestaudio/best[height<=${resolution}]`,
       '--merge-output-format', 'mp4',
       '--windows-filenames',
+      '--download-archive', archivePath,
       '-o', path.join(videoState.outputDir, '%(title)s.%(ext)s'),
       '--no-playlist',
       '--newline',
@@ -24781,6 +24806,11 @@ function brollDownloadSingle(videoState, resolution, spawn) {
         const alreadyMatch = line.match(/\[download\] (.+) has already been downloaded/);
         if (alreadyMatch && !videoState.title) {
           videoState.title = path.basename(alreadyMatch[1]).replace(/\.\w+$/, '');
+        }
+        if (line.includes('has already been recorded in the archive') || line.includes('[download] ') && line.includes('already in archive')) {
+          videoState.title = videoState.title || '(ya en archivo)';
+          videoState.status = 'done';
+          videoState.percent = 100;
         }
         const progressMatch = line.match(/\[download\]\s+([\d.]+)%\s+of\s+~?([\d.]+\w+)\s+at\s+([\d.]+\w+\/s)\s+ETA\s+(\S+)/);
         if (progressMatch) {
