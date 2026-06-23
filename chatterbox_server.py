@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Chatterbox TTS HTTP server -- carga el modelo una vez, atiende POST /generate.
+Chatterbox Multilingual TTS HTTP server.
 Puerto por defecto: 7171
 """
 import sys, os, json, threading, argparse
@@ -23,6 +23,29 @@ import torch
 import torchaudio as ta
 import numpy as np
 
+# Audio de referencia por idioma (igual que multilingual_app.py)
+LANGUAGE_AUDIO = {
+    "ar": "https://storage.googleapis.com/chatterbox-demo-samples/mtl_prompts/ar_f/ar_prompts2.flac",
+    "da": "https://storage.googleapis.com/chatterbox-demo-samples/mtl_prompts/da_m1.flac",
+    "de": "https://storage.googleapis.com/chatterbox-demo-samples/mtl_prompts/de_f1.flac",
+    "el": "https://storage.googleapis.com/chatterbox-demo-samples/mtl_prompts/el_m.flac",
+    "en": "https://storage.googleapis.com/chatterbox-demo-samples/mtl_prompts/en_f1.flac",
+    "es": "https://storage.googleapis.com/chatterbox-demo-samples/mtl_prompts/es_f1.flac",
+    "fi": "https://storage.googleapis.com/chatterbox-demo-samples/mtl_prompts/fi_m.flac",
+    "fr": "https://storage.googleapis.com/chatterbox-demo-samples/mtl_prompts/fr_f1.flac",
+    "hi": "https://storage.googleapis.com/chatterbox-demo-samples/mtl_prompts/hi_f1.flac",
+    "it": "https://storage.googleapis.com/chatterbox-demo-samples/mtl_prompts/it_m1.flac",
+    "ja": "https://storage.googleapis.com/chatterbox-demo-samples/mtl_prompts/ja/ja_prompts1.flac",
+    "ko": "https://storage.googleapis.com/chatterbox-demo-samples/mtl_prompts/ko_f.flac",
+    "nl": "https://storage.googleapis.com/chatterbox-demo-samples/mtl_prompts/nl_m.flac",
+    "pl": "https://storage.googleapis.com/chatterbox-demo-samples/mtl_prompts/pl_m.flac",
+    "pt": "https://storage.googleapis.com/chatterbox-demo-samples/mtl_prompts/pt_m1.flac",
+    "ru": "https://storage.googleapis.com/chatterbox-demo-samples/mtl_prompts/ru_m.flac",
+    "sv": "https://storage.googleapis.com/chatterbox-demo-samples/mtl_prompts/sv_f.flac",
+    "tr": "https://storage.googleapis.com/chatterbox-demo-samples/mtl_prompts/tr_m.flac",
+    "zh": "https://storage.googleapis.com/chatterbox-demo-samples/mtl_prompts/zh_f2.flac",
+}
+
 _model = None
 _lock  = threading.Lock()
 
@@ -33,10 +56,10 @@ def _device():
 
 def _load():
     global _model
-    from chatterbox.tts import ChatterboxTTS
+    from chatterbox.mtl_tts import ChatterboxMultilingualTTS
     dev = _device()
-    print(f'[Chatterbox] Cargando modelo en {dev}...', flush=True)
-    _model = ChatterboxTTS.from_pretrained(device=dev)
+    print(f'[Chatterbox] Cargando modelo multilingue en {dev}...', flush=True)
+    _model = ChatterboxMultilingualTTS.from_pretrained(device=dev)
     print('[Chatterbox] Modelo listo OK', flush=True)
 
 def _get():
@@ -75,7 +98,7 @@ class Handler(BaseHTTPRequestHandler):
 
         text         = body.get('text', '').strip()
         output       = body.get('output', '').strip()
-        voice        = body.get('voice') or None
+        voice        = body.get('voice') or None        # ruta local de voz del usuario
         language     = body.get('language', 'es') or 'es'
         exaggeration = float(body.get('exaggeration', 0.5))
         cfg_weight   = float(body.get('cfg_weight', 0.5))
@@ -83,12 +106,12 @@ class Handler(BaseHTTPRequestHandler):
         if not text:   self._json(400, {'error': 'text requerido'}); return
         if not output: self._json(400, {'error': 'output requerido'}); return
 
+        # Si el usuario no eligió voz propia, usar el audio de referencia del idioma
+        audio_prompt = voice if (voice and os.path.isfile(voice)) else LANGUAGE_AUDIO.get(language)
+
         try:
             with _lock:
                 m = _get()
-                kw = {'exaggeration': exaggeration, 'cfg_weight': cfg_weight}
-                if voice and os.path.isfile(voice):
-                    kw['audio_prompt_path'] = voice
 
                 # Split into ~250-char chunks to bypass the ~15s per-call limit
                 sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', text) if s.strip()]
@@ -107,19 +130,23 @@ class Handler(BaseHTTPRequestHandler):
                 if cur:
                     chunks.append(cur)
 
-                print(f'[Chatterbox] Generando {len(chunks)} chunk(s)...', flush=True)
+                print(f'[Chatterbox] lang={language} prompt={audio_prompt} chunks={len(chunks)}', flush=True)
                 silence = np.zeros(int(m.sr * 0.3), dtype=np.float32)
                 wavs = []
+                current_prompt = audio_prompt  # solo en el primer chunk
                 for i, chunk in enumerate(chunks):
                     print(f'[Chatterbox] Chunk {i+1}/{len(chunks)}: {chunk[:60]}', flush=True)
-                    try:
-                        w = m.generate(chunk, language_id=language, **kw)
-                    except TypeError:
-                        w = m.generate(chunk, **kw)
+                    w = m.generate(
+                        chunk,
+                        language_id=language,
+                        audio_prompt_path=current_prompt,
+                        exaggeration=exaggeration,
+                        cfg_weight=cfg_weight,
+                    )
                     wavs.append(w.squeeze(0).cpu().numpy() if hasattr(w, 'squeeze') else np.array(w))
                     if i < len(chunks) - 1:
                         wavs.append(silence)
-                    kw.pop('audio_prompt_path', None)  # keep voice consistent across chunks
+                    current_prompt = None  # chunks siguientes reusan las condiciones ya cargadas
 
                 full = np.concatenate(wavs)
                 tensor = torch.from_numpy(full).unsqueeze(0)
