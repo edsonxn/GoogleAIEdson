@@ -5810,6 +5810,10 @@ async function performBatchAudioGeneration(params = {}) {
     useApplio,
     generateQwenAudio = false,
     qwenVoice = '',
+    generateChatterboxAudio: useChatterbox = false,
+    chatterboxVoice = '',
+    chatterboxExaggeration = 0.5,
+    chatterboxCfgWeight = 0.5,
     voice,
     applioVoice,
     applioModel,
@@ -5830,7 +5834,7 @@ async function performBatchAudioGeneration(params = {}) {
   }
 
   const { sections, projectKey } = projectData;
-  const audioMethod = useQwen ? 'Qwen TTS' : useApplio ? 'Applio' : 'Google TTS';
+  const audioMethod = useChatterbox ? 'Chatterbox TTS' : useQwen ? 'Qwen TTS' : useApplio ? 'Applio' : 'Google TTS';
   const requestedNarrationStyle = narrationStyle || projectData?.audioConfig?.narrationStyle || null;
   const baseTopic = projectData.sections[0]?.title?.split(':')[0] || projectData.topic || 'Proyecto';
 
@@ -5851,7 +5855,11 @@ async function performBatchAudioGeneration(params = {}) {
     wordsMax: normalizedWordsMax
   });
 
-  if (useQwen) {
+  if (useChatterbox) {
+    console.log('🎙️ Usando Chatterbox TTS para generación de audio...');
+    const ready = await startChatterbox();
+    if (!ready) throw new Error('No se pudo iniciar Chatterbox TTS');
+  } else if (useQwen) {
     console.log('🤖 Usando Qwen TTS para generación de audio...');
     const qwenReady = await startQwen();
     if (!qwenReady) {
@@ -5900,7 +5908,16 @@ async function performBatchAudioGeneration(params = {}) {
         }
       }
 
-      if (useQwen) {
+      if (useChatterbox) {
+        const fileName = `${projectKey}_seccion_${section.section}_chatterbox_${Date.now()}.wav`;
+        const filePath = path.join(sectionFolderStructure.sectionDir, fileName);
+        const voicePath = chatterboxVoice ? path.join(CHATTERBOX_VOICES_DIR, chatterboxVoice) : null;
+        console.log(`🎙️ [${projectKey}] Generando audio Chatterbox para sección ${section.section}...`);
+        await generateChatterboxAudio(section.cleanScript, filePath, voicePath,
+          parseFloat(chatterboxExaggeration), parseFloat(chatterboxCfgWeight));
+        audioPath = path.relative('./public', filePath).replace(/\\/g, '/');
+        console.log(`✅ [${projectKey}] Audio Chatterbox generado: ${audioPath}`);
+      } else if (useQwen) {
         // Qwen TTS: usar archivo .pt como voice prompt
         const effectiveQwenVoice = qwenVoice || '';
         const fileName = `${projectKey}_seccion_${section.section}_qwen_${Date.now()}.wav`;
@@ -6134,13 +6151,18 @@ function launchParallelBatchGenerationTask(entry, sharedConfig = {}) {
     applioModel: sharedConfig.applioModel,
     applioPitch: sharedConfig.applioPitch,
     applioSpeed: sharedConfig.applioSpeed,
-    useApplio: Boolean(sharedConfig.generateApplioAudio || sharedConfig.useApplio)
+    useApplio: Boolean(sharedConfig.generateApplioAudio || sharedConfig.useApplio),
+    generateChatterboxAudio: Boolean(sharedConfig.generateChatterboxAudio),
+    chatterboxVoice: sharedConfig.chatterboxVoice || '',
+    chatterboxExaggeration: sharedConfig.chatterboxExaggeration ?? 0.5,
+    chatterboxCfgWeight: sharedConfig.chatterboxCfgWeight ?? 0.5,
   };
 
   const shouldGenerateGoogleAudio = Boolean(sharedConfig.generateAudio);
   const shouldGenerateApplioAudio = Boolean(sharedConfig.generateApplioAudio || sharedConfig.useApplio);
   const shouldGenerateQwenAudio = Boolean(sharedConfig.generateQwenAudio);
-  const shouldGenerateAudio = shouldGenerateGoogleAudio || shouldGenerateApplioAudio || shouldGenerateQwenAudio;
+  const shouldGenerateChatterbox = Boolean(sharedConfig.generateChatterboxAudio);
+  const shouldGenerateAudio = shouldGenerateGoogleAudio || shouldGenerateApplioAudio || shouldGenerateQwenAudio || shouldGenerateChatterbox;
 
   console.log(`🎙️ [${entry.folderName}] Voz seleccionada para proyecto paralelo: ${payload.voice}`);
   console.log(`🖼️ [${entry.folderName}] Modelo de imágenes seleccionado: ${imageModelLabel} (${imageModel})`);
@@ -6170,6 +6192,10 @@ function launchParallelBatchGenerationTask(entry, sharedConfig = {}) {
           useApplio: shouldGenerateApplioAudio,
           generateQwenAudio: sharedConfig.generateQwenAudio || false,
           qwenVoice: sharedConfig.qwenVoice || '',
+          generateChatterboxAudio: shouldGenerateChatterbox,
+          chatterboxVoice: sharedConfig.chatterboxVoice || '',
+          chatterboxExaggeration: sharedConfig.chatterboxExaggeration ?? 0.5,
+          chatterboxCfgWeight: sharedConfig.chatterboxCfgWeight ?? 0.5,
           voice: payload.voice,
           narrationStyle: sharedConfig.narrationStyle || null,
           applioVoice: sharedConfig.applioVoice,
@@ -6267,14 +6293,15 @@ app.post('/generate-batch-automatic/multi', async (req, res) => {
 // NUEVO ENDPOINT PARA GENERACIÓN AUTOMÁTICA POR LOTES
 app.post('/generate-batch-automatic', async (req, res) => {
   try {
-  const { topic, folderName, voice, totalSections, minWords, maxWords, imageCount, aspectRatio, promptModifier, imageModel, llmModel, skipImages, googleImages, localAIImages, geminiGeneratedImages, comfyUISettings, scriptStyle, customStyleInstructions, applioVoice, applioModel, applioPitch, applioSpeed, useApplio, generateQwenAudio, qwenVoice } = req.body;
+  const { topic, folderName, voice, totalSections, minWords, maxWords, imageCount, aspectRatio, promptModifier, imageModel, llmModel, skipImages, googleImages, localAIImages, geminiGeneratedImages, comfyUISettings, scriptStyle, customStyleInstructions, applioVoice, applioModel, applioPitch, applioSpeed, useApplio, generateQwenAudio, qwenVoice,
+          generateChatterboxAudio, chatterboxVoice, chatterboxExaggeration, chatterboxCfgWeight } = req.body;
     
     console.log('\n' + '='.repeat(80));
     console.log('🚀 INICIANDO GENERACIÓN AUTOMÁTICA POR LOTES');
     console.log('='.repeat(80));
     console.log(`🎯 Tema: "${shortTopic(topic)}"`);
     console.log(`📊 Total de secciones: ${totalSections}`);
-    console.log(`🎤 Sistema de audio: ${generateQwenAudio ? 'Qwen TTS' : useApplio ? 'Applio' : 'Google TTS'}`);
+    console.log(`🎤 Sistema de audio: ${generateChatterboxAudio ? 'Chatterbox TTS' : generateQwenAudio ? 'Qwen TTS' : useApplio ? 'Applio' : 'Google TTS'}`);
     const selectedImageModel = normalizeImageModel(imageModel);
     const selectedImageModelLabel = getImageModelLabel(selectedImageModel);
     console.log(`🖼️ Sistema de imágenes: ${localAIImages ? 'IA Local (ComfyUI)' : googleImages ? 'Google Images' : skipImages ? 'Sin imágenes' : `IA en la nube (${selectedImageModelLabel})`}`);

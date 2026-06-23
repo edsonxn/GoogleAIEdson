@@ -2870,6 +2870,10 @@ async function runAutoGeneration() {
         generateApplioAudio,
         generateQwenAudio,
         qwenVoice: selectedQwenVoice,
+        generateChatterboxAudio,
+        chatterboxVoice,
+        chatterboxExaggeration,
+        chatterboxCfgWeight,
         applioVoice: selectedApplioVoice,
         applioModel: selectedApplioModel,
         applioPitch,
@@ -2950,7 +2954,11 @@ async function runAutoGeneration() {
         applioSpeed: applioSpeed,
         useApplio: generateApplioAudio,
         generateQwenAudio: generateQwenAudio,
-        qwenVoice: selectedQwenVoice
+        qwenVoice: selectedQwenVoice,
+        generateChatterboxAudio,
+        chatterboxVoice,
+        chatterboxExaggeration,
+        chatterboxCfgWeight,
       })
     });
 
@@ -3113,6 +3121,10 @@ async function runAutoGeneration() {
       useApplio: generateApplioAudio,
       generateQwenAudio: generateQwenAudio,
       qwenVoice: selectedQwenVoice,
+      generateChatterboxAudio,
+      chatterboxVoice,
+      chatterboxExaggeration,
+      chatterboxCfgWeight,
       useGoogleAudio: generateAudio,
   voiceAssignments,
   randomGoogleVoice: useRandomVoices,
@@ -3142,7 +3154,7 @@ async function runAutoGeneration() {
     // =============================================================== 
     // VERIFICACIÃ“N DE GUIONES ANTES DE GENERAR AUDIOS
     // =============================================================== 
-    if (generateAudio || generateApplioAudio || generateQwenAudio) {
+    if (generateAudio || generateApplioAudio || generateQwenAudio || generateChatterboxAudio) {
       console.log('\nÃƒÂ°Ã…Â¸Ã¢â‚¬ÂÃ‚Â VERIFICANDO INTEGRIDAD DE GUIONES PARA TODOS LOS PROYECTOS...');
       
       try {
@@ -3272,7 +3284,7 @@ async function runAutoGeneration() {
     // Si hay proyectos adicionales, siempre ejecutar Fase 2 (pero filtrar el principal si ya tiene audio)
     // Si NO hay proyectos adicionales, y ya se generó audio en Fase 1, saltar Fase 2
     
-    if (generateAudio || generateApplioAudio || generateQwenAudio) {
+    if (generateAudio || generateApplioAudio || generateQwenAudio || generateChatterboxAudio) {
       console.log('\nðŸŽµ INICIANDO FASE 2: Generación secuencial de audio...');
       
       // Generar un ID único para esta sesión de generación de audio
@@ -3649,7 +3661,7 @@ async function runAutoGeneration() {
     // VERIFICACIÃ“N FINAL: ASEGURAR QUE TODOS LOS AUDIOS ESTÉN COMPLETOS
     // =============================================================== 
     
-    if (generateAudio || generateApplioAudio || generateQwenAudio) {
+    if (generateAudio || generateApplioAudio || generateQwenAudio || generateChatterboxAudio) {
       console.log('\nÃ°Å¸â€Â REALIZANDO VERIFICACIÃ“N FINAL DE AUDIOS...');
       
       // Esperar un momento para asegurar que el sistema de archivos se actualice
