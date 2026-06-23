@@ -2676,6 +2676,10 @@ async function runAutoGeneration() {
   let generateApplioAudio = document.getElementById("autoGenerateApplioAudio").checked;
   let generateQwenAudio = document.getElementById("autoGenerateQwenAudio")?.checked || false;
   const selectedQwenVoice = document.getElementById("qwenVoiceSelect")?.value || "";
+  const generateChatterboxAudio = document.getElementById("autoGenerateChatterboxAudio")?.checked || false;
+  const chatterboxVoice = document.getElementById("chatterboxVoiceSelect")?.value || "";
+  const chatterboxExaggeration = parseFloat(document.getElementById("chatterboxExaggeration")?.value ?? 0.5);
+  const chatterboxCfgWeight   = parseFloat(document.getElementById("chatterboxCfgWeight")?.value ?? 0.5);
   const selectedApplioVoice = document.getElementById("applioVoiceSelect").value;
   const selectedApplioModel = document.getElementById("applioModelSelect").value;
   const applioPitch = parseInt(document.getElementById("applioPitch").value) || 0;
@@ -3921,15 +3925,19 @@ async function generateSectionApplioAudio(section) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        script: script, // Usar el guión de la sección actual
+        script: script,
         topic: currentTopic,
         folderName: document.getElementById("folderName").value.trim(),
         currentSection: section,
-        voice: "fr-FR-RemyMultilingualNeural", // Voz de TTS (se mantiene)
-        applioVoice: selectedApplioVoice, // Voz del modelo de Applio
-        applioModel: selectedApplioModel, // Modelo TTS de Applio
-        applioPitch: applioPitch, // Pitch para Applio
-        applioSpeed: applioSpeed
+        voice: "fr-FR-RemyMultilingualNeural",
+        applioVoice: selectedApplioVoice,
+        applioModel: selectedApplioModel,
+        applioPitch: applioPitch,
+        applioSpeed: applioSpeed,
+        generateChatterboxAudio: document.getElementById("autoGenerateChatterboxAudio")?.checked || false,
+        chatterboxVoice: document.getElementById("chatterboxVoiceSelect")?.value || "",
+        chatterboxExaggeration: parseFloat(document.getElementById("chatterboxExaggeration")?.value ?? 0.5),
+        chatterboxCfgWeight: parseFloat(document.getElementById("chatterboxCfgWeight")?.value ?? 0.5),
       })
     });
 
@@ -20510,6 +20518,49 @@ function toggleQwenVoiceDropdown() {
     }
   }
 }
+
+// ── Chatterbox TTS ────────────────────────────────────────────────────────
+let _chatterboxVoices = [];
+
+async function loadChatterboxVoices() {
+  try {
+    const res = await fetch('/api/chatterbox-voices');
+    const data = await res.json();
+    if (data.success && data.voices) {
+      _chatterboxVoices = data.voices;
+      const sel = document.getElementById('chatterboxVoiceSelect');
+      if (sel) {
+        sel.innerHTML = '<option value="">Sin muestra (voz por defecto)</option>';
+        data.voices.forEach(v => {
+          const opt = document.createElement('option');
+          opt.value = v.file;
+          opt.textContent = v.name;
+          sel.appendChild(opt);
+        });
+      }
+    }
+  } catch (e) { console.error('Error cargando voces Chatterbox:', e); }
+}
+
+function toggleChatterboxPanel() {
+  const cb = document.getElementById('autoGenerateChatterboxAudio');
+  const panel = document.getElementById('chatterboxVoiceGroup');
+  if (!cb || !panel) return;
+  panel.style.display = cb.checked ? 'block' : 'none';
+  if (cb.checked) {
+    if (_chatterboxVoices.length === 0) loadChatterboxVoices();
+    // Mutually exclusive with Applio and Qwen
+    const aplio = document.getElementById('autoGenerateApplioAudio');
+    const qwen  = document.getElementById('autoGenerateQwenAudio');
+    if (aplio?.checked) { aplio.checked = false; if (typeof toggleApplioVoiceDropdown === 'function') toggleApplioVoiceDropdown(); }
+    if (qwen?.checked)  { qwen.checked  = false; toggleQwenVoiceDropdown(); }
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('autoGenerateChatterboxAudio')?.addEventListener('change', toggleChatterboxPanel);
+  loadChatterboxVoices();
+});
 
 const originalToggleApplio = window.toggleApplioVoiceDropdown;
 window.toggleApplioVoiceDropdown = function() {

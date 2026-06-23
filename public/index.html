@@ -698,6 +698,44 @@
               <option value="">Cargando voces...</option>
             </select>
           </div>
+
+          <!-- CHATTERBOX CHECKBOX -->
+          <div class="checkbox-group" style="margin-top: 15px;">
+            <label class="checkbox-label">
+              <input type="checkbox" id="autoGenerateChatterboxAudio" class="checkbox-input">
+              <span class="checkbox-custom"></span>
+              <i class="fas fa-waveform-lines"></i>
+              Incluir audio Chatterbox
+            </label>
+          </div>
+
+          <!-- Panel Chatterbox (inicialmente oculto) -->
+          <div id="chatterboxVoiceGroup" style="display: none; margin-top: 10px; margin-left: 20px;">
+            <div class="field-group">
+              <label for="chatterboxVoiceSelect" class="field-label">
+                <i class="fas fa-user-alt"></i> Muestra de voz (.wav en chatterbox_voices/):
+              </label>
+              <select id="chatterboxVoiceSelect" class="field-select">
+                <option value="">Sin muestra (voz por defecto)</option>
+              </select>
+            </div>
+            <div class="field-group" style="margin-top: 10px;">
+              <label class="field-label">
+                <i class="fas fa-theater-masks"></i> Exaggeration: <span id="chatterboxExaggerationLabel">0.5</span>
+              </label>
+              <input type="range" id="chatterboxExaggeration" class="pitch-slider" min="0" max="1" step="0.05" value="0.5"
+                oninput="document.getElementById('chatterboxExaggerationLabel').textContent = parseFloat(this.value).toFixed(2)">
+              <div class="pitch-labels"><span>0 (neutro)</span><span>1 (expresivo)</span></div>
+            </div>
+            <div class="field-group" style="margin-top: 10px;">
+              <label class="field-label">
+                <i class="fas fa-sliders-h"></i> CFG Weight: <span id="chatterboxCfgWeightLabel">0.5</span>
+              </label>
+              <input type="range" id="chatterboxCfgWeight" class="pitch-slider" min="0" max="1" step="0.05" value="0.5"
+                oninput="document.getElementById('chatterboxCfgWeightLabel').textContent = parseFloat(this.value).toFixed(2)">
+              <div class="pitch-labels"><span>0</span><span>1</span></div>
+            </div>
+          </div>
         </div>
 
         <!-- Columna 3: B-Roll -->

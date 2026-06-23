@@ -791,6 +791,14 @@ const APPLIO_START_BAT = path.join(APPLIO_PATH, 'run-applio.bat');
 // Variables para control de proceso Qwen TTS
 let qwenProcess = null;
 let qwenStarted = false;
+
+// ── Chatterbox TTS ──────────────────────────────────────────────────────────
+const CHATTERBOX_PORT  = 7171;
+const CHATTERBOX_URL   = `http://127.0.0.1:${CHATTERBOX_PORT}`;
+const CHATTERBOX_SCRIPT = path.join(__dirname, 'chatterbox_server.py');
+const CHATTERBOX_VOICES_DIR = path.join(__dirname, 'chatterbox_voices');
+let chatterboxProcess = null;
+let chatterboxStarted = false;
 const QWEN_PATH = 'C:\\QWEN\\Qwen3-TTS';
 const QWEN_START_BAT = path.join(QWEN_PATH, 'start_demo.bat');
 const QWEN_URL = 'http://127.0.0.1:8000';
@@ -1718,6 +1726,67 @@ call start_demo.bat`;
     qwenStarted = false;
     return false;
   }
+}
+
+// ── Chatterbox TTS start/check ───────────────────────────────────────────────
+async function startChatterbox() {
+  try {
+    if (chatterboxStarted) {
+      try {
+        const r = await fetch(`${CHATTERBOX_URL}/health`, { signal: AbortSignal.timeout(3000) });
+        if (r.ok) { console.log('✅ Chatterbox sigue corriendo'); return true; }
+      } catch {}
+      console.log('⚠️ Chatterbox no responde, reiniciando...');
+      chatterboxStarted = false;
+    }
+
+    // ¿Ya está corriendo?
+    try {
+      const r = await fetch(`${CHATTERBOX_URL}/health`, { signal: AbortSignal.timeout(2000) });
+      if (r.ok) { console.log('✅ Chatterbox ya estaba corriendo'); chatterboxStarted = true; return true; }
+    } catch {}
+
+    if (!fs.existsSync(CHATTERBOX_SCRIPT)) {
+      throw new Error(`No se encontró chatterbox_server.py en: ${CHATTERBOX_SCRIPT}`);
+    }
+
+    console.log('🚀 Iniciando Chatterbox TTS (cargando modelo, puede tardar ~30s)...');
+    chatterboxProcess = spawn('python', [CHATTERBOX_SCRIPT, '--port', String(CHATTERBOX_PORT)], {
+      detached: false,
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    chatterboxProcess.stdout.on('data', d => process.stdout.write(`[Chatterbox] ${d}`));
+    chatterboxProcess.stderr.on('data', d => process.stderr.write(`[Chatterbox] ${d}`));
+    chatterboxProcess.on('exit', () => { chatterboxStarted = false; chatterboxProcess = null; });
+
+    // Esperar hasta que el modelo cargue (hasta 3 min)
+    for (let i = 0; i < 180; i++) {
+      await new Promise(r => setTimeout(r, 1000));
+      try {
+        const r = await fetch(`${CHATTERBOX_URL}/health`, { signal: AbortSignal.timeout(2000) });
+        if (r.ok) { chatterboxStarted = true; console.log('✅ Chatterbox listo'); return true; }
+      } catch {}
+    }
+    throw new Error('Timeout: Chatterbox no respondió después de 3 minutos');
+  } catch (err) {
+    console.error('❌ Error iniciando Chatterbox:', err.message);
+    chatterboxStarted = false;
+    return false;
+  }
+}
+
+async function generateChatterboxAudio(text, outputPath, voicePath, exaggeration = 0.5, cfgWeight = 0.5) {
+  const body = { text, output: outputPath, exaggeration, cfg_weight: cfgWeight };
+  if (voicePath && fs.existsSync(voicePath)) body.voice = voicePath;
+  const resp = await fetch(`${CHATTERBOX_URL}/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(300000) // 5 min max
+  });
+  const data = await resp.json();
+  if (!resp.ok || !data.success) throw new Error(data.error || 'Chatterbox falló');
+  return data;
 }
 
 app.use(cors());
@@ -12852,7 +12921,8 @@ app.get('/comfyui-status', async (req, res) => {
 // Nueva ruta para generar audio de sección específica usando cliente Applio Node.js
 app.post('/generate-section-audio', async (req, res) => {
   try {
-    const { script, topic, folderName, currentSection, voice, applioVoice, applioModel, applioPitch, applioSpeed, generateQwenAudio, qwenVoice } = req.body;
+    const { script, topic, folderName, currentSection, voice, applioVoice, applioModel, applioPitch, applioSpeed, generateQwenAudio, qwenVoice,
+            generateChatterboxAudio: useChatterbox, chatterboxVoice, chatterboxExaggeration, chatterboxCfgWeight } = req.body;
     
     if (!script || !topic || !currentSection) {
       return res.status(400).json({ 
@@ -12873,6 +12943,27 @@ app.post('/generate-section-audio', async (req, res) => {
     
     // Crear estructura de carpetas usando el nombre normalizado
     const folderStructure = createProjectStructure(topic, section, actualFolderName);
+
+    // Chatterbox TTS
+    if (useChatterbox) {
+      console.log(`🎙️ Generando audio con Chatterbox para sección ${section}...`);
+      const ready = await startChatterbox();
+      if (!ready) return res.status(500).json({ error: 'No se pudo iniciar Chatterbox TTS' });
+
+      const fileName = `${actualFolderName}_seccion_${section}_chatterbox_${Date.now()}.wav`;
+      const filePath = path.join(folderStructure.sectionDir, fileName);
+      const voicePath = chatterboxVoice ? path.join(CHATTERBOX_VOICES_DIR, chatterboxVoice) : null;
+
+      await generateChatterboxAudio(
+        script, filePath, voicePath,
+        parseFloat(chatterboxExaggeration ?? 0.5),
+        parseFloat(chatterboxCfgWeight ?? 0.5)
+      );
+
+      const audioPath = path.relative('./public', filePath).replace(/\\/g, '/');
+      console.log(`✅ Audio Chatterbox generado: ${filePath}`);
+      return res.json({ success: true, audioPath, section, method: 'chatterbox' });
+    }
 
     // Si generateQwenAudio está activo, usar Qwen TTS en lugar de Applio
     if (generateQwenAudio) {
@@ -24799,6 +24890,19 @@ app.get('/api/qwen-voices', (req, res) => {
     res.json({ success: true, voices, count: voices.length });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ── Chatterbox voices ─────────────────────────────────────────────────────
+app.get('/api/chatterbox-voices', (req, res) => {
+  try {
+    if (!fs.existsSync(CHATTERBOX_VOICES_DIR)) fs.mkdirSync(CHATTERBOX_VOICES_DIR, { recursive: true });
+    const files = fs.readdirSync(CHATTERBOX_VOICES_DIR)
+      .filter(f => /\.(wav|mp3|flac|ogg|m4a)$/i.test(f))
+      .map(f => ({ name: path.basename(f, path.extname(f)), file: f, path: path.join(CHATTERBOX_VOICES_DIR, f) }));
+    res.json({ success: true, voices: files, count: files.length });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
