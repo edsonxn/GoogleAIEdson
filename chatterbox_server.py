@@ -4,6 +4,11 @@ Chatterbox TTS HTTP server — carga el modelo una vez, atiende POST /generate.
 Puerto por defecto: 7171
 """
 import sys, os, json, threading, argparse
+
+# Usar modelos ya descargados, no conectar a HuggingFace Hub
+os.environ.setdefault('HF_HUB_OFFLINE', '1')
+os.environ.setdefault('TRANSFORMERS_OFFLINE', '1')
+
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 # Prioridad: paquete instalado (pip install chatterbox-tts), luego repo local
