@@ -3463,7 +3463,7 @@ async function runAutoGeneration() {
                 topic: project.projectName,
                 folderName: project.projectKey,
                 currentSection: sectionNum,
-                useChatterbox: true,
+                generateChatterboxAudio: true,
                 chatterboxVoice: project.chatterboxVoice || '',
                 chatterboxLanguage: project.chatterboxLanguage || 'es',
                 chatterboxExaggeration: project.chatterboxExaggeration ?? 0.5,
@@ -3495,12 +3495,27 @@ async function runAutoGeneration() {
                 order: globalAudioOrder++
               };
               
+              // Marcar sección actual como "en proceso" antes del fetch (importante para TTS lentos como Chatterbox)
+              updateProjectProgress(project.projectKey, {
+                percentage: Math.round((completedAudioSections / totalSections) * 100),
+                phase: 'audio',
+                currentStep: completedAudioSections,
+                totalSteps: totalSections,
+                currentTask: `Generando audio sección ${sectionNum}...`,
+                audioProgress: {
+                  percentage: Math.round((completedAudioSections / totalSections) * 100),
+                  currentStep: completedAudioSections,
+                  totalSteps: totalSections,
+                  currentTask: `Generando audio sección ${sectionNum}...`
+                }
+              });
+
               const audioResponse = await fetch(endpoint, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(requestBody)
               });
-              
+
               if (!audioResponse.ok) {
                 const errorText = await audioResponse.text();
                 throw new Error(`Error HTTP ${audioResponse.status}: ${errorText}`);

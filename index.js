@@ -12990,7 +12990,7 @@ app.get('/comfyui-status', async (req, res) => {
 app.post('/generate-section-audio', async (req, res) => {
   try {
     const { script, topic, folderName, currentSection, voice, applioVoice, applioModel, applioPitch, applioSpeed, generateQwenAudio, qwenVoice,
-            generateChatterboxAudio: useChatterbox, chatterboxVoice, chatterboxExaggeration, chatterboxCfgWeight } = req.body;
+            generateChatterboxAudio: useChatterbox, chatterboxVoice, chatterboxLanguage = 'es', chatterboxExaggeration, chatterboxCfgWeight } = req.body;
     
     if (!script || !topic || !currentSection) {
       return res.status(400).json({ 
@@ -13025,7 +13025,8 @@ app.post('/generate-section-audio', async (req, res) => {
       await generateChatterboxAudio(
         script, filePath, voicePath,
         parseFloat(chatterboxExaggeration ?? 0.5),
-        parseFloat(chatterboxCfgWeight ?? 0.5)
+        parseFloat(chatterboxCfgWeight ?? 0.5),
+        chatterboxLanguage
       );
 
       const audioPath = path.relative('./public', filePath).replace(/\\/g, '/');
