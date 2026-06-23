@@ -1759,15 +1759,16 @@ async function startChatterbox() {
     chatterboxProcess.stderr.on('data', d => process.stderr.write(`[Chatterbox] ${d}`));
     chatterboxProcess.on('exit', () => { chatterboxStarted = false; chatterboxProcess = null; });
 
-    // Esperar hasta que el modelo cargue (hasta 3 min)
-    for (let i = 0; i < 180; i++) {
+    // Esperar hasta que el modelo cargue/descargue (hasta 15 min en primera descarga)
+    for (let i = 0; i < 900; i++) {
       await new Promise(r => setTimeout(r, 1000));
       try {
         const r = await fetch(`${CHATTERBOX_URL}/health`, { signal: AbortSignal.timeout(2000) });
         if (r.ok) { chatterboxStarted = true; console.log('✅ Chatterbox listo'); return true; }
       } catch {}
+      if (i % 30 === 29) console.log(`⏳ Chatterbox cargando... (${Math.round((i+1)/60)} min)`);
     }
-    throw new Error('Timeout: Chatterbox no respondió después de 3 minutos');
+    throw new Error('Timeout: Chatterbox no respondió después de 15 minutos');
   } catch (err) {
     console.error('❌ Error iniciando Chatterbox:', err.message);
     chatterboxStarted = false;
