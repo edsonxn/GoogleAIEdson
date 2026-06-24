@@ -27855,7 +27855,7 @@ app.get('/oauth2callback', async (req, res) => {
 function _sanitizeYtTags(rawTags) {
     // YouTube limits: total ≤ 500 chars (sum of all tag lengths, YouTube counts chars not bytes)
     // Individual tag: strip < > and trailing punctuation, max 100 chars
-    const MAX_TOTAL = 490; // leave margin
+    const MAX_TOTAL = 450; // conservative: YouTube may count quotes+commas in CSV serialization
     const clean = rawTags
         .map(t => t.replace(/[<>]/g, '').replace(/[.,;:!?]+$/, '').trim())
         .filter(t => t.length >= 2 && t.length <= 100);
