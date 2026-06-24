@@ -21074,21 +21074,27 @@ async function generateVisualPromptFromTranscription(transcription, styleInstruc
   // Only switch to English text when the user EXPLICITLY mentions text language.
   // Writing the style description IN English does NOT count — must say "textos en inglés" / "texts in english" / etc.
   const wantsEnglish = /\b(textos?\s+(en\s+)?ingl[eé]s|texts?\s+in\s+english|english\s+texts?)\b/i.test(styleInstructions || '');
-  const langInstruction = wantsEnglish ? 'ALL overlay texts IN ENGLISH' : 'todos los textos en pantalla EN ESPAÑOL';
 
-  // El LLM primero decide cuántos actos necesita la narración, luego los describe
-  const inputPrompt = `Analiza la narración y decide cuántos actos visuales necesita (1, 2 o 3 según su complejidad narrativa). Luego describe cada acto. IDIOMA DE TEXTOS: ${langInstruction}.${styleSection}${sectionCtxNote}
+  // Detect explicit "no text / no emojis" preference in style instructions
+  const noText = /\b(no\s+(incluyas?|pongas?|agregues?|uses?|hay|quiero|debe\s+haber)\s+(textos?|texto|emojis?|letras?|palabras?|subtítulos?|overlays?)|(sin\s+textos?)|(textos?\s+(no|prohibido|fuera)))/i.test(styleInstructions || '');
 
-CRITERIOS para decidir:
-- 1 acto: un solo hecho, dato o imagen (ej: una fecha, un número, una persona)
-- 2 actos: dos momentos distintos (causa→efecto, personaje→acción, antes→después)
-- 3 actos: historia con inicio, giro y desenlace (múltiples hechos encadenados)
+  const langInstruction = noText
+    ? '⚠️ SIN TEXTOS EN PANTALLA — NO incluyas texto, letras, subtítulos ni emojis en ningún acto'
+    : (wantsEnglish ? 'ALL overlay texts IN ENGLISH' : 'todos los textos en pantalla EN ESPAÑOL');
 
-Responde SOLO en este formato (sin explicaciones, sin markdown):
-ACTOS: [número]
-[Acto 1: descripción visual con texto EN ESPAÑOL entre comillas.] [Acto 2: descripción.] [Acto 3: solo si aplica.]
+  // Examples vary based on whether text is allowed
+  const examples = noText ? `---
+Narración: "El precio del bitcoin llegó a 50000 dólares en tiempo récord."
+ACTOS: 1
+Acto 1: Gráfico de línea verde subiendo dramáticamente con monedas doradas flotando en un fondo oscuro con destellos dorados.
 
----
+Narración: "El detective encontró las pistas ocultas y en 48 horas resolvió el caso más oscuro de su carrera."
+ACTOS: 2
+Acto 1: Spotlight sobre documentos y fotos de pistas con lupa animada moviéndose lentamente. Acto 2: Silueta de detective revelada entre sombras con luz de linterna.
+
+Narración: "Mientras los ejecutivos de Sony celebran el éxito del prototipo, la noticia se filtra: la alianza murió en menos de 24 horas."
+ACTOS: 3
+Acto 1: Siluetas de ejecutivos celebrando con brillo neon y confeti. Acto 2: Altavoz con ondas rojas pulsando dramáticamente. Acto 3: Ícono de circuito quebrado hundiéndose en oscuridad.` : `---
 Narración: "El precio del bitcoin llegó a 50000 dólares en tiempo récord."
 ACTOS: 1
 Acto 1: Gráfico de línea verde subiendo dramáticamente con monedas doradas flotando y texto "BITCOIN $50,000".
@@ -21099,7 +21105,21 @@ Acto 1: Spotlight sobre documentos con lupa animada y texto "EL DETECTIVE". Acto
 
 Narración: "Mientras los ejecutivos de Sony celebran el éxito del prototipo, la noticia se filtra por los altavoces: la alianza prometía dominar el mercado pero murió en menos de 24 horas."
 ACTOS: 3
-Acto 1: Siluetas de ejecutivos celebrando con brillo neon y texto "CELEBRACIÓN EN SONY". Acto 2: Altavoz con ondas rojas pulsando y texto "ALIANZA ROTA". Acto 3: Ícono de circuito quebrado con texto "MUERTA EN 24 HORAS".
+Acto 1: Siluetas de ejecutivos celebrando con brillo neon y texto "CELEBRACIÓN EN SONY". Acto 2: Altavoz con ondas rojas pulsando y texto "ALIANZA ROTA". Acto 3: Ícono de circuito quebrado con texto "MUERTA EN 24 HORAS".`;
+
+  // El LLM primero decide cuántos actos necesita la narración, luego los describe
+  const inputPrompt = `Analiza la narración y decide cuántos actos visuales necesita (1, 2 o 3 según su complejidad narrativa). Luego describe cada acto. ${langInstruction}.${styleSection}${sectionCtxNote}
+
+CRITERIOS para decidir:
+- 1 acto: un solo hecho, dato o imagen (ej: una fecha, un número, una persona)
+- 2 actos: dos momentos distintos (causa→efecto, personaje→acción, antes→después)
+- 3 actos: historia con inicio, giro y desenlace (múltiples hechos encadenados)
+
+Responde SOLO en este formato (sin explicaciones, sin markdown):
+ACTOS: [número]
+[Acto 1: descripción visual${noText ? ' SIN mencionar texto, letras ni emojis' : ' con texto EN ESPAÑOL entre comillas'}.] [Acto 2: descripción.] [Acto 3: solo si aplica.]
+
+${examples}
 
 ---
 RECUERDA: ${langInstruction}.
@@ -21209,11 +21229,23 @@ Narración: "${transcription.slice(0, 300)}"
       }
     }
 
+    // If user requested no text, strip any " y texto '...'" or " con texto '...'" fragments
+    // that Gemini may have included despite the instruction
+    if (noText) {
+      result = result
+        .replace(/\s*[,y]\s*(?:texto|letras?|subtítulo)\s+"[^"]*"/gi, '')
+        .replace(/\s*[,y]\s*(?:texto|letras?|subtítulo)\s+'[^']*'/gi, '')
+        .replace(/\s*con\s+(?:texto|letras?|subtítulo)\s+"[^"]*"/gi, '')
+        .replace(/\s*con\s+(?:texto|letras?|subtítulo)\s+'[^']*'/gi, '')
+        .replace(/\s*y\s+emoji[s]?\s+\S+/gi, '')
+        .replace(/\s{2,}/g, ' ').trim();
+    }
+
     // Truncate to max 950 chars
     if (result.length > 950) {
       result = result.slice(0, 947) + '...';
     }
-    
+
     // LOG: Mostrar prompt final limpio
     console.log(`\n✨ ═══ PROMPT FINAL PARA HOLAVIDEO ═══`);
     console.log(result);
