@@ -20225,12 +20225,46 @@ async function _loadChatterboxVoicesForTranslate() {
     if (data.voices?.length) {
       data.voices.forEach(v => {
         const opt = document.createElement('option');
-        opt.value = v.path;
+        opt.value = v.file;           // same key as main panel → shared prefs
+        opt.dataset.path = v.path;   // full path for server
         opt.textContent = v.name;
         sel.appendChild(opt);
       });
     }
     sel.dataset.loaded = '1';
+    // Restore last-used voice
+    const saved = localStorage.getItem('tlCbVoice');
+    if (saved) { sel.value = saved; tlCbApplyVoicePrefs(saved); }
+  } catch {}
+}
+
+function tlCbApplyVoicePrefs(voice) {
+  localStorage.setItem('tlCbVoice', voice || '');
+  if (!voice) return;
+  try {
+    const prefs = JSON.parse(localStorage.getItem('chatterbox_voice_prefs') || '{}');
+    const p = prefs[voice];
+    if (!p) return;
+    const exEl = document.getElementById('translateChatterboxExag');
+    const cfEl = document.getElementById('translateChatterboxCfg');
+    const tmpEl = document.getElementById('translateChatterboxTemp');
+    if (exEl)  { exEl.value  = p.exaggeration ?? 0.5;  document.getElementById('tlCbExagLabel').textContent  = (p.exaggeration ?? 0.5).toFixed(2); }
+    if (cfEl)  { cfEl.value  = p.cfgWeight    ?? 0.5;  document.getElementById('tlCbCfgLabel').textContent   = (p.cfgWeight    ?? 0.5).toFixed(2); }
+    if (tmpEl) { tmpEl.value = p.temperature  ?? 0.8;  document.getElementById('tlCbTempLabel').textContent  = (p.temperature  ?? 0.8).toFixed(2); }
+  } catch {}
+}
+
+function tlCbSaveVoicePrefs() {
+  const voice = document.getElementById('translateChatterboxVoice')?.value;
+  if (!voice) return;
+  try {
+    const prefs = JSON.parse(localStorage.getItem('chatterbox_voice_prefs') || '{}');
+    prefs[voice] = {
+      exaggeration: parseFloat(document.getElementById('translateChatterboxExag')?.value ?? 0.5),
+      cfgWeight:    parseFloat(document.getElementById('translateChatterboxCfg')?.value  ?? 0.5),
+      temperature:  parseFloat(document.getElementById('translateChatterboxTemp')?.value  ?? 0.8),
+    };
+    localStorage.setItem('chatterbox_voice_prefs', JSON.stringify(prefs));
   } catch {}
 }
 
@@ -20442,9 +20476,11 @@ async function startBrollTranslation() {
   const googleVoice = document.getElementById('translateGoogleVoice')?.value || 'Kore';
   const applioVoice = document.getElementById('translateApplioVoice')?.value || 'logs\\VOCES\\RemyOriginal.pth';
   const cloudVoice = document.querySelector('input[name="brollCloudVoice"]:checked')?.value || 'male';
-  const chatterboxVoicePath = document.getElementById('translateChatterboxVoice')?.value || '';
+  const cbVoiceSel = document.getElementById('translateChatterboxVoice');
+  const chatterboxVoicePath = cbVoiceSel?.selectedOptions[0]?.dataset?.path || '';
   const chatterboxExag = parseFloat(document.getElementById('translateChatterboxExag')?.value) || 0.5;
   const chatterboxCfg  = parseFloat(document.getElementById('translateChatterboxCfg')?.value)  || 0.5;
+  const chatterboxTemp = parseFloat(document.getElementById('translateChatterboxTemp')?.value)  || 0.8;
   const translationModel = document.querySelector('input[name="brollTranslationModel"]:checked')?.value || 'gemini-3.1-flash-lite';
   const transcriptionMethod = document.querySelector('input[name="brollTranscription"]:checked')?.value || 'whisper';
   const groupSize = document.getElementById('brollGroupSize')?.value || '3';
@@ -20492,6 +20528,7 @@ async function startBrollTranslation() {
     formData.append('chatterboxVoicePath', chatterboxVoicePath);
     formData.append('chatterboxExaggeration', chatterboxExag);
     formData.append('chatterboxCfgWeight', chatterboxCfg);
+    formData.append('chatterboxTemperature', chatterboxTemp);
     if (podcastStyle) formData.append('podcastStyle', 'true');
     if (keepTemp) formData.append('keepTemp', 'true');
 

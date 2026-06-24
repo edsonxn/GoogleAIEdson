@@ -26896,8 +26896,9 @@ app.post('/api/translate-video', upload.fields([{ name: 'video', maxCount: 1 }, 
                                                     const cbVoice = req.body.chatterboxVoicePath || null;
                                                     const cbExag  = parseFloat(req.body.chatterboxExaggeration) || 0.5;
                                                     const cbCfg   = parseFloat(req.body.chatterboxCfgWeight)   || 0.5;
-                                                    console.log(`🗣️ Chatterbox TTS: lang=${lang}, voice=${cbVoice || 'default'}`);
-                                                    await generateChatterboxAudio(group.text, rawPath, cbVoice, cbExag, cbCfg, lang, 0.8);
+                                                    const cbTemp  = parseFloat(req.body.chatterboxTemperature)  || 0.8;
+                                                    console.log(`🗣️ Chatterbox TTS: lang=${lang}, voice=${cbVoice || 'default'}, exag=${cbExag}, cfg=${cbCfg}, temp=${cbTemp}`);
+                                                    await generateChatterboxAudio(group.text, rawPath, cbVoice, cbExag, cbCfg, lang, cbTemp);
                                                 } else if (segTtsProvider === 'applio') {
                                                     let isConnected = false;
                                                     try { isConnected = await applioClient.checkConnection(); } catch(e) {}

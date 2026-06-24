@@ -1279,18 +1279,38 @@
                 <!-- Chatterbox Voice (hidden) -->
                 <div id="translateChatterboxDiv" style="display: none;">
                   <div style="font-size: 0.68rem; color: #64748b; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">VOZ CHATTERBOX</div>
-                  <select id="translateChatterboxVoice" style="width:100%; padding:5px 8px; background:#1e293b; border:1px solid #334155; border-radius:6px; color:#e2e8f0; font-size:0.78rem; margin-bottom:6px;">
+                  <select id="translateChatterboxVoice" onchange="tlCbApplyVoicePrefs(this.value)" style="width:100%; padding:5px 8px; background:#1e293b; border:1px solid #334155; border-radius:6px; color:#e2e8f0; font-size:0.78rem; margin-bottom:8px;">
                     <option value="">— Voz de idioma por defecto —</option>
                   </select>
-                  <div style="display:flex; gap:8px; flex-wrap:wrap;">
-                    <label style="font-size:0.7rem; color:#94a3b8;">Exag
-                      <input type="number" id="translateChatterboxExag" value="0.5" min="0.25" max="2" step="0.05"
-                        style="width:52px; background:#0f172a; border:1px solid #334155; border-radius:4px; color:#e2e8f0; font-size:0.72rem; padding:2px 4px; margin-left:3px;">
-                    </label>
-                    <label style="font-size:0.7rem; color:#94a3b8;">CFG
-                      <input type="number" id="translateChatterboxCfg" value="0.5" min="0.2" max="1" step="0.05"
-                        style="width:52px; background:#0f172a; border:1px solid #334155; border-radius:4px; color:#e2e8f0; font-size:0.72rem; padding:2px 4px; margin-left:3px;">
-                    </label>
+                  <!-- Exaggeration -->
+                  <div style="margin-bottom:6px;">
+                    <div style="display:flex; justify-content:space-between; font-size:0.7rem; color:#94a3b8; margin-bottom:2px;">
+                      <span>Exaggeration: <b id="tlCbExagLabel">0.50</b></span>
+                    </div>
+                    <input type="range" id="translateChatterboxExag" min="0.25" max="2" step="0.05" value="0.5"
+                      oninput="document.getElementById('tlCbExagLabel').textContent=parseFloat(this.value).toFixed(2); tlCbSaveVoicePrefs()"
+                      style="width:100%; accent-color:#06b6d4;">
+                    <div style="display:flex; justify-content:space-between; font-size:0.62rem; color:#475569;"><span>0 (neutro)</span><span>1 (expresivo)</span></div>
+                  </div>
+                  <!-- CFG Weight -->
+                  <div style="margin-bottom:6px;">
+                    <div style="display:flex; justify-content:space-between; font-size:0.7rem; color:#94a3b8; margin-bottom:2px;">
+                      <span>CFG Weight: <b id="tlCbCfgLabel">0.50</b></span>
+                    </div>
+                    <input type="range" id="translateChatterboxCfg" min="0.2" max="1" step="0.05" value="0.5"
+                      oninput="document.getElementById('tlCbCfgLabel').textContent=parseFloat(this.value).toFixed(2); tlCbSaveVoicePrefs()"
+                      style="width:100%; accent-color:#06b6d4;">
+                    <div style="display:flex; justify-content:space-between; font-size:0.62rem; color:#475569;"><span>0</span><span>1</span></div>
+                  </div>
+                  <!-- Temperature -->
+                  <div>
+                    <div style="display:flex; justify-content:space-between; font-size:0.7rem; color:#94a3b8; margin-bottom:2px;">
+                      <span>Temperature: <b id="tlCbTempLabel">0.80</b></span>
+                    </div>
+                    <input type="range" id="translateChatterboxTemp" min="0.05" max="5" step="0.05" value="0.8"
+                      oninput="document.getElementById('tlCbTempLabel').textContent=parseFloat(this.value).toFixed(2); tlCbSaveVoicePrefs()"
+                      style="width:100%; accent-color:#06b6d4;">
+                    <div style="display:flex; justify-content:space-between; font-size:0.62rem; color:#475569;"><span>0.05 (estable)</span><span>5 (variado)</span></div>
                   </div>
                 </div>
               </div>
