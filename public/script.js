@@ -21154,6 +21154,25 @@ function _ytSetLangStatus(lang, msg) {
   if (el) el.textContent = msg;
 }
 
+async function ytRetryLocalizations() {
+  const input = document.getElementById('ytRetryVideoUrl');
+  let rawVal = (input?.value || '').trim() || _ytUploadedVideoId || '';
+  // Accept full URL or bare ID
+  const match = rawVal.match(/(?:v=|\/shorts\/|youtu\.be\/)([A-Za-z0-9_-]{11})/);
+  const videoId = match ? match[1] : (rawVal.length === 11 ? rawVal : '');
+  if (!videoId) {
+    showNotification('Pega el URL o ID del video de YouTube (11 caracteres)', 'error');
+    return;
+  }
+  if (input) input.value = videoId; // normalize
+  _ytUploadedVideoId = videoId;
+
+  // Reset all status to pending
+  for (const t of _ytTranslations) _ytSetLangStatus(t.lang, 'pendiente');
+
+  await _ytApplyLocalizations(videoId);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function ytStartUpload() {
@@ -21221,6 +21240,8 @@ async function ytStartUpload() {
 
       // Apply translated titles+descriptions to the same video
       _ytUploadedVideoId = data.videoId;
+      const retryInput = document.getElementById('ytRetryVideoUrl');
+      if (retryInput) retryInput.value = data.videoId;
       if (_ytTranslations.length > 0) {
         document.getElementById('ytUploadStatus').textContent = 'Añadiendo localizaciones...';
         await _ytApplyLocalizations(data.videoId);
