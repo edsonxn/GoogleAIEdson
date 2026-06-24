@@ -27401,9 +27401,8 @@ app.post('/api/translate-youtube-metadata', async (req, res) => {
   const prompt = `Translate these YouTube video metadata items to ${langName}. Keep the same energy and style. Adapt SEO naturally.\n\nTitle: "${title}"\nDescription: "${(description||'').slice(0,600)}"\nTags: ${(tags||[]).slice(0,20).join(', ')}\n\nReturn ONLY valid JSON (no markdown, no explanation):\n{"title":"...","description":"...","tags":["...","..."]}`;
 
   try {
-    const { model } = await getGoogleAI('gemini-3.1-flash-lite', { context: 'llm' });
-    const result = await model.generateContent(prompt);
-    const text = result.response.text().replace(/```json|```/g, '').trim();
+    const rawText = await generateTextWithLLM(prompt, { model: 'gemini-3.1-flash-lite', context: 'llm', retries: 3 });
+    const text = rawText.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?\s*```$/i, '').trim();
     const parsed = JSON.parse(text);
     res.json({ success: true, ...parsed });
   } catch (err) {
