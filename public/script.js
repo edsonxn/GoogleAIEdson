@@ -20206,64 +20206,99 @@ function onTranslateTtsChange() {
   const googleDiv      = document.getElementById('translateGoogleVoiceDiv');
   const cloudDiv       = document.getElementById('translateCloudVoiceDiv');
   const chatterboxDiv  = document.getElementById('translateChatterboxDiv');
+  const langVoicesDiv  = document.getElementById('translateLangVoices');
   if (applioDiv)     applioDiv.style.display     = provider === 'applio' ? '' : 'none';
   if (googleDiv)     googleDiv.style.display     = (provider === 'google' || provider === 'google_pro') ? '' : 'none';
   if (cloudDiv)      cloudDiv.style.display      = (provider === 'google_cloud' || provider === 'google_wavenet') ? '' : 'none';
   if (chatterboxDiv) chatterboxDiv.style.display = provider === 'chatterbox' ? '' : 'none';
+  if (langVoicesDiv) langVoicesDiv.style.display = provider === 'chatterbox' ? '' : 'none';
 
-  // Load Chatterbox voice list on first show
   if (provider === 'chatterbox') _loadChatterboxVoicesForTranslate();
 }
 
+// Cached voice list for per-lang selectors
+let _cbVoiceCache = null;
+
 async function _loadChatterboxVoicesForTranslate() {
-  const sel = document.getElementById('translateChatterboxVoice');
-  if (!sel || sel.dataset.loaded) return;
+  const grid = document.getElementById('translateLangVoicesGrid');
+  if (!grid) return;
+  // Already built
+  if (grid.dataset.loaded) return;
+
   try {
     const res  = await fetch('/api/chatterbox-voices');
     const data = await res.json();
-    sel.innerHTML = '<option value="">— Voz de idioma por defecto —</option>';
-    if (data.voices?.length) {
-      data.voices.forEach(v => {
-        const opt = document.createElement('option');
-        opt.value = v.file;           // same key as main panel → shared prefs
-        opt.dataset.path = v.path;   // full path for server
-        opt.textContent = v.name;
-        sel.appendChild(opt);
-      });
-    }
-    sel.dataset.loaded = '1';
-    // Restore last-used voice
-    const saved = localStorage.getItem('tlCbVoice');
-    if (saved) { sel.value = saved; tlCbApplyVoicePrefs(saved); }
-  } catch {}
+    _cbVoiceCache = data.voices || [];
+    _buildLangVoiceGrid(_cbVoiceCache);
+    grid.dataset.loaded = '1';
+  } catch(e) { console.error('Error loading Chatterbox voices:', e); }
 }
 
-function tlCbApplyVoicePrefs(voice) {
-  localStorage.setItem('tlCbVoice', voice || '');
-  if (!voice) return;
-  try {
-    const prefs = JSON.parse(localStorage.getItem('chatterbox_voice_prefs') || '{}');
-    const p = prefs[voice];
-    if (!p) return;
-    const exEl = document.getElementById('translateChatterboxExag');
-    const cfEl = document.getElementById('translateChatterboxCfg');
-    const tmpEl = document.getElementById('translateChatterboxTemp');
-    if (exEl)  { exEl.value  = p.exaggeration ?? 0.5;  document.getElementById('tlCbExagLabel').textContent  = (p.exaggeration ?? 0.5).toFixed(2); }
-    if (cfEl)  { cfEl.value  = p.cfgWeight    ?? 0.5;  document.getElementById('tlCbCfgLabel').textContent   = (p.cfgWeight    ?? 0.5).toFixed(2); }
-    if (tmpEl) { tmpEl.value = p.temperature  ?? 0.8;  document.getElementById('tlCbTempLabel').textContent  = (p.temperature  ?? 0.8).toFixed(2); }
-  } catch {}
+const _LANG_LABELS = { en:'EN', fr:'FR', de:'DE', ko:'KO', ru:'RU', pt:'PT', it:'IT', ja:'JA', zh:'ZH', es:'ES' };
+const _ALL_LANGS   = ['en','fr','de','ko','ru','pt','it','ja','zh','es'];
+
+function _buildLangVoiceGrid(voices) {
+  const grid = document.getElementById('translateLangVoicesGrid');
+  if (!grid) return;
+  const saved = _tlGetLangVoices();
+  grid.innerHTML = '';
+
+  _ALL_LANGS.forEach(lang => {
+    // Label
+    const lbl = document.createElement('span');
+    lbl.style.cssText = 'font-size:0.72rem; color:#94a3b8; font-weight:600;';
+    lbl.textContent = _LANG_LABELS[lang] + ':';
+
+    // Select
+    const sel = document.createElement('select');
+    sel.id = `tlLangVoice_${lang}`;
+    sel.dataset.lang = lang;
+    sel.style.cssText = 'padding:3px 6px; background:#1e293b; border:1px solid #334155; border-radius:5px; color:#e2e8f0; font-size:0.72rem; width:100%;';
+    sel.innerHTML = '<option value="" data-path="">— default del idioma —</option>';
+    voices.forEach(v => {
+      const opt = document.createElement('option');
+      opt.value = v.file;
+      opt.dataset.path = v.path;
+      opt.textContent = v.name;
+      sel.appendChild(opt);
+    });
+    // Restore saved voice for this lang
+    if (saved[lang]) sel.value = saved[lang];
+    sel.addEventListener('change', () => _tlSaveLangVoice(lang, sel.value));
+
+    grid.appendChild(lbl);
+    grid.appendChild(sel);
+  });
 }
+
+function _tlGetLangVoices() {
+  try { return JSON.parse(localStorage.getItem('chatterbox_lang_voices') || '{}'); } catch { return {}; }
+}
+
+function _tlSaveLangVoice(lang, fileKey) {
+  const saved = _tlGetLangVoices();
+  if (fileKey) saved[lang] = fileKey; else delete saved[lang];
+  localStorage.setItem('chatterbox_lang_voices', JSON.stringify(saved));
+}
+
+function tlGetLangVoicePath(lang) {
+  const fileKey = _tlGetLangVoices()[lang];
+  if (!fileKey || !_cbVoiceCache) return '';
+  const v = _cbVoiceCache.find(x => x.file === fileKey);
+  return v ? v.path : '';
+}
+
+// Sliders still apply globally (per-voice prefs from main panel)
+function tlCbApplyVoicePrefs(voice) {}   // kept for compat, no-op now
 
 function tlCbSaveVoicePrefs() {
-  const voice = document.getElementById('translateChatterboxVoice')?.value;
-  if (!voice) return;
   try {
+    const exaggeration = parseFloat(document.getElementById('translateChatterboxExag')?.value ?? 0.5);
+    const cfgWeight    = parseFloat(document.getElementById('translateChatterboxCfg')?.value  ?? 0.5);
+    const temperature  = parseFloat(document.getElementById('translateChatterboxTemp')?.value  ?? 0.8);
+    // Save as defaults in chatterbox_voice_prefs under a special '_global_translate' key
     const prefs = JSON.parse(localStorage.getItem('chatterbox_voice_prefs') || '{}');
-    prefs[voice] = {
-      exaggeration: parseFloat(document.getElementById('translateChatterboxExag')?.value ?? 0.5),
-      cfgWeight:    parseFloat(document.getElementById('translateChatterboxCfg')?.value  ?? 0.5),
-      temperature:  parseFloat(document.getElementById('translateChatterboxTemp')?.value  ?? 0.8),
-    };
+    prefs['_global_translate'] = { exaggeration, cfgWeight, temperature };
     localStorage.setItem('chatterbox_voice_prefs', JSON.stringify(prefs));
   } catch {}
 }
@@ -20476,8 +20511,15 @@ async function startBrollTranslation() {
   const googleVoice = document.getElementById('translateGoogleVoice')?.value || 'Kore';
   const applioVoice = document.getElementById('translateApplioVoice')?.value || 'logs\\VOCES\\RemyOriginal.pth';
   const cloudVoice = document.querySelector('input[name="brollCloudVoice"]:checked')?.value || 'male';
-  const cbVoiceSel = document.getElementById('translateChatterboxVoice');
-  const chatterboxVoicePath = cbVoiceSel?.selectedOptions[0]?.dataset?.path || '';
+  // Build per-language voice map for Chatterbox
+  const chatterboxVoicePath = ''; // legacy field, not used
+  const chatterboxLangVoices = {};
+  if (ttsProvider === 'chatterbox') {
+    _ALL_LANGS.forEach(l => {
+      const p = tlGetLangVoicePath(l);
+      if (p) chatterboxLangVoices[l] = p;
+    });
+  }
   const chatterboxExag = parseFloat(document.getElementById('translateChatterboxExag')?.value) || 0.5;
   const chatterboxCfg  = parseFloat(document.getElementById('translateChatterboxCfg')?.value)  || 0.5;
   const chatterboxTemp = parseFloat(document.getElementById('translateChatterboxTemp')?.value)  || 0.8;
@@ -20526,6 +20568,7 @@ async function startBrollTranslation() {
     formData.append('groupSize', groupSize);
     formData.append('endScreenSeconds', endScreenSeconds);
     formData.append('chatterboxVoicePath', chatterboxVoicePath);
+    formData.append('chatterboxLangVoices', JSON.stringify(chatterboxLangVoices));
     formData.append('chatterboxExaggeration', chatterboxExag);
     formData.append('chatterboxCfgWeight', chatterboxCfg);
     formData.append('chatterboxTemperature', chatterboxTemp);

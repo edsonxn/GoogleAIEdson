@@ -26976,7 +26976,10 @@ app.post('/api/translate-video', upload.fields([{ name: 'video', maxCount: 1 }, 
                                         try {
                                             if (!fs.existsSync(rawPath) || fs.statSync(rawPath).size < 100) {
                                                 if (segTtsProvider === 'chatterbox') {
-                                                    const cbVoice = req.body.chatterboxVoicePath || null;
+                                                    // Per-language voice takes priority over global fallback
+                                                    let cbLangVoices = {};
+                                                    try { cbLangVoices = JSON.parse(req.body.chatterboxLangVoices || '{}'); } catch(e) {}
+                                                    const cbVoice = cbLangVoices[lang] || req.body.chatterboxVoicePath || null;
                                                     const cbExag  = parseFloat(req.body.chatterboxExaggeration) || 0.5;
                                                     const cbCfg   = parseFloat(req.body.chatterboxCfgWeight)   || 0.5;
                                                     const cbTemp  = parseFloat(req.body.chatterboxTemperature)  || 0.8;

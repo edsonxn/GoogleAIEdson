@@ -1278,10 +1278,7 @@
 
                 <!-- Chatterbox Voice (hidden) -->
                 <div id="translateChatterboxDiv" style="display: none;">
-                  <div style="font-size: 0.68rem; color: #64748b; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">VOZ CHATTERBOX</div>
-                  <select id="translateChatterboxVoice" onchange="tlCbApplyVoicePrefs(this.value)" style="width:100%; padding:5px 8px; background:#1e293b; border:1px solid #334155; border-radius:6px; color:#e2e8f0; font-size:0.78rem; margin-bottom:8px;">
-                    <option value="">— Voz de idioma por defecto —</option>
-                  </select>
+                  <div style="font-size: 0.68rem; color: #64748b; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">CHATTERBOX — voces en sección Idiomas ↓</div>
                   <!-- Exaggeration -->
                   <div style="margin-bottom:6px;">
                     <div style="display:flex; justify-content:space-between; font-size:0.7rem; color:#94a3b8; margin-bottom:2px;">
@@ -1356,16 +1353,21 @@
                   <i class="fas fa-globe" style="font-size:0.65rem; margin-right:2px;"></i> Idiomas
                 </div>
                 <div id="translateLangChecks" style="display: flex; flex-wrap: wrap; gap: 2px 8px;">
-                  <label style="display:flex; align-items:center; gap:3px; font-size:0.73rem; color:#cbd5e1; cursor:pointer;"><input type="checkbox" value="en" checked style="accent-color:#06b6d4;"> EN</label>
-                  <label style="display:flex; align-items:center; gap:3px; font-size:0.73rem; color:#cbd5e1; cursor:pointer;"><input type="checkbox" value="fr" style="accent-color:#06b6d4;"> FR</label>
-                  <label style="display:flex; align-items:center; gap:3px; font-size:0.73rem; color:#cbd5e1; cursor:pointer;"><input type="checkbox" value="de" style="accent-color:#06b6d4;"> DE</label>
-                  <label style="display:flex; align-items:center; gap:3px; font-size:0.73rem; color:#cbd5e1; cursor:pointer;"><input type="checkbox" value="ko" style="accent-color:#06b6d4;"> KO</label>
-                  <label style="display:flex; align-items:center; gap:3px; font-size:0.73rem; color:#cbd5e1; cursor:pointer;"><input type="checkbox" value="ru" style="accent-color:#06b6d4;"> RU</label>
-                  <label style="display:flex; align-items:center; gap:3px; font-size:0.73rem; color:#cbd5e1; cursor:pointer;"><input type="checkbox" value="pt" style="accent-color:#06b6d4;"> PT</label>
-                  <label style="display:flex; align-items:center; gap:3px; font-size:0.73rem; color:#cbd5e1; cursor:pointer;"><input type="checkbox" value="it" style="accent-color:#06b6d4;"> IT</label>
-                  <label style="display:flex; align-items:center; gap:3px; font-size:0.73rem; color:#cbd5e1; cursor:pointer;"><input type="checkbox" value="ja" style="accent-color:#06b6d4;"> JA</label>
-                  <label style="display:flex; align-items:center; gap:3px; font-size:0.73rem; color:#cbd5e1; cursor:pointer;"><input type="checkbox" value="zh" style="accent-color:#06b6d4;"> ZH</label>
-                  <label style="display:flex; align-items:center; gap:3px; font-size:0.73rem; color:#cbd5e1; cursor:pointer;"><input type="checkbox" value="es" style="accent-color:#06b6d4;"> ES</label>
+                  <label style="display:flex; align-items:center; gap:3px; font-size:0.73rem; color:#cbd5e1; cursor:pointer;"><input type="checkbox" id="tlCb_en" value="en" checked style="accent-color:#06b6d4;"> EN</label>
+                  <label style="display:flex; align-items:center; gap:3px; font-size:0.73rem; color:#cbd5e1; cursor:pointer;"><input type="checkbox" id="tlCb_fr" value="fr" style="accent-color:#06b6d4;"> FR</label>
+                  <label style="display:flex; align-items:center; gap:3px; font-size:0.73rem; color:#cbd5e1; cursor:pointer;"><input type="checkbox" id="tlCb_de" value="de" style="accent-color:#06b6d4;"> DE</label>
+                  <label style="display:flex; align-items:center; gap:3px; font-size:0.73rem; color:#cbd5e1; cursor:pointer;"><input type="checkbox" id="tlCb_ko" value="ko" style="accent-color:#06b6d4;"> KO</label>
+                  <label style="display:flex; align-items:center; gap:3px; font-size:0.73rem; color:#cbd5e1; cursor:pointer;"><input type="checkbox" id="tlCb_ru" value="ru" style="accent-color:#06b6d4;"> RU</label>
+                  <label style="display:flex; align-items:center; gap:3px; font-size:0.73rem; color:#cbd5e1; cursor:pointer;"><input type="checkbox" id="tlCb_pt" value="pt" style="accent-color:#06b6d4;"> PT</label>
+                  <label style="display:flex; align-items:center; gap:3px; font-size:0.73rem; color:#cbd5e1; cursor:pointer;"><input type="checkbox" id="tlCb_it" value="it" style="accent-color:#06b6d4;"> IT</label>
+                  <label style="display:flex; align-items:center; gap:3px; font-size:0.73rem; color:#cbd5e1; cursor:pointer;"><input type="checkbox" id="tlCb_ja" value="ja" style="accent-color:#06b6d4;"> JA</label>
+                  <label style="display:flex; align-items:center; gap:3px; font-size:0.73rem; color:#cbd5e1; cursor:pointer;"><input type="checkbox" id="tlCb_zh" value="zh" style="accent-color:#06b6d4;"> ZH</label>
+                  <label style="display:flex; align-items:center; gap:3px; font-size:0.73rem; color:#cbd5e1; cursor:pointer;"><input type="checkbox" id="tlCb_es" value="es" style="accent-color:#06b6d4;"> ES</label>
+                </div>
+                <!-- Per-language Chatterbox voice grid (shown only when Chatterbox TTS is active) -->
+                <div id="translateLangVoices" style="display:none; margin-top:8px; border-top:1px solid #1e293b; padding-top:8px;">
+                  <div style="font-size:0.65rem; color:#64748b; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:5px;">VOZ POR IDIOMA</div>
+                  <div id="translateLangVoicesGrid" style="display:grid; grid-template-columns: 28px 1fr; gap:3px 6px; align-items:center;"></div>
                 </div>
               </div>
 
