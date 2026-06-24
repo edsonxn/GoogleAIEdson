@@ -3,6 +3,11 @@
 settings.json
 styles.json
 
+# ── Credenciales de YouTube / Google OAuth ────────────────
+youtube_client_secrets.json
+youtube_tokens*.json
+client_secret_*.json
+
 # ── Dependencias ──────────────────────────────────────────
 node_modules/
 npm-debug.log*
