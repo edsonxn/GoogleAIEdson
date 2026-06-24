@@ -26046,6 +26046,18 @@ Do NOT add, remove, or reorder segments. Return exactly ${batch.length} strings.
 OUTPUT ONLY THE JSON ARRAY. No markdown code blocks, no explanation.
 
 ${JSON.stringify(batch)}`;
+        } else if (sameLanguage) {
+            // Same language, no style rewrite: clean up transcription encoding and add natural punctuation.
+            // Whisper often produces Mojibake (e.g. "TenÃ­as" instead of "Tenías") and omits sentence-ending
+            // punctuation mid-segment. The LLM fixes both without changing the meaning or language.
+            prompt = `You are cleaning up an automatic speech recognition transcript in ${langName}.
+Fix any character encoding issues (e.g. "TenÃ­as" → "Tenías", "espaÃ±ol" → "español"), correct obvious transcription errors, and add natural punctuation (periods, commas, question marks) where clearly missing.
+Do NOT change the language, meaning, or add new content. Keep each segment at roughly the same length.
+Return ONLY a valid JSON array of strings. Each element is the cleaned version of the corresponding input segment at the same index.
+Do NOT add, remove, or reorder segments. Return exactly ${batch.length} strings.
+OUTPUT ONLY THE JSON ARRAY. No markdown code blocks, no explanation.
+
+${JSON.stringify(batch)}`;
         } else {
             prompt = `Translate each of the following transcript segments to ${langName}.
 Return ONLY a valid JSON array of strings. Each element is the translation of the corresponding input segment at the same index.
@@ -26072,7 +26084,8 @@ ${JSON.stringify(batch)}`;
         if (translated.length !== batch.length) {
             console.warn(`⚠️ Translation mismatch: got ${translated.length} segments, expected ${batch.length}. Retrying batch...`);
             // Retry once with explicit segment numbering to help the LLM count correctly
-            const retryPrompt = `Translate each numbered segment to ${langName}. Return ONLY a JSON array of exactly ${batch.length} strings in the same order.\nDo NOT merge or split segments. Segment count MUST be exactly ${batch.length}.\nOUTPUT ONLY THE JSON ARRAY.\n\n${batch.map((t, i) => `${i + 1}. ${t}`).join('\n')}`;
+            const retryAction = sameLanguage && !podcastStyle ? 'Clean up encoding/punctuation of' : 'Translate';
+            const retryPrompt = `${retryAction} each numbered segment ${sameLanguage && !podcastStyle ? `in ${langName}` : `to ${langName}`}. Return ONLY a JSON array of exactly ${batch.length} strings in the same order.\nDo NOT merge or split segments. Segment count MUST be exactly ${batch.length}.\nOUTPUT ONLY THE JSON ARRAY.\n\n${batch.map((t, i) => `${i + 1}. ${t}`).join('\n')}`;
             try {
                 let retryText = await generateTextWithLLM(retryPrompt, { provider: llmProvider, model: llmProvider === 'local' ? localModel : (translationModel || GEMINI_TEXT_MODEL), context: 'llm', retries: 2 });
                 retryText = retryText.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?\s*```$/i, '').trim();
@@ -26740,40 +26753,66 @@ app.post('/api/translate-video', upload.fields([{ name: 'video', maxCount: 1 }, 
                 // 1. Traducir segmentos
                 let translatedTexts;
                 const segTransPath = path.join(outputDir, `segments_${lang}.json`);
+                const detectedLang = transcriptionResult.language || null;
+                const isPodcast = req.body.podcastStyle === 'true';
+                const isSameLang = !!(detectedLang && detectedLang === lang);
 
-                if (fs.existsSync(segTransPath)) {
+                // For same-language: always run LLM cleanup (fixes Mojibake encoding + punctuation).
+                // For other languages: use cache if count matches.
+                let prevCachedTexts = null;
+                if (!isSameLang && fs.existsSync(segTransPath)) {
                     translatedTexts = JSON.parse(fs.readFileSync(segTransPath, 'utf8'));
                     if (translatedTexts.length !== transcriptionResult.segments.length) {
                         console.log(`⚠️ Cache de traducción (${translatedTexts.length}) no coincide con segmentos (${transcriptionResult.segments.length}), re-traduciendo...`);
                         translatedTexts = null;
                     }
+                } else if (isSameLang && fs.existsSync(segTransPath)) {
+                    try { prevCachedTexts = JSON.parse(fs.readFileSync(segTransPath, 'utf8')); } catch(e) {}
                 }
                 if (!translatedTexts) {
-                    const detectedLang = transcriptionResult.language || null;
-                    const isPodcast = req.body.podcastStyle === 'true';
-                    if (detectedLang && detectedLang === lang && !isPodcast) {
-                        console.log(`🔄 Idioma detectado (${detectedLang}) coincide con target (${lang}), usando textos originales`);
-                        sendStatus(`Idioma original detectado: ${langNames[lang]}. Usando transcripción original...`, progress);
-                        translatedTexts = transcriptionResult.segments.map(s => s.text);
+                    if (isSameLang && isPodcast) {
+                        console.log(`🎙️ Mismo idioma (${lang}) con estilo podcast activo, reescribiendo...`);
+                        sendStatus(`Reescribiendo en estilo podcast para ${langNames[lang]}...`, progress);
+                    } else if (isSameLang) {
+                        console.log(`🧹 Mismo idioma (${lang}), limpiando transcripción (encoding + puntuación)...`);
+                        sendStatus(`Limpiando transcripción para ${langNames[lang]}...`, progress);
                     } else {
-                        if (detectedLang && detectedLang === lang && isPodcast) {
-                            console.log(`🎙️ Mismo idioma (${lang}) pero estilo podcast activo, reescribiendo...`);
-                            sendStatus(`Reescribiendo en estilo podcast para ${langNames[lang]}...`, progress);
-                        } else {
-                            sendStatus(`Traduciendo segmentos a ${langNames[lang]}...`, progress);
+                        sendStatus(`Traduciendo segmentos a ${langNames[lang]}...`, progress);
+                    }
+                    translatedTexts = await translateSegmentsBatch(
+                        transcriptionResult.segments, lang, langNames[lang],
+                        {
+                            translationModel: req.body.translationModel,
+                            podcastStyle: isPodcast,
+                            sameLanguage: isSameLang,
+                            llmProvider: req.body.llmProvider || 'gemini',
+                            localModel: req.body.localModel || null,
                         }
-                        translatedTexts = await translateSegmentsBatch(
-                            transcriptionResult.segments, lang, langNames[lang],
-                            {
-                                translationModel: req.body.translationModel,
-                                podcastStyle: isPodcast,
-                                sameLanguage: detectedLang && detectedLang === lang,
-                                llmProvider: req.body.llmProvider || 'gemini',
-                                localModel: req.body.localModel || null,
-                            }
-                        );
+                    );
                     }
                     fs.writeFileSync(segTransPath, JSON.stringify(translatedTexts, null, 2));
+                    // If same-language cleanup changed the text vs old cache, invalidate audio segment cache
+                    if (isSameLang && prevCachedTexts) {
+                        const textChanged = prevCachedTexts.some((t, i) => t !== (translatedTexts[i] || ''));
+                        if (textChanged) {
+                            console.log(`🔄 Texto limpiado difiere del cache para ${langNames[lang]}, invalidando cache de audio...`);
+                            const segDir = path.join(outputDir, `segments_${lang}`);
+                            if (fs.existsSync(segDir)) {
+                                try {
+                                    for (const f of fs.readdirSync(segDir)) {
+                                        if (f.startsWith('adj_g') || f.startsWith('raw_g')) {
+                                            fs.unlinkSync(path.join(segDir, f));
+                                        }
+                                    }
+                                } catch(e) { console.warn(`⚠️ No se pudo limpiar cache de audio: ${e.message}`); }
+                            }
+                            // Also remove assembled audio so it gets rebuilt
+                            const oldAssembled = path.join(outputDir, `audio_${lang}.wav`);
+                            if (fs.existsSync(oldAssembled)) try { fs.unlinkSync(oldAssembled); } catch(e) {}
+                        } else {
+                            console.log(`✅ Texto sin cambios para ${langNames[lang]}, manteniendo cache de audio`);
+                        }
+                    }
                 }
 
                 translatedText = translatedTexts.join('\n');
