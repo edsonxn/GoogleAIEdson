@@ -20219,16 +20219,17 @@ async function _loadChatterboxVoicesForTranslate() {
   const sel = document.getElementById('translateChatterboxVoice');
   if (!sel || sel.dataset.loaded) return;
   try {
-    const res  = await fetch('/api/applio-voices');
+    const res  = await fetch('/api/chatterbox-voices');
     const data = await res.json();
-    if (!data.voices?.length) return;
     sel.innerHTML = '<option value="">— Voz de idioma por defecto —</option>';
-    data.voices.forEach(v => {
-      const opt = document.createElement('option');
-      opt.value = v.path || v;
-      opt.textContent = v.displayName || v;
-      sel.appendChild(opt);
-    });
+    if (data.voices?.length) {
+      data.voices.forEach(v => {
+        const opt = document.createElement('option');
+        opt.value = v.path;
+        opt.textContent = v.name;
+        sel.appendChild(opt);
+      });
+    }
     sel.dataset.loaded = '1';
   } catch {}
 }
