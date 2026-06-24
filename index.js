@@ -1777,6 +1777,163 @@ async function startChatterbox() {
   }
 }
 
+// Converts numeric tokens to spoken words so Chatterbox TTS pronounces them correctly.
+function expandNumbersForTTS(text, lang) {
+    if (!text || typeof text !== 'string') return text;
+
+    // Word tables per language
+    const W = {
+        es: {
+            zero:'cero', neg:'menos', percent:'por ciento', join:' y ',
+            thou:'mil', mill:'millón', mills:'millones',
+            ones:['','uno','dos','tres','cuatro','cinco','seis','siete','ocho','nueve',
+                  'diez','once','doce','trece','catorce','quince','dieciséis','diecisiete','dieciocho','diecinueve'],
+            tens:['','diez','veinte','treinta','cuarenta','cincuenta','sesenta','setenta','ochenta','noventa'],
+            hundreds:['','cien','doscientos','trescientos','cuatrocientos','quinientos',
+                      'seiscientos','setecientos','ochocientos','novecientos'],
+            v20:['','veintiuno','veintidós','veintitrés','veinticuatro','veinticinco','veintiséis','veintisiete','veintiocho','veintinueve'],
+        },
+        en: {
+            zero:'zero', neg:'minus', percent:'percent', join:'-',
+            thou:'thousand', mill:'million', mills:'million',
+            ones:['','one','two','three','four','five','six','seven','eight','nine',
+                  'ten','eleven','twelve','thirteen','fourteen','fifteen','sixteen','seventeen','eighteen','nineteen'],
+            tens:['','ten','twenty','thirty','forty','fifty','sixty','seventy','eighty','ninety'],
+        },
+        fr: {
+            zero:'zéro', neg:'moins', percent:'pour cent', join:'-',
+            thou:'mille', mill:'million', mills:'millions',
+            ones:['','un','deux','trois','quatre','cinq','six','sept','huit','neuf',
+                  'dix','onze','douze','treize','quatorze','quinze','seize','dix-sept','dix-huit','dix-neuf'],
+            tens:['','dix','vingt','trente','quarante','cinquante','soixante','soixante','quatre-vingts','quatre-vingts'],
+        },
+        de: {
+            zero:'null', neg:'minus', percent:'Prozent', join:'und',
+            thou:'tausend', mill:'Million', mills:'Millionen',
+            ones:['','ein','zwei','drei','vier','fünf','sechs','sieben','acht','neun',
+                  'zehn','elf','zwölf','dreizehn','vierzehn','fünfzehn','sechzehn','siebzehn','achtzehn','neunzehn'],
+            tens:['','zehn','zwanzig','dreißig','vierzig','fünfzig','sechzig','siebzig','achtzig','neunzig'],
+        },
+        pt: {
+            zero:'zero', neg:'menos', percent:'por cento', join:' e ',
+            thou:'mil', mill:'milhão', mills:'milhões',
+            ones:['','um','dois','três','quatro','cinco','seis','sete','oito','nove',
+                  'dez','onze','doze','treze','quatorze','quinze','dezesseis','dezessete','dezoito','dezenove'],
+            tens:['','dez','vinte','trinta','quarenta','cinquenta','sessenta','setenta','oitenta','noventa'],
+        },
+        it: {
+            zero:'zero', neg:'meno', percent:'per cento', join:'',
+            thou:'mila', mill:'milione', mills:'milioni',
+            ones:['','uno','due','tre','quattro','cinque','sei','sette','otto','nove',
+                  'dieci','undici','dodici','tredici','quattordici','quindici','sedici','diciassette','diciotto','diciannove'],
+            tens:['','dieci','venti','trenta','quaranta','cinquanta','sessanta','settanta','ottanta','novanta'],
+        },
+        ru: { zero:'ноль', neg:'минус', percent:'процентов' },
+    };
+    const w = W[lang] || W['en'];
+    const euroFmt = ['es','fr','de','pt','it','ru'].includes(lang);
+
+    function parseN(s) {
+        if (euroFmt) return parseInt(s.replace(/\./g,'').replace(',','.'), 10);
+        return parseInt(s.replace(/,/g,''), 10);
+    }
+
+    function toW(n) {
+        if (n < 0) return (w.neg||'minus') + ' ' + toW(-n);
+        if (n === 0) return w.zero;
+        if (!w.ones) return String(n).split('').join(' '); // fallback: digit by digit
+        return chunk(n);
+    }
+
+    function chunk(n) {
+        if (n === 0) return '';
+        if (n >= 1e6) {
+            const m = Math.floor(n/1e6), r = n%1e6;
+            const mw = chunk(m) + ' ' + (m===1 ? (w.mill||'million') : (w.mills||'million'));
+            return mw + (r>0 ? ' '+chunk(r) : '');
+        }
+        if (n >= 1000) {
+            const t = Math.floor(n/1000), r = n%1000;
+            const thou = w.thou||'thousand';
+            const tw = (lang==='es' && t===1) ? '' : chunk(t)+' ';
+            return tw + thou + (r>0 ? ' '+b1000(r) : '');
+        }
+        return b1000(n);
+    }
+
+    function b1000(n) {
+        if (n===0) return '';
+        if (n>=100) {
+            const h=Math.floor(n/100), r=n%100;
+            let hw;
+            if (w.hundreds) {
+                hw = w.hundreds[h];
+                if (lang==='es' && h===1 && r>0) hw='ciento';
+            } else {
+                const hword = (lang==='de') ? (w.ones[h]||'')+'hundert' : (w.ones[h]||'')+' hundred';
+                hw = hword;
+            }
+            return hw + (r>0 ? ' '+b100(r) : '');
+        }
+        return b100(n);
+    }
+
+    function b100(n) {
+        if (n===0) return '';
+        if (n<20) return w.ones[n]||String(n);
+        const t=Math.floor(n/10), u=n%10;
+        if (lang==='es' && t===2 && w.v20) return w.v20[u] || (w.tens[t]+(u ? w.join+(w.ones[u]||'') : ''));
+        if (lang==='fr') {
+            if (t===7) return 'soixante-'+(w.ones[10+u]||'');
+            if (t===8) return u>0 ? 'quatre-vingt-'+(w.ones[u]||'') : 'quatre-vingts';
+            if (t===9) return 'quatre-vingt-'+(w.ones[10+u]||'');
+        }
+        if (lang==='de') return u>0 ? (w.ones[u]||'')+w.join+(w.tens[t]||'') : (w.tens[t]||'');
+        if (lang==='it' && u>0) {
+            const tens = (u===1||u===8) ? (w.tens[t]||'').replace(/[aeiou]$/,'') : (w.tens[t]||'');
+            return tens+(w.ones[u]||'');
+        }
+        const tens=w.tens[t]||String(t*10);
+        return u===0 ? tens : tens+w.join+(w.ones[u]||String(u));
+    }
+
+    let result = text;
+
+    // 1. Percentages: "100%" → "cien por ciento"
+    result = result.replace(/(?<![A-Za-z\d])(\d[\d.,]*)[\s]*%/g, (match, s) => {
+        const n = parseN(s);
+        if (!Number.isFinite(n) || n>1e9) return match;
+        return toW(n) + ' ' + (w.percent||'percent');
+    });
+
+    // 2a. European thousands: "5.000", "12.500", "20.000"
+    if (euroFmt) {
+        result = result.replace(/(?<![A-Za-z\d])(\d{1,3}(?:\.\d{3})+)(?![A-Za-z\d,])/g, (match, s) => {
+            const n = parseInt(s.replace(/\./g,''), 10);
+            if (!Number.isFinite(n) || n>1e9) return match;
+            return toW(n);
+        });
+    }
+
+    // 2b. English/standard thousands with comma: "5,000", "12,500"
+    if (!euroFmt) {
+        result = result.replace(/(?<![A-Za-z\d])(\d{1,3}(?:,\d{3})+)(?![A-Za-z\d.])/g, (match, s) => {
+            const n = parseInt(s.replace(/,/g,''), 10);
+            if (!Number.isFinite(n) || n>1e9) return match;
+            return toW(n);
+        });
+    }
+
+    // 3. Remaining plain integers (not adjacent to letters; allow trailing sentence punctuation)
+    result = result.replace(/(?<![A-Za-z\d.,])(\d+)(?![A-Za-z\d]|,|\.\d)/g, (match, s) => {
+        const n = parseInt(s, 10);
+        if (!Number.isFinite(n) || n>1e6) return match;
+        return toW(n);
+    });
+
+    return result;
+}
+
 async function generateChatterboxAudio(text, outputPath, voicePath, exaggeration = 0.5, cfgWeight = 0.5, language = 'es', temperature = 0.8) {
   const body = { text, output: outputPath, exaggeration, cfg_weight: cfgWeight, language, temperature };
   if (voicePath && fs.existsSync(voicePath)) body.voice = voicePath;
@@ -26990,8 +27147,9 @@ app.post('/api/translate-video', upload.fields([{ name: 'video', maxCount: 1 }, 
                                                     const cbExag  = parseFloat(req.body.chatterboxExaggeration) || 0.5;
                                                     const cbCfg   = parseFloat(req.body.chatterboxCfgWeight)   || 0.5;
                                                     const cbTemp  = parseFloat(req.body.chatterboxTemperature)  || 0.8;
+                                                    const cbText = expandNumbersForTTS(group.text, lang);
                                                     console.log(`🗣️ Chatterbox TTS: lang=${lang}, voice=${cbVoice || 'default'}, exag=${cbExag}, cfg=${cbCfg}, temp=${cbTemp}`);
-                                                    await generateChatterboxAudio(group.text, rawPath, cbVoice, cbExag, cbCfg, lang, cbTemp);
+                                                    await generateChatterboxAudio(cbText, rawPath, cbVoice, cbExag, cbCfg, lang, cbTemp);
                                                 } else if (segTtsProvider === 'applio') {
                                                     let isConnected = false;
                                                     try { isConnected = await applioClient.checkConnection(); } catch(e) {}
