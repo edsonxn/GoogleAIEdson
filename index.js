@@ -27820,6 +27820,26 @@ app.get('/oauth2callback', async (req, res) => {
 });
 
 // POST /youtube/upload
+function _sanitizeYtTags(rawTags) {
+    // YouTube limits: each tag ≤ 100 chars, total ≤ 500 chars, no < > chars
+    const clean = rawTags
+        .map(t => t.replace(/[<>]/g, '').trim())
+        .filter(t => t.length > 0 && t.length <= 100);
+
+    const result = [];
+    let total = 0;
+    for (const t of clean) {
+        const add = (result.length > 0 ? 1 : 0) + t.length; // comma+space between tags counts
+        if (total + add > 500) break;
+        result.push(t);
+        total += add;
+    }
+    if (clean.length !== rawTags.length || result.length !== clean.length) {
+        console.log(`⚠️ [YouTube] Tags sanitizados: ${rawTags.length} → ${result.length} (total ${total} chars)`);
+    }
+    return result;
+}
+
 app.post('/youtube/upload', async (req, res) => {
   const { videoPath, folderName, channelId, title, description, tags, privacyStatus, publishAt, categoryId } = req.body;
   if (!videoPath || !title) return res.status(400).json({ error: 'Faltan videoPath y title' });
@@ -27851,7 +27871,7 @@ app.post('/youtube/upload', async (req, res) => {
         snippet: {
           title,
           description: description || '',
-          tags: Array.isArray(tags) ? tags : (tags || '').split(',').map(t => t.trim()).filter(Boolean),
+          tags: _sanitizeYtTags(Array.isArray(tags) ? tags : (tags || '').split(',').map(t => t.trim()).filter(Boolean)),
           categoryId: categoryId || '22',
           defaultLanguage: 'es',
         },
