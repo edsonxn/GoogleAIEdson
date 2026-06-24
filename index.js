@@ -26047,15 +26047,12 @@ OUTPUT ONLY THE JSON ARRAY. No markdown code blocks, no explanation.
 
 ${JSON.stringify(batch)}`;
         } else if (sameLanguage) {
-            // Same language, no style rewrite: clean up transcription encoding and add natural punctuation.
-            // Whisper often produces Mojibake (e.g. "TenÃ­as" instead of "Tenías") and omits sentence-ending
-            // punctuation mid-segment. The LLM fixes both without changing the meaning or language.
-            prompt = `You are cleaning up an automatic speech recognition transcript in ${langName}.
-Fix any character encoding issues (e.g. "TenÃ­as" → "Tenías", "espaÃ±ol" → "español"), correct obvious transcription errors, and add natural punctuation (periods, commas, question marks) where clearly missing.
-Do NOT change the language, meaning, or add new content. Keep each segment at roughly the same length.
-Return ONLY a valid JSON array of strings. Each element is the cleaned version of the corresponding input segment at the same index.
-Do NOT add, remove, or reorder segments. Return exactly ${batch.length} strings.
-OUTPUT ONLY THE JSON ARRAY. No markdown code blocks, no explanation.
+            prompt = `You are fixing encoding errors in an automatic speech recognition transcript in ${langName}.
+Your ONLY jobs are: (1) fix Mojibake encoding (e.g. "TenÃ­as" → "Tenías", "espaÃ±ol" → "español", "Ã©" → "é", "Ã­" → "í"), (2) add sentence-ending punctuation where clearly missing.
+Do NOT change meaning, language, or content. Do NOT split, merge, or reorder segments.
+⚠️ CRITICAL: Return EXACTLY ${batch.length} strings — one string per input. Even if a segment contains multiple sentences, return it as ONE string. Never split a segment into multiple entries.
+Return ONLY a valid JSON array of exactly ${batch.length} strings.
+OUTPUT ONLY THE JSON ARRAY. No markdown, no explanation.
 
 ${JSON.stringify(batch)}`;
         } else {
@@ -26767,7 +26764,17 @@ app.post('/api/translate-video', upload.fields([{ name: 'video', maxCount: 1 }, 
                         translatedTexts = null;
                     }
                 } else if (isSameLang && fs.existsSync(segTransPath)) {
-                    try { prevCachedTexts = JSON.parse(fs.readFileSync(segTransPath, 'utf8')); } catch(e) {}
+                    try {
+                        prevCachedTexts = JSON.parse(fs.readFileSync(segTransPath, 'utf8'));
+                        // If cached count matches transcription exactly, reuse it to skip LLM
+                        if (Array.isArray(prevCachedTexts) && prevCachedTexts.length === transcriptionResult.segments.length) {
+                            console.log(`✅ Cache same-lang (${lang}) coincide (${prevCachedTexts.length} segs), reutilizando sin LLM`);
+                            translatedTexts = prevCachedTexts;
+                            prevCachedTexts = null; // skip invalidation check
+                        } else if (prevCachedTexts.length !== transcriptionResult.segments.length) {
+                            console.log(`⚠️ Cache same-lang (${prevCachedTexts.length}) desajustado vs segmentos (${transcriptionResult.segments.length}), re-limpiando...`);
+                        }
+                    } catch(e) {}
                 }
                 if (!translatedTexts) {
                     if (isSameLang && isPodcast) {
