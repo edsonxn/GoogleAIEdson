@@ -26789,7 +26789,6 @@ app.post('/api/translate-video', upload.fields([{ name: 'video', maxCount: 1 }, 
                             localModel: req.body.localModel || null,
                         }
                     );
-                    }
                     fs.writeFileSync(segTransPath, JSON.stringify(translatedTexts, null, 2));
                     // If same-language cleanup changed the text vs old cache, invalidate audio segment cache
                     if (isSameLang && prevCachedTexts) {
