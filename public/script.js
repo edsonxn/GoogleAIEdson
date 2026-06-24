@@ -20220,17 +20220,12 @@ function onTranslateTtsChange() {
 let _cbVoiceCache = null;
 
 async function _loadChatterboxVoicesForTranslate() {
-  const grid = document.getElementById('translateLangVoicesGrid');
-  if (!grid) return;
-  // Already built
-  if (grid.dataset.loaded) return;
-
+  if (_cbVoiceCache) { _buildLangVoiceGrid(_cbVoiceCache); return; }
   try {
     const res  = await fetch('/api/chatterbox-voices');
     const data = await res.json();
     _cbVoiceCache = data.voices || [];
     _buildLangVoiceGrid(_cbVoiceCache);
-    grid.dataset.loaded = '1';
   } catch(e) { console.error('Error loading Chatterbox voices:', e); }
 }
 
@@ -20243,32 +20238,41 @@ function _buildLangVoiceGrid(voices) {
   const saved = _tlGetLangVoices();
   grid.innerHTML = '';
 
-  _ALL_LANGS.forEach(lang => {
-    // Label
+  const activeLangs = _ALL_LANGS.filter(l => document.getElementById(`tlCb_${l}`)?.checked);
+
+  activeLangs.forEach(lang => {
     const lbl = document.createElement('span');
     lbl.style.cssText = 'font-size:0.72rem; color:#94a3b8; font-weight:600;';
     lbl.textContent = _LANG_LABELS[lang] + ':';
 
-    // Select
     const sel = document.createElement('select');
     sel.id = `tlLangVoice_${lang}`;
     sel.dataset.lang = lang;
     sel.style.cssText = 'padding:3px 6px; background:#1e293b; border:1px solid #334155; border-radius:5px; color:#e2e8f0; font-size:0.72rem; width:100%;';
     sel.innerHTML = '<option value="" data-path="">— default del idioma —</option>';
-    voices.forEach(v => {
+    (voices || _cbVoiceCache || []).forEach(v => {
       const opt = document.createElement('option');
       opt.value = v.file;
       opt.dataset.path = v.path;
       opt.textContent = v.name;
       sel.appendChild(opt);
     });
-    // Restore saved voice for this lang
     if (saved[lang]) sel.value = saved[lang];
     sel.addEventListener('change', () => _tlSaveLangVoice(lang, sel.value));
 
     grid.appendChild(lbl);
     grid.appendChild(sel);
   });
+
+  // Hide the whole section if no languages are checked
+  const section = document.getElementById('translateLangVoices');
+  if (section) section.style.display = activeLangs.length > 0 ? '' : 'none';
+}
+
+function tlOnLangCheckChange() {
+  // Rebuild grid only if Chatterbox is active and voices are loaded
+  const provider = document.querySelector('input[name="brollTtsProvider"]:checked')?.value;
+  if (provider === 'chatterbox' && _cbVoiceCache) _buildLangVoiceGrid(_cbVoiceCache);
 }
 
 function _tlGetLangVoices() {
