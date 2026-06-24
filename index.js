@@ -1784,7 +1784,7 @@ async function generateChatterboxAudio(text, outputPath, voicePath, exaggeration
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(300000) // 5 min max
+    signal: AbortSignal.timeout(3600000) // 60 min max (long sections on CPU can take >5 min)
   });
   const data = await resp.json();
   if (!resp.ok || !data.success) throw new Error(data.error || 'Chatterbox falló');
