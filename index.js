@@ -27821,22 +27821,23 @@ app.get('/oauth2callback', async (req, res) => {
 
 // POST /youtube/upload
 function _sanitizeYtTags(rawTags) {
-    // YouTube limits: each tag ≤ 100 chars, total ≤ 500 chars, no < > chars
+    // YouTube limits: total ≤ 500 chars (sum of all tag lengths, YouTube counts chars not bytes)
+    // Individual tag: strip < > and trailing punctuation, max 100 chars
+    const MAX_TOTAL = 490; // leave margin
     const clean = rawTags
-        .map(t => t.replace(/[<>]/g, '').trim())
-        .filter(t => t.length > 0 && t.length <= 100);
+        .map(t => t.replace(/[<>]/g, '').replace(/[.,;:!?]+$/, '').trim())
+        .filter(t => t.length >= 2 && t.length <= 100);
 
     const result = [];
     let total = 0;
     for (const t of clean) {
-        const add = (result.length > 0 ? 1 : 0) + t.length; // comma+space between tags counts
-        if (total + add > 500) break;
+        // YouTube counts tag characters summed; commas between tags also count
+        const add = (result.length > 0 ? 2 : 0) + t.length; // ", " = 2 chars between tags
+        if (total + add > MAX_TOTAL) break;
         result.push(t);
         total += add;
     }
-    if (clean.length !== rawTags.length || result.length !== clean.length) {
-        console.log(`⚠️ [YouTube] Tags sanitizados: ${rawTags.length} → ${result.length} (total ${total} chars)`);
-    }
+    console.log(`📋 [YouTube] Tags: ${rawTags.length} raw → ${result.length} válidos (${total} chars)`);
     return result;
 }
 
