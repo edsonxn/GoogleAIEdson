@@ -26070,14 +26070,28 @@ ${JSON.stringify(batch)}`;
             throw new Error(`Translation did not return an array (got ${typeof translated})`);
         }
         if (translated.length !== batch.length) {
-            console.warn(`⚠️ Translation mismatch: got ${translated.length} segments, expected ${batch.length}. Reconciling...`);
-            if (translated.length > batch.length) {
-                // LLM split some segments — truncate excess
-                translated = translated.slice(0, batch.length);
-            } else {
-                // LLM merged/dropped segments — pad missing with originals
-                while (translated.length < batch.length) {
-                    translated.push(batch[translated.length]);
+            console.warn(`⚠️ Translation mismatch: got ${translated.length} segments, expected ${batch.length}. Retrying batch...`);
+            // Retry once with explicit segment numbering to help the LLM count correctly
+            const retryPrompt = `Translate each numbered segment to ${langName}. Return ONLY a JSON array of exactly ${batch.length} strings in the same order.\nDo NOT merge or split segments. Segment count MUST be exactly ${batch.length}.\nOUTPUT ONLY THE JSON ARRAY.\n\n${batch.map((t, i) => `${i + 1}. ${t}`).join('\n')}`;
+            try {
+                let retryText = await generateTextWithLLM(retryPrompt, { provider: llmProvider, model: llmProvider === 'local' ? localModel : (translationModel || GEMINI_TEXT_MODEL), context: 'llm', retries: 2 });
+                retryText = retryText.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?\s*```$/i, '').trim();
+                const retried = JSON.parse(retryText);
+                if (Array.isArray(retried) && retried.length === batch.length) {
+                    translated = retried;
+                    console.log(`✅ Retry corrected count to ${batch.length} segments`);
+                } else {
+                    throw new Error(`Retry returned ${retried?.length} segments`);
+                }
+            } catch (retryErr) {
+                console.warn(`⚠️ Retry also failed (${retryErr.message}). Patching individually...`);
+                if (translated.length > batch.length) {
+                    translated = translated.slice(0, batch.length);
+                } else {
+                    // Pad with empty string — TTS will generate silence rather than source language audio
+                    while (translated.length < batch.length) {
+                        translated.push('');
+                    }
                 }
             }
         }
