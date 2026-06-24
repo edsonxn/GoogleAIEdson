@@ -26794,19 +26794,43 @@ app.post('/api/translate-video', upload.fields([{ name: 'video', maxCount: 1 }, 
                     const SEG_BATCH = 9;
                     const voicesList = ['Zephyr','Kore','Leda','Aoede','Callirrhoe','Autonoe','Algieba','Despina','Erinome','Algenib','Rasalgethi','Laomedeia','Achernar','Gacrux','Pulcherrima','Achird','Vindemiatrix','Sadachbia','Sadaltager','Sulafat','Puck','Charon','Fenrir','Orus','Enceladus','Iapetus','Umbriel','Alnilam','Schedar','Zubenelgenubi'];
 
-                    // Build groups, breaking on significant gaps
+                    // Build groups: sentence-aware + duration cap (Option C)
+                    // Rules (first match closes the group):
+                    //   1. Translated text ends with sentence-ending punctuation (.!?…)
+                    //   2. Accumulated duration >= MAX_GROUP_DUR seconds
+                    //   3. Segment count >= GROUP_SIZE * 2 (hard cap to prevent runaway groups)
+                    //   4. Gap to next segment > GAP_BREAK_THRESHOLD (natural long pause)
+                    const SENTENCE_END_RE = /[.!?…。！？]+\s*$/;
                     const GAP_BREAK_THRESHOLD = 1.5;
+                    const MAX_GROUP_DUR = Math.max(6, GROUP_SIZE * 2.5); // ~7-8s default
+                    const MAX_GROUP_SEGS = GROUP_SIZE * 2;
+
                     const groups = [];
                     let gi = 0;
                     while (gi < segs.length) {
-                        let groupEnd = Math.min(gi + GROUP_SIZE, segs.length);
-                        for (let j = gi + 1; j < groupEnd; j++) {
-                            const intraGap = segs[j].start - segs[j - 1].end;
-                            if (intraGap > GAP_BREAK_THRESHOLD) {
-                                groupEnd = j;
-                                break;
-                            }
+                        let groupEnd = gi;
+                        let accDur = 0;
+
+                        while (groupEnd < segs.length) {
+                            const seg = segs[groupEnd];
+                            const segDur = seg.end - seg.start;
+                            const translatedSeg = translatedTexts[groupEnd] || '';
+                            const gapToNext = groupEnd + 1 < segs.length
+                                ? segs[groupEnd + 1].start - seg.end
+                                : 0;
+
+                            accDur += segDur;
+                            groupEnd++;
+
+                            const segsInGroup = groupEnd - gi;
+                            const sentenceComplete = SENTENCE_END_RE.test(translatedSeg.trim());
+                            const durationCap = accDur >= MAX_GROUP_DUR;
+                            const sizeCap = segsInGroup >= MAX_GROUP_SEGS;
+                            const longPause = gapToNext > GAP_BREAK_THRESHOLD;
+
+                            if (sentenceComplete || durationCap || sizeCap || longPause) break;
                         }
+
                         const groupSegs = segs.slice(gi, groupEnd);
                         const groupTexts = groupSegs.map((_, idx) => translatedTexts[gi + idx]).filter(t => t && t.trim());
                         const groupStart = groupSegs[0].start;
@@ -26822,7 +26846,7 @@ app.post('/api/translate-video', upload.fields([{ name: 'video', maxCount: 1 }, 
                         });
                         gi = groupEnd;
                     }
-                    console.log(`📊 ${segs.length} segmentos → ${groups.length} grupos de ~${GROUP_SIZE} para TTS`);
+                    console.log(`📊 ${segs.length} segmentos → ${groups.length} grupos (sentence-aware, max ${MAX_GROUP_DUR.toFixed(1)}s) para TTS`);
 
                     // Count already done for resume
                     let doneCount = 0;
