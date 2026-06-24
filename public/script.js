@@ -4318,7 +4318,7 @@ async function showAutoGenerationComplete() {
       <i class="fas fa-trophy"></i>
       <h3>¡Generación Automática Completada!</h3>
       <p>Se han generado exitosamente ${totalSections} secciones con guión, imágenes y audio.</p>
-      <p>Puedes generar los metadatos de YouTube cuando lo necesites desde el botón "Generar Metadatos".</p>
+      <p>Generando metadatos de YouTube automáticamente...</p>
     </div>
   `;
   
@@ -4376,6 +4376,15 @@ async function showAutoGenerationComplete() {
       try { await generateBrollPreview(); } catch (e) { console.warn('Error auto B-Roll:', e.message); }
     }
   }, 2500);
+
+  // Auto-generate YouTube metadata after completion
+  setTimeout(() => {
+    const metaBtn = document.getElementById('generateYouTubeMetadataBtn');
+    if (metaBtn && !metaBtn.disabled && metaBtn.dataset.metadataExists !== 'true') {
+      console.log('📋 Auto-generando metadatos de YouTube...');
+      metaBtn.click();
+    }
+  }, 4000);
 }
 
 // Función para habilitar/deshabilitar controles
