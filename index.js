@@ -14562,10 +14562,10 @@ app.post('/translate-title', async (req, res) => {
       Do not include markdown formatting or explanations.
     `;
 
-    const { model } = await getGoogleAI(GEMINI_TEXT_MODEL, { context: 'llm' });
+    const { model } = await getGoogleAI('gemini-3.1-flash-lite', { context: 'llm' });
     const result = await model.generateContent(prompt);
     const responseText = result.response.text().replace(/```json|```/g, '').trim();
-    
+
     const translations = JSON.parse(responseText);
     res.json(translations);
 
@@ -27490,7 +27490,7 @@ app.get('/youtube/auth-url', (req, res) => {
   const client = new googleApis.auth.OAuth2(cfg.client_id, cfg.client_secret, YT_REDIRECT_URI);
   const url = client.generateAuthUrl({
     access_type: 'offline',
-    scope: ['https://www.googleapis.com/auth/youtube.upload', 'https://www.googleapis.com/auth/youtube.readonly'],
+    scope: ['https://www.googleapis.com/auth/youtube', 'https://www.googleapis.com/auth/youtube.upload'],
     prompt: 'consent select_account',   // always show account chooser
   });
   res.json({ url });
