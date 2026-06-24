@@ -26856,10 +26856,27 @@ app.post('/api/translate-video', upload.fields([{ name: 'video', maxCount: 1 }, 
                     const SEG_BATCH = segTtsProvider === 'chatterbox' ? 1 : 9;
                     const voicesList = ['Zephyr','Kore','Leda','Aoede','Callirrhoe','Autonoe','Algieba','Despina','Erinome','Algenib','Rasalgethi','Laomedeia','Achernar','Gacrux','Pulcherrima','Achird','Vindemiatrix','Sadachbia','Sadaltager','Sulafat','Puck','Charon','Fenrir','Orus','Enceladus','Iapetus','Umbriel','Alnilam','Schedar','Zubenelgenubi'];
 
+                    // Fix Whisper-split number expressions: e.g. segment ends "active 24" and next
+                    // starts "7. It was" → merge to "active 24/7." so they read naturally in TTS.
+                    for (let _ni = 0; _ni < translatedTexts.length - 1; _ni++) {
+                        const _cur = (translatedTexts[_ni] || '').trimEnd();
+                        const _nxt = (translatedTexts[_ni + 1] || '').trimStart();
+                        const _trailMatch = _cur.match(/(\d{1,4})$/);
+                        const _leadMatch = _nxt.match(/^(\d{1,4})([.!?,]?\s*)/);
+                        if (_trailMatch && _leadMatch) {
+                            const _punct = _leadMatch[2].trim();
+                            translatedTexts[_ni] = _cur + '/' + _leadMatch[1] + (_punct || '');
+                            const _rest = _nxt.slice(_leadMatch[0].length).trimStart();
+                            translatedTexts[_ni + 1] = _rest ? _rest[0].toUpperCase() + _rest.slice(1) : '';
+                        }
+                    }
+
                     // Build groups: sentence-aware + duration cap (Option C)
                     // Rules (first match closes the group):
                     //   1. Translated text ends with sentence-ending punctuation (.!?…)
-                    //   2. Accumulated duration >= MAX_GROUP_DUR seconds
+                    //   2. Accumulated duration >= MAX_GROUP_DUR AND at least 2 segments accumulated
+                    //      (prevents a single long segment from being isolated mid-sentence;
+                    //       hard override if a single segment exceeds 3× MAX_GROUP_DUR)
                     //   3. Segment count >= GROUP_SIZE * 2 (hard cap to prevent runaway groups)
                     //   4. Gap to next segment > GAP_BREAK_THRESHOLD (natural long pause)
                     const SENTENCE_END_RE = /[.!?…。！？]+\s*$/;
@@ -26886,7 +26903,11 @@ app.post('/api/translate-video', upload.fields([{ name: 'video', maxCount: 1 }, 
 
                             const segsInGroup = groupEnd - gi;
                             const sentenceComplete = SENTENCE_END_RE.test(translatedSeg.trim());
-                            const durationCap = accDur >= MAX_GROUP_DUR;
+                            // Allow a single oversized segment to grab its neighbor before capping,
+                            // so mid-sentence cuts ("...where playing 18 hours a day was") can be
+                            // joined with the next segment. Hard override for segments > 3× limit.
+                            const durationCap = accDur >= MAX_GROUP_DUR &&
+                                (segsInGroup >= 2 || accDur > MAX_GROUP_DUR * 3);
                             const sizeCap = segsInGroup >= MAX_GROUP_SEGS;
                             const longPause = gapToNext > GAP_BREAK_THRESHOLD;
 
