@@ -21116,6 +21116,7 @@ async function _ytApplyLocalizations(videoId) {
   }
 
   // Send all localizations in one API call
+  let localizationsOk = false;
   try {
     const locRes  = await fetch('/youtube/add-localizations', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -21124,15 +21125,16 @@ async function _ytApplyLocalizations(videoId) {
     const locData = await locRes.json();
     if (locData.success) {
       for (const t of _ytTranslations) _ytSetLangStatus(t.lang, '✅ listo');
+      localizationsOk = true;
     } else {
       for (const t of _ytTranslations) _ytSetLangStatus(t.lang, '⚠️ ' + (locData.error || 'error'));
     }
   } catch (e) {
-    for (const t of _ytTranslations) _ytSetLangStatus(t.lang, '❌ error');
+    for (const t of _ytTranslations) _ytSetLangStatus(t.lang, '❌ ' + (e.message || 'error'));
   }
 
-  // Show "now upload audio in YouTube Studio" step
-  if (studioStep) {
+  // Show "now upload audio in YouTube Studio" step ONLY if API call succeeded
+  if (localizationsOk && studioStep) {
     if (studioLink) {
       studioLink.href = `https://studio.youtube.com/video/${videoId}/translations`;
     }
@@ -21146,6 +21148,8 @@ async function _ytApplyLocalizations(videoId) {
       ).join('');
     }
     studioStep.style.display = 'block';
+  } else if (!localizationsOk && studioStep) {
+    studioStep.style.display = 'none';
   }
 }
 
