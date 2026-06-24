@@ -14562,9 +14562,12 @@ app.post('/translate-title', async (req, res) => {
       Do not include markdown formatting or explanations.
     `;
 
-    const { model } = await getGoogleAI('gemini-3.1-flash-lite', { context: 'llm' });
-    const result = await model.generateContent(prompt);
-    const responseText = result.response.text().replace(/```json|```/g, '').trim();
+    const rawText = await generateTextWithLLM(prompt, {
+      model: 'gemini-3.1-flash-lite',
+      context: 'llm',
+      retries: 3,
+    });
+    const responseText = rawText.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?\s*```$/i, '').trim();
 
     const translations = JSON.parse(responseText);
     res.json(translations);
