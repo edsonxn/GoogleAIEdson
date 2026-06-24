@@ -21085,15 +21085,29 @@ async function _ytApplyLocalizations(videoId) {
   const mainTagsRaw     = document.getElementById('ytTags')?.value || '';
   const mainTags        = mainTagsRaw.split(',').map(t => t.trim()).filter(Boolean);
 
-  // Translate all in one call to /translate-title (gets titles for all langs at once)
+  // Translate all titles in one call
   let titlesByLang = {};
+  let titleTranslateOk = false;
   try {
     const r = await fetch('/translate-title', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title: mainTitle })
     });
-    titlesByLang = await r.json();
-  } catch {}
+    const tj = await r.json();
+    if (tj && !tj.error && typeof tj === 'object' && Object.keys(tj).length > 0) {
+      titlesByLang = tj;
+      titleTranslateOk = true;
+    } else {
+      console.warn('⚠️ /translate-title devolvió error:', tj?.error || tj);
+      for (const t of _ytTranslations) _ytSetLangStatus(t.lang, '⚠️ error traduciendo título');
+      showNotification('Error traduciendo títulos: ' + (tj?.error || 'respuesta vacía'), 'error');
+      return;
+    }
+  } catch (e) {
+    for (const t of _ytTranslations) _ytSetLangStatus(t.lang, '❌ sin conexión al traducir');
+    showNotification('No se pudo conectar para traducir títulos: ' + e.message, 'error');
+    return;
+  }
 
   // Build localizations array, translating description per language
   const localizations = [];
@@ -21108,8 +21122,14 @@ async function _ytApplyLocalizations(videoId) {
         body: JSON.stringify({ title: translatedTitle, description: mainDescription, tags: mainTags, targetLang: t.lang })
       });
       const metaData = await metaRes.json();
-      if (metaData.success) translatedDescription = metaData.description || mainDescription;
-    } catch {}
+      if (metaData.success) {
+        translatedDescription = metaData.description || mainDescription;
+      } else {
+        console.warn(`⚠️ translate-youtube-metadata falló para ${t.lang}:`, metaData.error);
+      }
+    } catch (e) {
+      console.warn(`⚠️ translate-youtube-metadata excepción para ${t.lang}:`, e.message);
+    }
 
     localizations.push({ lang: t.lang, title: translatedTitle, description: translatedDescription });
     _ytSetLangStatus(t.lang, '⏳ esperando API...');
