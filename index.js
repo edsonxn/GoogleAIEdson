@@ -26789,9 +26789,19 @@ app.post('/api/translate-video', upload.fields([{ name: 'video', maxCount: 1 }, 
                     const segDir = path.join(outputDir, `segments_${lang}`);
                     if (!fs.existsSync(segDir)) fs.mkdirSync(segDir, { recursive: true });
 
+                    // Auto-start Chatterbox server if needed
+                    if (segTtsProvider === 'chatterbox') {
+                        sendStatus(`Iniciando servidor Chatterbox...`, progress);
+                        const cbReady = await startChatterbox();
+                        if (!cbReady) throw new Error('No se pudo iniciar el servidor Chatterbox');
+                        console.log('✅ Chatterbox listo para traducción');
+                    }
+
                     const segs = transcriptionResult.segments;
                     const GROUP_SIZE = Math.max(1, Math.min(12, parseInt(req.body.groupSize) || 3));
-                    const SEG_BATCH = 9;
+                    // Chatterbox has a server-side mutex — only 1 concurrent generation.
+                    // Sending batches in parallel just causes all to fail together.
+                    const SEG_BATCH = segTtsProvider === 'chatterbox' ? 1 : 9;
                     const voicesList = ['Zephyr','Kore','Leda','Aoede','Callirrhoe','Autonoe','Algieba','Despina','Erinome','Algenib','Rasalgethi','Laomedeia','Achernar','Gacrux','Pulcherrima','Achird','Vindemiatrix','Sadachbia','Sadaltager','Sulafat','Puck','Charon','Fenrir','Orus','Enceladus','Iapetus','Umbriel','Alnilam','Schedar','Zubenelgenubi'];
 
                     // Build groups: sentence-aware + duration cap (Option C)
