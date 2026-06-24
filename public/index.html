@@ -1221,6 +1221,9 @@
                     <input type="radio" name="brollTtsProvider" value="google_wavenet" onchange="onTranslateTtsChange()" style="accent-color:#06b6d4;"> Cloud WaveNet
                   </label>
                   <label style="display:flex; align-items:center; gap:4px; font-size:0.73rem; color:#cbd5e1; cursor:pointer; padding:3px 0;">
+                    <input type="radio" name="brollTtsProvider" value="chatterbox" onchange="onTranslateTtsChange()" style="accent-color:#06b6d4;"> Chatterbox
+                  </label>
+                  <label style="display:flex; align-items:center; gap:4px; font-size:0.73rem; color:#cbd5e1; cursor:pointer; padding:3px 0;">
                     <input type="radio" name="brollTtsProvider" value="text_only" onchange="onTranslateTtsChange()" style="accent-color:#06b6d4;"> Solo Texto
                   </label>
                 </div>
@@ -1269,6 +1272,24 @@
                     </label>
                     <label style="display:flex; align-items:center; gap:4px; font-size:0.72rem; color:#94a3b8; cursor:pointer;">
                       <input type="radio" name="brollCloudVoice" value="female" style="accent-color:#06b6d4;"> 👩 Mujer
+                    </label>
+                  </div>
+                </div>
+
+                <!-- Chatterbox Voice (hidden) -->
+                <div id="translateChatterboxDiv" style="display: none;">
+                  <div style="font-size: 0.68rem; color: #64748b; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">VOZ CHATTERBOX</div>
+                  <select id="translateChatterboxVoice" style="width:100%; padding:5px 8px; background:#1e293b; border:1px solid #334155; border-radius:6px; color:#e2e8f0; font-size:0.78rem; margin-bottom:6px;">
+                    <option value="">— Voz de idioma por defecto —</option>
+                  </select>
+                  <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                    <label style="font-size:0.7rem; color:#94a3b8;">Exag
+                      <input type="number" id="translateChatterboxExag" value="0.5" min="0.25" max="2" step="0.05"
+                        style="width:52px; background:#0f172a; border:1px solid #334155; border-radius:4px; color:#e2e8f0; font-size:0.72rem; padding:2px 4px; margin-left:3px;">
+                    </label>
+                    <label style="font-size:0.7rem; color:#94a3b8;">CFG
+                      <input type="number" id="translateChatterboxCfg" value="0.5" min="0.2" max="1" step="0.05"
+                        style="width:52px; background:#0f172a; border:1px solid #334155; border-radius:4px; color:#e2e8f0; font-size:0.72rem; padding:2px 4px; margin-left:3px;">
                     </label>
                   </div>
                 </div>

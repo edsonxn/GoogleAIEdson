@@ -26892,7 +26892,13 @@ app.post('/api/translate-video', upload.fields([{ name: 'video', maxCount: 1 }, 
                                     while (ttsRetries >= 0) {
                                         try {
                                             if (!fs.existsSync(rawPath) || fs.statSync(rawPath).size < 100) {
-                                                if (segTtsProvider === 'applio') {
+                                                if (segTtsProvider === 'chatterbox') {
+                                                    const cbVoice = req.body.chatterboxVoicePath || null;
+                                                    const cbExag  = parseFloat(req.body.chatterboxExaggeration) || 0.5;
+                                                    const cbCfg   = parseFloat(req.body.chatterboxCfgWeight)   || 0.5;
+                                                    console.log(`🗣️ Chatterbox TTS: lang=${lang}, voice=${cbVoice || 'default'}`);
+                                                    await generateChatterboxAudio(group.text, rawPath, cbVoice, cbExag, cbCfg, lang, 0.8);
+                                                } else if (segTtsProvider === 'applio') {
                                                     let isConnected = false;
                                                     try { isConnected = await applioClient.checkConnection(); } catch(e) {}
                                                     if (!isConnected) {
@@ -26902,7 +26908,6 @@ app.post('/api/translate-video', upload.fields([{ name: 'video', maxCount: 1 }, 
                                                     let applioModel = req.body.applioTtsModel || 'fr-FR-RemyMultilingualNeural';
                                                     const isFemaleModel = applioModel.includes('Ava') || applioModel.includes('Emma') || applioModel.includes('Vivienne');
                                                     if (!isFemaleModel) {
-                                                        // Male models: use native-language base for better prosody
                                                         const maleEdgeModels = {
                                                             en: 'en-US-AndrewMultilingualNeural',
                                                             de: 'de-DE-FlorianMultilingualNeural',

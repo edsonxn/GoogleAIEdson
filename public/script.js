@@ -20202,12 +20202,35 @@ function showBrollTranslatePanel(videoFile, folderName, bgMusicFile, bgMusicVolu
 
 function onTranslateTtsChange() {
   const provider = document.querySelector('input[name="brollTtsProvider"]:checked')?.value || 'applio';
-  const applioDiv = document.getElementById('translateApplioVoiceDiv');
-  const googleDiv = document.getElementById('translateGoogleVoiceDiv');
-  const cloudDiv = document.getElementById('translateCloudVoiceDiv');
-  if (applioDiv) applioDiv.style.display = provider === 'applio' ? '' : 'none';
-  if (googleDiv) googleDiv.style.display = (provider === 'google' || provider === 'google_pro') ? '' : 'none';
-  if (cloudDiv) cloudDiv.style.display = (provider === 'google_cloud' || provider === 'google_wavenet') ? '' : 'none';
+  const applioDiv      = document.getElementById('translateApplioVoiceDiv');
+  const googleDiv      = document.getElementById('translateGoogleVoiceDiv');
+  const cloudDiv       = document.getElementById('translateCloudVoiceDiv');
+  const chatterboxDiv  = document.getElementById('translateChatterboxDiv');
+  if (applioDiv)     applioDiv.style.display     = provider === 'applio' ? '' : 'none';
+  if (googleDiv)     googleDiv.style.display     = (provider === 'google' || provider === 'google_pro') ? '' : 'none';
+  if (cloudDiv)      cloudDiv.style.display      = (provider === 'google_cloud' || provider === 'google_wavenet') ? '' : 'none';
+  if (chatterboxDiv) chatterboxDiv.style.display = provider === 'chatterbox' ? '' : 'none';
+
+  // Load Chatterbox voice list on first show
+  if (provider === 'chatterbox') _loadChatterboxVoicesForTranslate();
+}
+
+async function _loadChatterboxVoicesForTranslate() {
+  const sel = document.getElementById('translateChatterboxVoice');
+  if (!sel || sel.dataset.loaded) return;
+  try {
+    const res  = await fetch('/api/applio-voices');
+    const data = await res.json();
+    if (!data.voices?.length) return;
+    sel.innerHTML = '<option value="">— Voz de idioma por defecto —</option>';
+    data.voices.forEach(v => {
+      const opt = document.createElement('option');
+      opt.value = v.path || v;
+      opt.textContent = v.displayName || v;
+      sel.appendChild(opt);
+    });
+    sel.dataset.loaded = '1';
+  } catch {}
 }
 
 async function loadTranslateApplioVoices() {
@@ -20418,6 +20441,9 @@ async function startBrollTranslation() {
   const googleVoice = document.getElementById('translateGoogleVoice')?.value || 'Kore';
   const applioVoice = document.getElementById('translateApplioVoice')?.value || 'logs\\VOCES\\RemyOriginal.pth';
   const cloudVoice = document.querySelector('input[name="brollCloudVoice"]:checked')?.value || 'male';
+  const chatterboxVoicePath = document.getElementById('translateChatterboxVoice')?.value || '';
+  const chatterboxExag = parseFloat(document.getElementById('translateChatterboxExag')?.value) || 0.5;
+  const chatterboxCfg  = parseFloat(document.getElementById('translateChatterboxCfg')?.value)  || 0.5;
   const translationModel = document.querySelector('input[name="brollTranslationModel"]:checked')?.value || 'gemini-3.1-flash-lite';
   const transcriptionMethod = document.querySelector('input[name="brollTranscription"]:checked')?.value || 'whisper';
   const groupSize = document.getElementById('brollGroupSize')?.value || '3';
@@ -20462,6 +20488,9 @@ async function startBrollTranslation() {
     formData.append('applioPitch', '0');
     formData.append('groupSize', groupSize);
     formData.append('endScreenSeconds', endScreenSeconds);
+    formData.append('chatterboxVoicePath', chatterboxVoicePath);
+    formData.append('chatterboxExaggeration', chatterboxExag);
+    formData.append('chatterboxCfgWeight', chatterboxCfg);
     if (podcastStyle) formData.append('podcastStyle', 'true');
     if (keepTemp) formData.append('keepTemp', 'true');
 
