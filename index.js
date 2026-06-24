@@ -2191,9 +2191,9 @@ function getGoogleTTSClient(apiKey) {
   return googleTTSClients.get(apiKey);
 }
 
-// Configurar cliente OpenAI
+// Configurar cliente OpenAI (apiKey puede estar vacío si no se usa OpenAI)
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+  apiKey: process.env.OPENAI_API_KEY || 'sk-not-configured',
 });
 
 // Almacén de conversaciones en memoria (historial por proyecto)
