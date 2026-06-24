@@ -27398,7 +27398,7 @@ app.post('/api/translate-youtube-metadata', async (req, res) => {
   if (!title || !targetLang) return res.status(400).json({ error: 'title y targetLang requeridos' });
 
   const langName = _ytLangNames[targetLang] || targetLang;
-  const prompt = `Translate these YouTube video metadata items to ${langName}. Keep the same energy and style. Adapt SEO naturally.\n\nTitle: "${title}"\nDescription: "${(description||'').slice(0,600)}"\nTags: ${(tags||[]).slice(0,20).join(', ')}\n\nReturn ONLY valid JSON (no markdown, no explanation):\n{"title":"...","description":"...","tags":["...","..."]}`;
+  const prompt = `Translate these YouTube video metadata items to ${langName}. Keep the same energy and style. Adapt SEO naturally.\n\nTitle: "${title}"\nDescription: "${(description||'').slice(0,4800)}"\nTags: ${(tags||[]).slice(0,20).join(', ')}\n\nReturn ONLY valid JSON (no markdown, no explanation):\n{"title":"...","description":"...","tags":["...","..."]}`;
 
   try {
     const rawText = await generateTextWithLLM(prompt, { model: 'gemini-3.1-flash-lite', context: 'llm', retries: 3 });
