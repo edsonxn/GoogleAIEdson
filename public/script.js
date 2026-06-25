@@ -21038,6 +21038,7 @@ function _ytParseMetadata(metadata) {
   for (let line of lines) {
     line = line.trim();
     const N = normalize(line);
+    if (N.includes('FRASES ANCLA') || N.includes('ANCHOR PHRASE')) { section = 'skip'; continue; }
     if (N.includes('TITULOS CLICKBAIT') || N.includes('CLICKBAIT TITLES')) { section = 'titles'; continue; }
     if (N.includes('DESCRIPCION') || N.includes('DESCRIPTION')) { section = 'desc'; continue; }
     if (N.includes('ETIQUETAS') || N.includes('TAGS')) { section = 'tags'; continue; }

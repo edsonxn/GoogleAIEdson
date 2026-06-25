@@ -13778,7 +13778,7 @@ Please generate:
   - Engaging format with emojis${chaptersTimestamps ? `
   - IMPORTANT: At the end of the description, add a blank line and then include the chapter timestamps. Use the provided times but REWRITE the titles to be VERY SHORT (max 6 words). Format: "MM:SS Short Title"` : ''}
 
-3. **TAGS** (comma-separated, max 25 tags, max 450 chars total):
+3. **TAGS** (comma-separated, max 25 tags, max 500 chars of content total):
   MANDATORY STRUCTURE:
   - The 2-3 ANCHOR PHRASES copied EXACTLY (verbatim, word-for-word)
   - 4-5 broad channel/niche tags: "fun facts", "how it works", "explained", "did you know", "science facts"
@@ -13881,7 +13881,7 @@ Por favor genera:
   - Formato atractivo con emojis${chaptersTimestamps ? `
   - IMPORTANTE: Al final de la descripción, añade una línea en blanco y luego incluye los timestamps de capítulos. Usa los tiempos proporcionados pero REESCRIBE los títulos para que sean MUY CORTOS (máximo 6 palabras). Formato: "MM:SS Título Corto"` : ''}
 
-3. **ETIQUETAS** (separadas por comas, máximo 25 etiquetas, máximo 450 caracteres en total):
+3. **ETIQUETAS** (separadas por comas, máximo 25 etiquetas, máximo 500 caracteres de contenido en total):
   ESTRUCTURA OBLIGATORIA:
   - Las 2-3 FRASES ANCLA copiadas EXACTAMENTE (verbatim, palabra por palabra)
   - 4-5 etiquetas amplias de nicho/canal: "datos curiosos", "cómo funciona", "explicado", "ciencia", "lo que no sabías"
@@ -27837,9 +27837,9 @@ app.get('/oauth2callback', async (req, res) => {
 
 // POST /youtube/upload
 function _sanitizeYtTags(rawTags) {
-    // YouTube limits: total ≤ 500 chars (sum of all tag lengths, YouTube counts chars not bytes)
-    // Individual tag: strip < > and trailing punctuation, max 100 chars
-    const MAX_TOTAL = 450; // conservative: YouTube may count quotes+commas in CSV serialization
+    // YouTube API limit: sum of all tag text lengths ≤ 500 chars (separators are NOT counted)
+    // Individual tag: strip < > and trailing punctuation, 2–100 chars each
+    const MAX_TOTAL = 500;
     const clean = rawTags
         .map(t => t.replace(/[<>]/g, '').replace(/[.,;:!?]+$/, '').trim())
         .filter(t => t.length >= 2 && t.length <= 100);
@@ -27847,13 +27847,11 @@ function _sanitizeYtTags(rawTags) {
     const result = [];
     let total = 0;
     for (const t of clean) {
-        // YouTube counts tag characters summed; commas between tags also count
-        const add = (result.length > 0 ? 2 : 0) + t.length; // ", " = 2 chars between tags
-        if (total + add > MAX_TOTAL) break;
+        if (total + t.length > MAX_TOTAL) break;
         result.push(t);
-        total += add;
+        total += t.length;
     }
-    console.log(`📋 [YouTube] Tags: ${rawTags.length} raw → ${result.length} válidos (${total} chars)`);
+    console.log(`📋 [YouTube] Tags: ${rawTags.length} raw → ${result.length} válidos (${total}/500 chars de contenido)`);
     return result;
 }
 
