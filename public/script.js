@@ -21408,4 +21408,155 @@ async function ytStartUpload() {
   }
 }
 
+// ── Config Presets ────────────────────────────────────────────────────────────
+const _CFG_PRESETS_KEY = 'hv_cfg_presets';
+
+function _cfgPresetsRead() {
+  try { return JSON.parse(localStorage.getItem(_CFG_PRESETS_KEY) || '{}'); } catch { return {}; }
+}
+
+function _cfgPresetsWrite(presets) {
+  localStorage.setItem(_CFG_PRESETS_KEY, JSON.stringify(presets));
+}
+
+function _cfgPresetsRefreshDropdown(selectName) {
+  const sel = document.getElementById('cfgPresetSelect');
+  if (!sel) return;
+  const presets = _cfgPresetsRead();
+  const names = Object.keys(presets).sort();
+  sel.innerHTML = '<option value="">-- Seleccionar plantilla --</option>' +
+    names.map(n => `<option value="${n}"${n === selectName ? ' selected' : ''}>${n}</option>`).join('');
+  document.getElementById('cfgPresetDeleteBtn').style.display =
+    (sel.value && presets[sel.value]) ? 'flex' : 'none';
+}
+
+function cfgPresetsOnSelect() {
+  const sel = document.getElementById('cfgPresetSelect');
+  const name = sel?.value || '';
+  const nameInput = document.getElementById('cfgPresetNameInput');
+  if (nameInput && name) nameInput.value = name;
+  const del = document.getElementById('cfgPresetDeleteBtn');
+  if (del) del.style.display = name ? 'flex' : 'none';
+}
+
+function _cfgCaptureAll() {
+  const v = id => { const e = document.getElementById(id); return e ? e.value : null; };
+  const c = id => { const e = document.getElementById(id); return e ? e.checked : false; };
+  const brollMode = document.getElementById('brollModeShorts')?.classList.contains('active') ? 'shorts' : 'normal';
+  let clipMixWeights = null;
+  try { const s = localStorage.getItem('hv_clipMixWeights'); if (s) clipMixWeights = JSON.parse(s); } catch {}
+  let modelChain = null;
+  try { const s = localStorage.getItem('hv_modelChain'); if (s) modelChain = JSON.parse(s); } catch {}
+  return {
+    sectionsNumber: v('sectionsNumber'),
+    minWords: v('minWords'),
+    maxWords: v('maxWords'),
+    styleSelect: v('styleSelect'),
+    llmModelSelect: v('llmModelSelect'),
+    autoGenerateAudio: c('autoGenerateAudio'),
+    voiceSelect: v('voiceSelect'),
+    autoGenerateApplioAudio: c('autoGenerateApplioAudio'),
+    applioVoiceSelect: v('applioVoiceSelect'),
+    autoGenerateQwenAudio: c('autoGenerateQwenAudio'),
+    qwenVoiceSelect: v('qwenVoiceSelect'),
+    autoGenerateChatterboxAudio: c('autoGenerateChatterboxAudio'),
+    brollMaxDuration: v('brollMaxDuration'),
+    brollSearchTerms: v('brollSearchTerms'),
+    brollMaxVideos: v('brollMaxVideos'),
+    brollMaxImages: v('brollMaxImages'),
+    brollResolution: v('brollResolution'),
+    brollMode,
+    brollValidations: v('brollValidations'),
+    brollUseTransitionsToggle: c('brollUseTransitionsToggle'),
+    videoMinClipDuration: v('videoMinClipDuration'),
+    tlStyleContextToggle: c('tlStyleContextToggle'),
+    brollAIStyleInput: v('brollAIStyleInput'),
+    clipMixWeights,
+    modelChain,
+  };
+}
+
+function _cfgApplyAll(cfg) {
+  const set = (id, val) => { if (val == null) return; const e = document.getElementById(id); if (e) e.value = val; };
+  const check = (id, val) => { if (val == null) return; const e = document.getElementById(id); if (e && e.checked !== val) { e.checked = val; e.dispatchEvent(new Event('change')); } };
+
+  set('sectionsNumber', cfg.sectionsNumber);
+  set('minWords', cfg.minWords);
+  set('maxWords', cfg.maxWords);
+  set('styleSelect', cfg.styleSelect);
+  if (cfg.llmModelSelect) { set('llmModelSelect', cfg.llmModelSelect); if (typeof onMainLlmChange === 'function') onMainLlmChange(); }
+
+  check('autoGenerateAudio', cfg.autoGenerateAudio);
+  set('voiceSelect', cfg.voiceSelect);
+  check('autoGenerateApplioAudio', cfg.autoGenerateApplioAudio);
+  set('applioVoiceSelect', cfg.applioVoiceSelect);
+  check('autoGenerateQwenAudio', cfg.autoGenerateQwenAudio);
+  set('qwenVoiceSelect', cfg.qwenVoiceSelect);
+  check('autoGenerateChatterboxAudio', cfg.autoGenerateChatterboxAudio);
+
+  set('brollMaxDuration', cfg.brollMaxDuration);
+  set('brollSearchTerms', cfg.brollSearchTerms);
+  set('brollMaxVideos', cfg.brollMaxVideos);
+  set('brollMaxImages', cfg.brollMaxImages);
+  set('brollResolution', cfg.brollResolution);
+  if (cfg.brollMode && typeof setBrollMode === 'function') setBrollMode(cfg.brollMode);
+  set('brollValidations', cfg.brollValidations);
+  check('brollUseTransitionsToggle', cfg.brollUseTransitionsToggle);
+
+  if (cfg.videoMinClipDuration != null) {
+    const slider = document.getElementById('videoMinClipDuration');
+    if (slider) { slider.value = cfg.videoMinClipDuration; slider.dispatchEvent(new Event('input')); }
+    localStorage.setItem('hv_videoMinClipDuration', cfg.videoMinClipDuration);
+  }
+  check('tlStyleContextToggle', cfg.tlStyleContextToggle);
+  set('brollAIStyleInput', cfg.brollAIStyleInput);
+
+  if (cfg.clipMixWeights) {
+    localStorage.setItem('hv_clipMixWeights', JSON.stringify(cfg.clipMixWeights));
+    if (typeof _updateTriangleUI === 'function') { _clipMixWeights = cfg.clipMixWeights; _updateTriangleUI(cfg.clipMixWeights); }
+  }
+  if (cfg.modelChain) {
+    localStorage.setItem('hv_modelChain', JSON.stringify(cfg.modelChain));
+    if (typeof _renderModelChain === 'function') _renderModelChain();
+  }
+}
+
+function cfgPresetsSave() {
+  const nameInput = document.getElementById('cfgPresetNameInput');
+  const name = nameInput?.value.trim();
+  if (!name) { nameInput?.focus(); return; }
+  const presets = _cfgPresetsRead();
+  presets[name] = _cfgCaptureAll();
+  _cfgPresetsWrite(presets);
+  _cfgPresetsRefreshDropdown(name);
+  if (nameInput) nameInput.value = '';
+  const btn = document.querySelector('.cfg-preset-btn.cfg-preset-save');
+  if (btn) { const orig = btn.innerHTML; btn.innerHTML = '<i class="fas fa-check"></i> Guardado'; setTimeout(() => { btn.innerHTML = orig; }, 1500); }
+}
+
+function cfgPresetsApply() {
+  const sel = document.getElementById('cfgPresetSelect');
+  const name = sel?.value;
+  if (!name) return;
+  const presets = _cfgPresetsRead();
+  const cfg = presets[name];
+  if (!cfg) return;
+  _cfgApplyAll(cfg);
+  const btn = document.querySelector('.cfg-preset-btn:not(.cfg-preset-save):not(.cfg-preset-delete)');
+  if (btn) { const orig = btn.innerHTML; btn.innerHTML = '<i class="fas fa-check"></i> Listo'; setTimeout(() => { btn.innerHTML = orig; }, 1500); }
+}
+
+function cfgPresetsDelete() {
+  const sel = document.getElementById('cfgPresetSelect');
+  const name = sel?.value;
+  if (!name) return;
+  if (!confirm(`¿Eliminar la plantilla "${name}"?`)) return;
+  const presets = _cfgPresetsRead();
+  delete presets[name];
+  _cfgPresetsWrite(presets);
+  _cfgPresetsRefreshDropdown('');
+}
+
+document.addEventListener('DOMContentLoaded', () => _cfgPresetsRefreshDropdown(''));
+
 

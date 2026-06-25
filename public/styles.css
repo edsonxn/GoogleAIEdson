@@ -12651,3 +12651,97 @@ body.prompts-panel-active .container {
 }
 .model-chain-row .chain-btn:hover { color: #94a3b8; background: rgba(255,255,255,0.05); }
 .model-chain-row .chain-btn.chain-remove:hover { color: #f87171; }
+
+/* ── Config Presets Bar ───────────────────────────────────────────────────── */
+#cfgPresetsBar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: linear-gradient(90deg, rgba(17,26,45,0.95), rgba(20,34,60,0.95));
+  border: 1px solid rgba(99,102,241,0.25);
+  border-radius: 10px;
+  padding: 8px 14px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.cfg-preset-select {
+  flex: 1;
+  min-width: 160px;
+  max-width: 280px;
+  background: rgba(9,15,28,0.85);
+  border: 1px solid rgba(99,102,241,0.28);
+  border-radius: 6px;
+  padding: 6px 10px;
+  color: var(--text-primary);
+  font-size: 0.82rem;
+  outline: none;
+  cursor: pointer;
+}
+.cfg-preset-select:focus {
+  border-color: rgba(99,102,241,0.6);
+}
+
+.cfg-preset-name-input {
+  flex: 1;
+  min-width: 140px;
+  max-width: 220px;
+  background: rgba(9,15,28,0.85);
+  border: 1px solid rgba(99,102,241,0.28);
+  border-radius: 6px;
+  padding: 6px 10px;
+  color: var(--text-primary);
+  font-size: 0.82rem;
+  outline: none;
+}
+.cfg-preset-name-input:focus {
+  border-color: rgba(99,102,241,0.6);
+  box-shadow: 0 0 0 3px rgba(99,102,241,0.15);
+}
+.cfg-preset-name-input::placeholder { color: #4b5563; }
+
+.cfg-preset-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(99,102,241,0.35);
+  background: rgba(99,102,241,0.12);
+  color: #a78bfa;
+  font-size: 0.78rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+  white-space: nowrap;
+}
+.cfg-preset-btn:hover {
+  background: rgba(99,102,241,0.25);
+  border-color: rgba(99,102,241,0.6);
+}
+.cfg-preset-btn.cfg-preset-save {
+  border-color: rgba(52,211,153,0.35);
+  background: rgba(52,211,153,0.1);
+  color: #34d399;
+}
+.cfg-preset-btn.cfg-preset-save:hover {
+  background: rgba(52,211,153,0.22);
+  border-color: rgba(52,211,153,0.6);
+}
+.cfg-preset-btn.cfg-preset-delete {
+  border-color: rgba(248,113,113,0.35);
+  background: rgba(248,113,113,0.1);
+  color: #f87171;
+}
+.cfg-preset-btn.cfg-preset-delete:hover {
+  background: rgba(248,113,113,0.22);
+  border-color: rgba(248,113,113,0.6);
+}
+
+.cfg-preset-sep {
+  width: 1px;
+  height: 24px;
+  background: rgba(99,102,241,0.25);
+  flex-shrink: 0;
+  margin: 0 4px;
+}

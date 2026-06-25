@@ -483,6 +483,26 @@
         </div>
       </div>
 
+      <!-- Barra de plantillas de configuración -->
+      <div id="cfgPresetsBar">
+        <i class="fas fa-layer-group" style="color:#a78bfa; flex-shrink:0;"></i>
+        <span style="font-size:0.8rem; color:#94a3b8; white-space:nowrap; flex-shrink:0;">Plantillas:</span>
+        <select id="cfgPresetSelect" class="cfg-preset-select" onchange="cfgPresetsOnSelect()">
+          <option value="">-- Seleccionar plantilla --</option>
+        </select>
+        <button onclick="cfgPresetsApply()" class="cfg-preset-btn" title="Cargar plantilla seleccionada">
+          <i class="fas fa-download"></i> Cargar
+        </button>
+        <div class="cfg-preset-sep"></div>
+        <input type="text" id="cfgPresetNameInput" placeholder="Nombre de plantilla..." class="cfg-preset-name-input">
+        <button onclick="cfgPresetsSave()" class="cfg-preset-btn cfg-preset-save" title="Guardar configuración actual">
+          <i class="fas fa-save"></i> Guardar
+        </button>
+        <button onclick="cfgPresetsDelete()" class="cfg-preset-btn cfg-preset-delete" id="cfgPresetDeleteBtn" style="display:none;" title="Eliminar plantilla seleccionada">
+          <i class="fas fa-trash"></i>
+        </button>
+      </div>
+
       <!-- Grid de configuraciones -->
       <div class="config-grid">
         <!-- Columna 1: Configuración básica -->
