@@ -27883,21 +27883,22 @@ app.get('/oauth2callback', async (req, res) => {
 
 // POST /youtube/upload
 function _sanitizeYtTags(rawTags) {
-    // YouTube API limit: sum of all tag text lengths ≤ 500 chars (separators are NOT counted)
-    // Individual tag: strip < > and trailing punctuation, 2–100 chars each
-    const MAX_TOTAL = 500;
+    // YouTube counts the full comma-joined string: "tag1,tag2,tag3" ≤ 500 chars.
+    // Individual tag limit: 2–100 chars. Strip < > and trailing punctuation.
+    const MAX_JOINED = 500;
     const clean = rawTags
         .map(t => t.replace(/[<>]/g, '').replace(/[.,;:!?]+$/, '').trim())
         .filter(t => t.length >= 2 && t.length <= 100);
 
     const result = [];
-    let total = 0;
+    let joinedLen = 0;
     for (const t of clean) {
-        if (total + t.length > MAX_TOTAL) break;
+        const addLen = t.length + (result.length > 0 ? 1 : 0); // +1 for comma between tags
+        if (joinedLen + addLen > MAX_JOINED) break;
         result.push(t);
-        total += t.length;
+        joinedLen += addLen;
     }
-    console.log(`📋 [YouTube] Tags: ${rawTags.length} raw → ${result.length} válidos (${total}/500 chars de contenido)`);
+    console.log(`📋 [YouTube] Tags: ${rawTags.length} raw → ${result.length} válidos (${joinedLen}/500 chars joined)`);
     return result;
 }
 
