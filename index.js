@@ -5296,7 +5296,7 @@ function buildPreviousContextBlock(normalizedPreviousContext) {
 📚 CONTEXTO DE LAS ÚLTIMAS ${normalizedPreviousContext.length} SECCIONES YA DESARROLLADAS:
 ${lines.join('\n')}
 
-IMPORTANTE: Usa este contexto para mantener continuidad, hacer referencias naturales y evitar repeticiones literales.`;
+⛔ REGLA ABSOLUTA — NO REPETIR IDEAS: Todo lo que aparece en el contexto anterior YA FUE DICHO AL ESPECTADOR. Está TERMINANTEMENTE PROHIBIDO repetir los mismos conceptos, datos, ejemplos, metáforas, afirmaciones o anécdotas, aunque sea con palabras distintas. El espectador acaba de escuchar esas secciones — si repites sus ideas, lo aburres y pierdes credibilidad. Cada sección debe aportar información COMPLETAMENTE NUEVA. Si necesitas hacer una referencia rápida a algo anterior, usa UNA frase corta ("Como vimos antes...") y avanza de inmediato a contenido que el espectador aún no ha escuchado.`;
 }
 
 function buildSectionFocusBlock(topic, currentSection, totalSections, chapterStructure = null, normalizedPreviousContext = []) {
@@ -5407,11 +5407,10 @@ MANTÉN EXACTAMENTE EL MISMO ESTILO PERSONALIZADO: ${customInstructions}
 
 INSTRUCCIONES CRÍTICAS PARA CONTINUIDAD NARRATIVA:
 - Esta es la CONTINUACIÓN de un video que ya comenzó, NO hagas nueva introducción ni saludo, todo es parte del mismo video.
-- Integra de forma natural el contexto provisto arriba y evita repetir datos o situaciones
 - Usa transiciones naturales apropiadas para tu estilo personalizado
-- Refuerza conexiones con los capítulos anteriores de forma implícita, fluyendo en el relato
-- Si necesitas mencionar algo ya dicho, hazlo como referencia rápida y expande con material nuevo
 - PROHIBIDO TERMINANTEMENTE: NO escribas frases como "en la siguiente sección", "en la próxima parte", "continuaremos luego", "en el siguiente video", "nos vemos en la parte X" ni ninguna variante que revele que el contenido está dividido en secciones. El oyente debe sentir que es un relato continuo y fluido.
+
+⛔ NO REPETIR IDEAS — OBLIGATORIO: Esta sección debe presentar ángulos, datos y conceptos que aún NO han sido mencionados. Está PROHIBIDO volver a explicar, reformular o parafrasear ideas ya cubiertas en secciones anteriores. Si el contexto anterior mencionó un dato o concepto, ya lo sabe el espectador — no lo digas de nuevo. Aporta información NUEVA en cada párrafo.
 
 ESTRUCTURA REQUERIDA PARA LA SECCIÓN ${currentSection}:
 - Exactamente 3 párrafos detallados
@@ -5507,12 +5506,11 @@ IMPORTANTE:
 
 INSTRUCCIONES CRÍTICAS PARA CONTINUIDAD NARRATIVA:
 - Esta es la CONTINUACIÓN de un video que ya comenzó, NO hagas nueva introducción o bienvenida
-- NO repitas conceptos, datos o anécdotas ya mencionados en capítulos anteriores
 - CONTINÚA directamente desde donde se quedó la narrativa anterior
 - Usa transiciones naturales como "Ahora bien...", "Continuando con...", "Además de esto...", "Por otro lado..."
-- Haz referencias sutiles al contenido previo cuando sea relevante (ej: "Como vimos anteriormente...", "Retomando ese punto...")
 - EVITA frases como "Bienvenidos", "Hola", "En este video" - ya estamos dentro del video
-- CONSTRUYE sobre la información ya presentada, no la repitas
+
+⛔ NO REPETIR IDEAS — OBLIGATORIO: Esta sección debe presentar ángulos, datos, ejemplos y conceptos que el espectador aún NO ha escuchado. Está TERMINANTEMENTE PROHIBIDO repetir, reformular o parafrasear ideas, cifras, anécdotas o afirmaciones que ya aparecieron en secciones anteriores. Si la sección anterior explicó un concepto, no lo vuelvas a explicar aunque sea con otras palabras. Construye SOBRE lo ya dicho avanzando hacia información nueva — no regresando a lo anterior.
 
 ESTRUCTURA REQUERIDA PARA EL CAPÍTULO ${currentSection}:
 - Exactamente 3 párrafos detallados
@@ -5621,12 +5619,11 @@ Mantén el mismo estilo sarcástico, irónico, con humor negro y groserías.
 
 INSTRUCCIONES CRÍTICAS PARA CONTINUIDAD NARRATIVA:
 - Esta es la CONTINUACIÓN de un video que ya comenzó, NO hagas nueva introducción o bienvenida
-- NO repitas chistes, groserías o referencias ya mencionadas en capítulos anteriores  
 - CONTINÚA directamente desde donde se quedó la narrativa anterior
 - Usa transiciones cómicas naturales apropiadas para el estilo sarcástico
-- Haz referencias humorísticas al contenido previo cuando sea relevante
 - EVITA reiniciar la narrativa - ya estamos dentro del video cómico
-- CONSTRUYE sobre las situaciones ya presentadas, explora nuevos aspectos con humor ácido
+
+⛔ NO REPETIR IDEAS — OBLIGATORIO: Está TERMINANTEMENTE PROHIBIDO repetir los mismos chistes, referencias, datos, situaciones o conceptos que ya aparecieron en capítulos anteriores, aunque sea con otras palabras o diferente tono. El espectador ya los escuchó — repetirlos mata el humor y aburre. Cada párrafo debe aportar ángulos, datos y giros cómicos COMPLETAMENTE NUEVOS que el espectador no ha visto venir.
 
 ESTRUCTURA REQUERIDA PARA EL CAPÍTULO ${currentSection}:
 - Exactamente 3 párrafos detallados
