@@ -21470,6 +21470,11 @@ function _cfgCaptureAll() {
     autoGenerateQwenAudio: c('autoGenerateQwenAudio'),
     qwenVoiceSelect: v('qwenVoiceSelect'),
     autoGenerateChatterboxAudio: c('autoGenerateChatterboxAudio'),
+    chatterboxLanguage: v('chatterboxLanguage'),
+    chatterboxVoiceSelect: v('chatterboxVoiceSelect'),
+    chatterboxExaggeration: v('chatterboxExaggeration'),
+    chatterboxCfgWeight: v('chatterboxCfgWeight'),
+    chatterboxTemperature: v('chatterboxTemperature'),
     brollMaxDuration: v('brollMaxDuration'),
     brollSearchTerms: v('brollSearchTerms'),
     brollMaxVideos: v('brollMaxVideos'),
@@ -21503,6 +21508,43 @@ function _cfgApplyAll(cfg) {
   check('autoGenerateQwenAudio', cfg.autoGenerateQwenAudio);
   set('qwenVoiceSelect', cfg.qwenVoiceSelect);
   check('autoGenerateChatterboxAudio', cfg.autoGenerateChatterboxAudio);
+  set('chatterboxLanguage', cfg.chatterboxLanguage);
+  // Apply Chatterbox sliders immediately (don't need voices loaded)
+  if (cfg.chatterboxExaggeration != null) {
+    set('chatterboxExaggeration', cfg.chatterboxExaggeration);
+    const el = document.getElementById('chatterboxExaggerationLabel');
+    if (el) el.textContent = parseFloat(cfg.chatterboxExaggeration).toFixed(2);
+  }
+  if (cfg.chatterboxCfgWeight != null) {
+    set('chatterboxCfgWeight', cfg.chatterboxCfgWeight);
+    const el = document.getElementById('chatterboxCfgWeightLabel');
+    if (el) el.textContent = parseFloat(cfg.chatterboxCfgWeight).toFixed(2);
+  }
+  if (cfg.chatterboxTemperature != null) {
+    set('chatterboxTemperature', cfg.chatterboxTemperature);
+    const el = document.getElementById('chatterboxTemperatureLabel');
+    if (el) el.textContent = parseFloat(cfg.chatterboxTemperature).toFixed(2);
+  }
+  // Voice select: voices load async — apply after they're available
+  if (cfg.chatterboxVoiceSelect != null) {
+    const applyVoice = () => {
+      const sel = document.getElementById('chatterboxVoiceSelect');
+      if (sel && sel.options.length > 1) {
+        sel.value = cfg.chatterboxVoiceSelect;
+      }
+    };
+    const sel = document.getElementById('chatterboxVoiceSelect');
+    if (sel && sel.options.length > 1) {
+      applyVoice(); // voices already loaded
+    } else {
+      // Poll until voices appear (loadChatterboxVoices is triggered by the checkbox change above)
+      const interval = setInterval(() => {
+        const s = document.getElementById('chatterboxVoiceSelect');
+        if (s && s.options.length > 1) { clearInterval(interval); applyVoice(); }
+      }, 100);
+      setTimeout(() => clearInterval(interval), 5000); // safety: stop after 5s
+    }
+  }
 
   set('brollMaxDuration', cfg.brollMaxDuration);
   set('brollSearchTerms', cfg.brollSearchTerms);
