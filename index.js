@@ -2136,6 +2136,15 @@ app.post('/api/settings/env-config', (req, res) => {
 app.use('/outputs', (req, res, next) => express.static(globalOutputDir)(req, res, next));
 app.use(express.static('public')); // Servir HTML y assets
 
+// Music library: static serve (block meta file)
+const MUSIC_LIBRARY_DIR = path.join(process.cwd(), 'music_library');
+if (!fs.existsSync(MUSIC_LIBRARY_DIR)) fs.mkdirSync(MUSIC_LIBRARY_DIR, { recursive: true });
+const MUSIC_LIBRARY_META = path.join(MUSIC_LIBRARY_DIR, '_library.json');
+app.use('/music_library', (req, res, next) => {
+  if (req.path === '/_library.json') return res.status(403).end();
+  next();
+}, express.static(MUSIC_LIBRARY_DIR));
+
 // Configurar multer para subida de archivos
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
@@ -27942,4 +27951,64 @@ app.post('/youtube/add-localizations', async (req, res) => {
     console.error('[YouTube] Error añadiendo localizaciones:', e.message);
     res.status(500).json({ error: e.message });
   }
+});
+
+// ─────────────────────────────────────────────────────
+// MUSIC LIBRARY  –  CRUD endpoints
+// ─────────────────────────────────────────────────────
+function _musicLibRead() {
+  try { return JSON.parse(fs.readFileSync(MUSIC_LIBRARY_META, 'utf8')); } catch { return []; }
+}
+function _musicLibWrite(lib) {
+  fs.writeFileSync(MUSIC_LIBRARY_META, JSON.stringify(lib, null, 2));
+}
+
+app.get('/api/music-library', (req, res) => {
+  res.json({ success: true, tracks: _musicLibRead() });
+});
+
+app.post('/api/music-library/upload', multer({ dest: path.join(process.cwd(), 'temp') }).single('file'), (req, res) => {
+  try {
+    const { label } = req.body;
+    const file = req.file;
+    if (!file) return res.status(400).json({ error: 'No file' });
+    const safeName = file.originalname.replace(/[^a-zA-Z0-9._\-() ]/g, '_');
+    const dest = path.join(MUSIC_LIBRARY_DIR, safeName);
+    fs.renameSync(file.path, dest);
+    const lib = _musicLibRead();
+    const existing = lib.findIndex(t => t.filename === safeName);
+    if (existing >= 0) lib.splice(existing, 1);
+    lib.push({ filename: safeName, label: label || 'Sin etiqueta', uploadedAt: new Date().toISOString() });
+    _musicLibWrite(lib);
+    console.log(`🎵 [MusicLib] Subida: ${safeName} (${label})`);
+    res.json({ success: true, track: lib[lib.length - 1] });
+  } catch (e) {
+    console.error('[MusicLib] Error upload:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.patch('/api/music-library/:filename', (req, res) => {
+  const { filename } = req.params;
+  const { label } = req.body;
+  const lib = _musicLibRead();
+  const track = lib.find(t => t.filename === filename);
+  if (!track) return res.status(404).json({ error: 'Track not found' });
+  track.label = label;
+  _musicLibWrite(lib);
+  res.json({ success: true });
+});
+
+app.delete('/api/music-library/:filename', (req, res) => {
+  const { filename } = req.params;
+  const lib = _musicLibRead();
+  const idx = lib.findIndex(t => t.filename === filename);
+  if (idx >= 0) lib.splice(idx, 1);
+  _musicLibWrite(lib);
+  try {
+    const fp = path.join(MUSIC_LIBRARY_DIR, filename);
+    if (fs.existsSync(fp)) fs.unlinkSync(fp);
+  } catch {}
+  console.log(`🎵 [MusicLib] Eliminada: ${filename}`);
+  res.json({ success: true });
 });

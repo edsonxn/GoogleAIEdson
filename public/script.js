@@ -18238,6 +18238,322 @@ let _tlBgMusicFile = null;   // File object for background music
 let _tlBgMusicUrl = null;    // Object URL for preview
 let _tlBgMusicAudio = null;  // Audio element for music preview playback
 
+// ─── MUSIC LIBRARY ────────────────────────────────────────────────────────────
+let _musicLibTracks = [];
+let _sectionMusicAssignments = {}; // { [secNum]: { filename, label } }
+let _musicLibPreviewAudio = null;
+let _musicLibPreviewFilename = null;
+
+async function _musicLibLoad() {
+  try {
+    const res = await fetch('/api/music-library');
+    const data = await res.json();
+    if (data.success) _musicLibTracks = data.tracks;
+  } catch (e) {
+    console.warn('[MusicLib] Error cargando biblioteca:', e.message);
+  }
+}
+
+function openMusicLibraryPanel() {
+  _musicLibLoad().then(() => {
+    _renderMusicLibModal();
+    document.getElementById('musicLibraryModal').style.display = 'flex';
+    _initMusicLibDropzone();
+  });
+}
+
+function closeMusicLibraryPanel() {
+  document.getElementById('musicLibraryModal').style.display = 'none';
+  if (_musicLibPreviewAudio) { _musicLibPreviewAudio.pause(); _musicLibPreviewAudio = null; _musicLibPreviewFilename = null; }
+}
+
+function _renderMusicLibModal() {
+  const list = document.getElementById('musicLibList');
+  const countEl = document.getElementById('musicLibCount');
+  if (!list) return;
+  if (countEl) countEl.textContent = `${_musicLibTracks.length} pista${_musicLibTracks.length !== 1 ? 's' : ''}`;
+  if (_musicLibTracks.length === 0) {
+    list.innerHTML = '<div class="music-lib-empty">No hay pistas en la biblioteca. Arrastra archivos de audio para agregarlos.</div>';
+    return;
+  }
+  list.innerHTML = _musicLibTracks.map(t => {
+    const safeId = t.filename.replace(/[^a-zA-Z0-9]/g, '_');
+    return `<div class="music-lib-track" data-filename="${t.filename}">
+      <button class="music-lib-play" onclick="toggleMusicLibPreview('${t.filename}')" title="Reproducir/pausar">
+        <i class="fas fa-play" id="musicLibPlayIcon-${safeId}"></i>
+      </button>
+      <div class="music-lib-info">
+        <span class="music-lib-filename">${t.filename}</span>
+        <input class="music-lib-label-input" value="${t.label.replace(/"/g, '&quot;')}"
+          onblur="updateMusicTrackLabel('${t.filename}', this.value)"
+          onkeydown="if(event.key==='Enter')this.blur()"
+          placeholder="Etiqueta (ej: música de tensión)">
+      </div>
+      <button class="music-lib-delete" onclick="deleteMusicTrack('${t.filename}')" title="Eliminar pista">
+        <i class="fas fa-trash"></i>
+      </button>
+    </div>`;
+  }).join('');
+}
+
+let _musicLibDropzoneInit = false;
+function _initMusicLibDropzone() {
+  if (_musicLibDropzoneInit) return;
+  const zone = document.getElementById('musicLibDropzone');
+  if (!zone) return;
+  _musicLibDropzoneInit = true;
+
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+  zone.addEventListener('drop', async e => {
+    e.preventDefault();
+    zone.classList.remove('dragover');
+    const files = Array.from(e.dataTransfer.files).filter(f => /\.(mp3|wav|ogg|flac|m4a|aac|opus|wma)$/i.test(f.name));
+    if (files.length === 0) { showNotification('Solo se aceptan archivos de audio (mp3, wav, ogg, flac, m4a, aac)', 'error'); return; }
+    const label = document.getElementById('musicLibLabelInput')?.value.trim() || 'Sin etiqueta';
+    for (const file of files) await _uploadMusicTrack(file, label);
+    if (document.getElementById('musicLibLabelInput')) document.getElementById('musicLibLabelInput').value = '';
+    await _musicLibLoad();
+    _renderMusicLibModal();
+  });
+
+  zone.addEventListener('click', () => {
+    const inp = document.createElement('input');
+    inp.type = 'file';
+    inp.accept = 'audio/*,.mp3,.wav,.ogg,.flac,.m4a,.aac,.opus,.wma';
+    inp.multiple = true;
+    inp.onchange = async e => {
+      const label = document.getElementById('musicLibLabelInput')?.value.trim() || 'Sin etiqueta';
+      for (const file of Array.from(e.target.files)) await _uploadMusicTrack(file, label);
+      if (document.getElementById('musicLibLabelInput')) document.getElementById('musicLibLabelInput').value = '';
+      await _musicLibLoad();
+      _renderMusicLibModal();
+    };
+    inp.click();
+  });
+}
+
+async function _uploadMusicTrack(file, label) {
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('label', label);
+  try {
+    const res = await fetch('/api/music-library/upload', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!data.success) showNotification('Error subiendo pista: ' + data.error, 'error');
+    else showNotification(`✓ "${file.name}" agregado como "${label}"`, 'success');
+  } catch {
+    showNotification('Error subiendo pista', 'error');
+  }
+}
+
+async function deleteMusicTrack(filename) {
+  if (!confirm(`¿Eliminar "${filename}" de la biblioteca?`)) return;
+  if (_musicLibPreviewFilename === filename && _musicLibPreviewAudio) {
+    _musicLibPreviewAudio.pause(); _musicLibPreviewAudio = null; _musicLibPreviewFilename = null;
+  }
+  await fetch(`/api/music-library/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+  // Remove from section assignments
+  for (const sec of Object.keys(_sectionMusicAssignments)) {
+    if (_sectionMusicAssignments[sec].filename === filename) delete _sectionMusicAssignments[sec];
+  }
+  await _musicLibLoad();
+  _renderMusicLibModal();
+  if (typeof renderBrollTimeline === 'function' && _brollPreviewSections?.length) renderBrollTimeline();
+}
+
+async function updateMusicTrackLabel(filename, label) {
+  const track = _musicLibTracks.find(t => t.filename === filename);
+  if (track) track.label = label;
+  // Also update section assignments that use this file
+  for (const sec of Object.values(_sectionMusicAssignments)) {
+    if (sec.filename === filename) sec.label = label;
+  }
+  await fetch(`/api/music-library/${encodeURIComponent(filename)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ label })
+  });
+}
+
+function toggleMusicLibPreview(filename) {
+  const safeId = filename.replace(/[^a-zA-Z0-9]/g, '_');
+  const icon = document.getElementById('musicLibPlayIcon-' + safeId);
+
+  if (_musicLibPreviewFilename === filename && _musicLibPreviewAudio) {
+    _musicLibPreviewAudio.pause();
+    _musicLibPreviewAudio = null;
+    _musicLibPreviewFilename = null;
+    if (icon) icon.className = 'fas fa-play';
+    return;
+  }
+
+  // Stop previous
+  if (_musicLibPreviewAudio) {
+    _musicLibPreviewAudio.pause();
+    document.querySelectorAll('[id^="musicLibPlayIcon-"]').forEach(i => i.className = 'fas fa-play');
+  }
+
+  const url = `/music_library/${encodeURIComponent(filename)}`;
+  _musicLibPreviewAudio = new Audio(url);
+  _musicLibPreviewFilename = filename;
+  _musicLibPreviewAudio.play().catch(() => showNotification('No se pudo reproducir: ' + filename, 'error'));
+  if (icon) icon.className = 'fas fa-pause';
+  _musicLibPreviewAudio.onended = () => {
+    _musicLibPreviewFilename = null;
+    _musicLibPreviewAudio = null;
+    if (icon) icon.className = 'fas fa-play';
+  };
+}
+
+// ─── SECTION MUSIC AUTO-ASSIGNMENT ────────────────────────────────────────────
+
+function _musicDetectTone(text) {
+  const s = (text || '').toLowerCase();
+  const map = [
+    { keywords: ['terror', 'miedo', 'horror', 'oscuro', 'sombr', 'monstruo', 'sangre', 'aterrador', 'espeluznante'], tone: 'terror' },
+    { keywords: ['tensi', 'suspenso', 'misterio', 'intriga', 'peligro', 'alarma', 'secreto', 'incertidumbre', 'thriller'], tone: 'tensión' },
+    { keywords: ['comedia', 'gracioso', 'divertido', 'chiste', 'humor', 'risa', 'cómic', 'absurd', 'graciosamente'], tone: 'comedia' },
+    { keywords: ['acción', 'batalla', 'lucha', 'velocidad', 'adrenalina', 'explosión', 'combate', 'épico', 'guerra'], tone: 'acción' },
+    { keywords: ['triste', 'melancolía', 'llanto', 'pérdida', 'dolor', 'nostalgia', 'soledad', 'abandono'], tone: 'tristeza' },
+    { keywords: ['alegría', 'felicidad', 'celebración', 'victoria', 'éxito', 'amor', 'romance', 'bonito', 'maravilloso'], tone: 'alegría' },
+    { keywords: ['relajante', 'tranquilo', 'sereno', 'calma', 'meditación', 'paz', 'naturaleza', 'suave'], tone: 'relajante' },
+    { keywords: ['misterioso', 'enigma', 'extraño', 'raro', 'paranormal', 'sobrenatural', 'fenómeno'], tone: 'misterioso' },
+    { keywords: ['épic', 'grandioso', 'majestuoso', 'orquestal', 'poderoso', 'imponente', 'cinematográfico'], tone: 'épico' },
+  ];
+
+  let bestTone = null, bestScore = 0;
+  for (const { keywords, tone } of map) {
+    const score = keywords.filter(k => s.includes(k)).length;
+    if (score > bestScore) { bestScore = score; bestTone = tone; }
+  }
+  return bestTone;
+}
+
+function _musicMatchToTone(tone) {
+  if (!tone || _musicLibTracks.length === 0) return _musicLibTracks[0] || null;
+  const tLow = tone.toLowerCase();
+  // Try direct substring match in label
+  const direct = _musicLibTracks.find(t => t.label.toLowerCase().includes(tLow));
+  if (direct) return direct;
+  // Cross-word match
+  const toneWords = tLow.split(/\s+/);
+  let best = null, bestScore = 0;
+  for (const track of _musicLibTracks) {
+    const labelWords = track.label.toLowerCase().split(/[\s,]+/);
+    const score = toneWords.filter(w => labelWords.some(lw => lw.includes(w) || w.includes(lw))).length;
+    if (score > bestScore) { bestScore = score; best = track; }
+  }
+  return best || _musicLibTracks[Math.floor(Math.random() * _musicLibTracks.length)];
+}
+
+async function autoAssignSectionMusic() {
+  if (_musicLibTracks.length === 0) {
+    await _musicLibLoad();
+    if (_musicLibTracks.length === 0) {
+      showNotification('La biblioteca musical está vacía. Abre la Biblioteca Musical y agrega pistas primero.', 'warning');
+      return;
+    }
+  }
+  if (!_brollPreviewSections || _brollPreviewSections.length === 0) {
+    showNotification('No hay secciones en el timeline', 'warning');
+    return;
+  }
+
+  let assigned = 0;
+  for (const sec of _brollPreviewSections) {
+    const scriptText = sec.script || sec.nombre || '';
+    const tone = _musicDetectTone(scriptText);
+    const track = _musicMatchToTone(tone);
+    if (track) {
+      _sectionMusicAssignments[sec.secNum] = { filename: track.filename, label: track.label };
+      assigned++;
+    }
+  }
+
+  showNotification(`🎵 Música asignada a ${assigned} sección${assigned !== 1 ? 'es' : ''}`, 'success');
+  renderBrollTimeline();
+}
+
+function openSectionMusicPicker(secNum, anchorEl) {
+  // Remove existing
+  const existing = document.getElementById('sectionMusicPicker');
+  if (existing) { existing.remove(); if (existing.dataset.secNum == secNum) return; }
+
+  if (_musicLibTracks.length === 0) {
+    showNotification('La biblioteca musical está vacía. Agrega pistas primero.', 'warning');
+    return;
+  }
+
+  const current = _sectionMusicAssignments[secNum]?.filename;
+  const picker = document.createElement('div');
+  picker.id = 'sectionMusicPicker';
+  picker.dataset.secNum = secNum;
+  picker.className = 'sec-music-picker';
+  picker.innerHTML = `
+    <div class="sec-music-picker-header">
+      <span><i class="fas fa-music"></i> Música para SEC ${secNum}</span>
+      <button onclick="document.getElementById('sectionMusicPicker')?.remove()"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="sec-music-picker-list">
+      <div class="sec-music-picker-item ${!current ? 'selected' : ''}"
+        onclick="assignSectionMusic(${secNum}, null, null)">
+        <i class="fas fa-ban" style="color:#f87171"></i>
+        <span>Sin música</span>
+      </div>
+      ${_musicLibTracks.map(t => `
+        <div class="sec-music-picker-item ${current === t.filename ? 'selected' : ''}"
+          onclick="assignSectionMusic(${secNum}, '${t.filename.replace(/'/g, "\\'")}', '${t.label.replace(/'/g, "\\'")}')">
+          <button class="sec-music-picker-play" onclick="event.stopPropagation(); toggleMusicLibPreview('${t.filename.replace(/'/g, "\\'")}')">
+            <i class="fas fa-play"></i>
+          </button>
+          <div class="sec-music-picker-info">
+            <span class="sec-music-picker-label">${t.label}</span>
+            <span class="sec-music-picker-file">${t.filename}</span>
+          </div>
+          ${current === t.filename ? '<i class="fas fa-check sec-music-picker-check"></i>' : ''}
+        </div>
+      `).join('')}
+    </div>
+  `;
+
+  document.body.appendChild(picker);
+
+  // Position relative to anchor
+  if (anchorEl) {
+    const rect = anchorEl.getBoundingClientRect();
+    const pickerH = 320;
+    const top = (rect.bottom + pickerH > window.innerHeight) ? (rect.top - pickerH) : rect.bottom + 6;
+    picker.style.top = Math.max(10, top) + 'px';
+    picker.style.left = Math.max(10, Math.min(rect.left, window.innerWidth - 300)) + 'px';
+  } else {
+    picker.style.top = '50%';
+    picker.style.left = '50%';
+    picker.style.transform = 'translate(-50%,-50%)';
+  }
+
+  setTimeout(() => {
+    document.addEventListener('click', function _closePicker(e) {
+      if (!picker.contains(e.target) && !e.target.closest('.tl-sec-music-badge')) {
+        picker.remove();
+        document.removeEventListener('click', _closePicker);
+      }
+    });
+  }, 50);
+}
+
+function assignSectionMusic(secNum, filename, label) {
+  if (filename) {
+    _sectionMusicAssignments[secNum] = { filename, label };
+  } else {
+    delete _sectionMusicAssignments[secNum];
+  }
+  document.getElementById('sectionMusicPicker')?.remove();
+  if (_musicLibPreviewAudio) { _musicLibPreviewAudio.pause(); _musicLibPreviewAudio = null; _musicLibPreviewFilename = null; }
+  renderBrollTimeline();
+}
+// ──────────────────────────────────────────────────────────────────────────────
+
 function getVideoConfig() {
   return {
     maxImagesPerSection: parseInt(document.getElementById('videoMaxImagesPerSection')?.value) || 0,
@@ -18726,6 +19042,7 @@ function renderBrollTimeline() {
     const sec = _brollPreviewSections[si];
 
     // Section divider
+    const _secMusic = _sectionMusicAssignments[sec.secNum];
     html += `<div class="tl-sec-divider">
       <div class="tl-sec-divider-line"></div>
       <span class="tl-sec-divider-label">SEC ${sec.secNum}</span>
@@ -18733,6 +19050,12 @@ function renderBrollTimeline() {
         <i class="fas fa-quote-right"></i>
       </button>
       <div class="tl-sec-divider-line"></div>
+    </div>
+    <div class="tl-sec-music-badge ${_secMusic ? 'has-music' : ''}" data-sec="${sec.secNum}"
+      onclick="openSectionMusicPicker(${sec.secNum}, this)">
+      <i class="fas fa-${_secMusic ? 'music' : 'plus-circle'}"></i>
+      <span>${_secMusic ? _secMusic.label : 'Asignar música'}</span>
+      ${_secMusic ? `<button class="tl-sec-music-remove" onclick="event.stopPropagation(); assignSectionMusic(${sec.secNum}, null, null)" title="Quitar música"><i class="fas fa-times"></i></button>` : ''}
     </div>`;
 
     // Clips for this section
