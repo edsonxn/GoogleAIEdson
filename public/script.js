@@ -18244,7 +18244,7 @@ let _sectionMusicAssignments = {}; // { [secNum]: { filename, label } }
 let _musicLibPreviewAudio = null;
 let _musicLibPreviewFilename = null;
 let _sectionMusicAudio = null;     // Audio playing during timeline preview for the current section
-let _sectionMusicVolume = 0.40;    // Default 40%
+let _sectionMusicVolume = 0.10;    // Default 10%
 let _sectionMusicCurrentSec = null;
 
 async function _musicLibLoad() {
@@ -20045,6 +20045,7 @@ function bindVideoHandlers(video, audio, audioOffset, loading, isContinuous) {
     if (!_brollIsAutoAdvancing) {
       if (audio) audio.pause();
       if (_tlBgMusicAudio) _tlBgMusicAudio.pause();
+      if (_sectionMusicAudio) _sectionMusicAudio.pause();
     }
   };
   video.onplay = () => {
@@ -20053,6 +20054,7 @@ function bindVideoHandlers(video, audio, audioOffset, loading, isContinuous) {
       audio.play().catch(() => {});
     }
     if (_tlBgMusicAudio && _tlBgMusicUrl) _tlBgMusicAudio.play().catch(() => {});
+    if (_sectionMusicAudio && _sectionMusicCurrentSec != null) _sectionMusicAudio.play().catch(() => {});
   };
   video.onerror = () => { if (loading) loading.classList.remove('active'); };
 }
