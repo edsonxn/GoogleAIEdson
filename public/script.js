@@ -18243,6 +18243,9 @@ let _musicLibTracks = [];
 let _sectionMusicAssignments = {}; // { [secNum]: { filename, label } }
 let _musicLibPreviewAudio = null;
 let _musicLibPreviewFilename = null;
+let _sectionMusicAudio = null;     // Audio playing during timeline preview for the current section
+let _sectionMusicVolume = 0.40;    // Default 40%
+let _sectionMusicCurrentSec = null;
 
 async function _musicLibLoad() {
   try {
@@ -18460,19 +18463,51 @@ async function autoAssignSectionMusic() {
     return;
   }
 
+  const btn = document.getElementById('tlAutoMusicBtn');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Analizando...'; }
+
+  try {
+    const res = await fetch('/api/music-library/auto-assign', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folderName: _brollPreviewFolderName, tracks: _musicLibTracks })
+    });
+    const data = await res.json();
+
+    if (!data.success) {
+      // Fallback to local keyword matching
+      console.warn('[MusicLib] LLM assign failed, using local matching:', data.error);
+      _localMusicAutoAssign();
+      return;
+    }
+
+    let assigned = 0;
+    for (const [secNumStr, track] of Object.entries(data.assignments)) {
+      _sectionMusicAssignments[parseInt(secNumStr)] = track;
+      assigned++;
+    }
+
+    showNotification(`🎵 Música asignada a ${assigned} sección${assigned !== 1 ? 'es' : ''} con IA`, 'success');
+  } catch (e) {
+    console.warn('[MusicLib] Error LLM assign, usando matching local:', e.message);
+    _localMusicAutoAssign();
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-magic"></i> Auto-música'; }
+    renderBrollTimeline();
+  }
+}
+
+function _localMusicAutoAssign() {
   let assigned = 0;
   for (const sec of _brollPreviewSections) {
-    const scriptText = sec.script || sec.nombre || '';
-    const tone = _musicDetectTone(scriptText);
+    const tone = _musicDetectTone(sec.nombre || '');
     const track = _musicMatchToTone(tone);
     if (track) {
       _sectionMusicAssignments[sec.secNum] = { filename: track.filename, label: track.label };
       assigned++;
     }
   }
-
   showNotification(`🎵 Música asignada a ${assigned} sección${assigned !== 1 ? 'es' : ''}`, 'success');
-  renderBrollTimeline();
 }
 
 function openSectionMusicPicker(secNum, anchorEl) {
@@ -19876,6 +19911,11 @@ function selectBrollClip(flatIdx) {
     refreshPoolGrid('section');
   }
 
+  // Switch section music when section changes
+  if (item.secNum !== _sectionMusicCurrentSec) {
+    switchSectionMusicForPreview(item.secNum);
+  }
+
   playBrollClipPreview(item);
 }
 
@@ -21086,6 +21126,50 @@ function startMusicPreview() {
 
 function stopMusicPreview() {
   if (_tlBgMusicAudio) _tlBgMusicAudio.pause();
+  stopSectionMusicPreview();
+}
+
+function updateSecMusicVolume(val) {
+  _sectionMusicVolume = parseInt(val) / 100;
+  const lbl = document.getElementById('tlSecMusicVolumeLabel');
+  if (lbl) lbl.textContent = val + '%';
+  if (_sectionMusicAudio) _sectionMusicAudio.volume = _sectionMusicVolume;
+}
+
+function stopSectionMusicPreview() {
+  if (_sectionMusicAudio) { _sectionMusicAudio.pause(); _sectionMusicAudio.currentTime = 0; }
+  _sectionMusicCurrentSec = null;
+  const lbl = document.getElementById('tlSecMusicCurrentLabel');
+  if (lbl) lbl.textContent = '—';
+}
+
+function switchSectionMusicForPreview(secNum) {
+  const assignment = _sectionMusicAssignments[secNum];
+
+  // Same section already playing → keep going
+  if (_sectionMusicCurrentSec === secNum && _sectionMusicAudio && !_sectionMusicAudio.paused) return;
+
+  // Stop previous
+  if (_sectionMusicAudio) { _sectionMusicAudio.pause(); _sectionMusicAudio.currentTime = 0; }
+
+  const lbl = document.getElementById('tlSecMusicCurrentLabel');
+
+  if (!assignment) {
+    _sectionMusicCurrentSec = null;
+    if (lbl) lbl.textContent = '—';
+    return;
+  }
+
+  _sectionMusicCurrentSec = secNum;
+  if (lbl) lbl.textContent = assignment.label;
+
+  if (!_sectionMusicAudio) {
+    _sectionMusicAudio = new Audio();
+    _sectionMusicAudio.loop = true;
+  }
+  _sectionMusicAudio.src = `/music_library/${encodeURIComponent(assignment.filename)}`;
+  _sectionMusicAudio.volume = _sectionMusicVolume;
+  _sectionMusicAudio.play().catch(e => console.warn('[SecMusic] play error:', e.message));
 }
 
 let _swellAnimFrame = null;

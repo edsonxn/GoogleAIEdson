@@ -28012,3 +28012,80 @@ app.delete('/api/music-library/:filename', (req, res) => {
   console.log(`🎵 [MusicLib] Eliminada: ${filename}`);
   res.json({ success: true });
 });
+
+app.post('/api/music-library/auto-assign', async (req, res) => {
+  try {
+    const { folderName, tracks } = req.body;
+    if (!folderName || !Array.isArray(tracks) || tracks.length === 0) {
+      return res.status(400).json({ error: 'folderName y tracks[] requeridos' });
+    }
+
+    const projectPath = resolveProjectPath(folderName);
+    if (!projectPath) return res.status(404).json({ error: 'Proyecto no encontrado' });
+
+    // Read script files for each section
+    const sections = [];
+    const folderBaseName = path.basename(projectPath);
+    const items = fs.readdirSync(projectPath).sort();
+    for (const item of items) {
+      if (!item.startsWith('seccion_')) continue;
+      const secNum = parseInt(item.replace('seccion_', ''));
+      if (isNaN(secNum)) continue;
+      const secDir = path.join(projectPath, item);
+
+      // Try canonical script filename first, then any .txt file
+      let scriptText = '';
+      const canonical = path.join(secDir, `${folderBaseName}_seccion_${secNum}_guion.txt`);
+      if (fs.existsSync(canonical)) {
+        scriptText = fs.readFileSync(canonical, 'utf8');
+      } else {
+        const txts = fs.readdirSync(secDir).filter(f => f.endsWith('_guion.txt') || f.endsWith('_script.txt'));
+        if (txts.length) scriptText = fs.readFileSync(path.join(secDir, txts[0]), 'utf8');
+      }
+
+      if (scriptText.trim()) {
+        sections.push({ secNum, script: scriptText.replace(/\s+/g, ' ').trim().slice(0, 600) });
+      }
+    }
+
+    if (sections.length === 0) {
+      return res.status(404).json({ error: 'No se encontraron guiones. Genera el contenido primero.' });
+    }
+
+    const labelList = tracks.map(t => `- "${t.label}" → archivo: ${t.filename}`).join('\n');
+    const scriptList = sections.map(s => `=== SEC ${s.secNum} ===\n${s.script}`).join('\n\n');
+
+    const prompt = `Eres un editor de video experto en música. Debes asignar la pista musical más adecuada a cada sección de un guión.
+
+PISTAS DISPONIBLES EN LA BIBLIOTECA:
+${labelList}
+
+GUIONES DE LAS SECCIONES:
+${scriptList}
+
+INSTRUCCIONES:
+- Analiza el tono emocional de cada sección
+- Asigna la pista cuya etiqueta mejor describa ese tono
+- Si ninguna encaja perfectamente, elige la más cercana
+- Responde SOLO con JSON sin markdown, sin explicaciones:
+{"assignments":{"1":"archivo.mp3","2":"otro.mp3"}}
+Usa exactamente los nombres de archivo que aparecen en la lista.`;
+
+    console.log(`🎵 [MusicLib] Auto-asignando con LLM para ${sections.length} secciones, ${tracks.length} pistas`);
+    const llmReply = await generateTextWithLLM(prompt, { context: 'llm', retries: 2 });
+    const jsonStr = llmReply.replace(/```json\n?|```\n?/g, '').trim();
+    const parsed = JSON.parse(jsonStr);
+
+    const assignments = {};
+    for (const [secStr, filename] of Object.entries(parsed.assignments || {})) {
+      const track = tracks.find(t => t.filename === filename);
+      if (track) assignments[parseInt(secStr)] = track;
+    }
+
+    console.log(`🎵 [MusicLib] Asignadas ${Object.keys(assignments).length}/${sections.length} secciones`);
+    res.json({ success: true, assignments });
+  } catch (e) {
+    console.error('[MusicLib] Error auto-assign:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});

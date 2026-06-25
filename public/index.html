@@ -1669,6 +1669,17 @@
               <span id="tlMusicVolumeLabel">13%</span>
             </div>
           </div>
+          <!-- Section Music Volume -->
+          <div class="tl-sec-music-vol-bar" id="tlSecMusicVolBar">
+            <i class="fas fa-headphones" style="color:#fbbf24; font-size:0.8rem; flex-shrink:0;"></i>
+            <span class="tl-sec-music-vol-label">Música por sección:</span>
+            <span id="tlSecMusicCurrentLabel" class="tl-sec-music-current">—</span>
+            <div class="tl-music-volume">
+              <i class="fas fa-volume-down"></i>
+              <input type="range" id="tlSecMusicVolume" min="0" max="100" value="40" oninput="updateSecMusicVolume(this.value)">
+              <span id="tlSecMusicVolumeLabel">40%</span>
+            </div>
+          </div>
         </div>
 
         <!-- Panel de B-Roll -->
