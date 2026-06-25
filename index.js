@@ -2136,14 +2136,54 @@ app.post('/api/settings/env-config', (req, res) => {
 app.use('/outputs', (req, res, next) => express.static(globalOutputDir)(req, res, next));
 app.use(express.static('public')); // Servir HTML y assets
 
-// Music library: static serve (block meta file)
+// Music library: proper range-request streaming handler
 const MUSIC_LIBRARY_DIR = path.join(process.cwd(), 'music_library');
 if (!fs.existsSync(MUSIC_LIBRARY_DIR)) fs.mkdirSync(MUSIC_LIBRARY_DIR, { recursive: true });
 const MUSIC_LIBRARY_META = path.join(MUSIC_LIBRARY_DIR, '_library.json');
-app.use('/music_library', (req, res, next) => {
-  if (req.path === '/_library.json') return res.status(403).end();
-  next();
-}, express.static(MUSIC_LIBRARY_DIR));
+
+const _MUSIC_MIME = {
+  '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg',
+  '.flac': 'audio/flac', '.m4a': 'audio/mp4', '.aac': 'audio/aac',
+  '.opus': 'audio/ogg; codecs=opus', '.wma': 'audio/x-ms-wma',
+};
+
+app.get('/music_library/:filename', (req, res) => {
+  const filename = decodeURIComponent(req.params.filename);
+  if (filename === '_library.json' || filename.includes('..')) return res.status(403).end();
+
+  const filepath = path.join(MUSIC_LIBRARY_DIR, filename);
+  if (!fs.existsSync(filepath)) return res.status(404).end();
+
+  const stat = fs.statSync(filepath);
+  const fileSize = stat.size;
+  const mime = _MUSIC_MIME[path.extname(filename).toLowerCase()] || 'audio/mpeg';
+  const rangeHeader = req.headers.range;
+
+  if (rangeHeader) {
+    const [startStr, endStr] = rangeHeader.replace(/bytes=/, '').split('-');
+    const start = parseInt(startStr, 10) || 0;
+    const end = endStr ? Math.min(parseInt(endStr, 10), fileSize - 1) : fileSize - 1;
+
+    if (start > fileSize - 1) {
+      return res.status(416).set('Content-Range', `bytes */${fileSize}`).end();
+    }
+
+    res.writeHead(206, {
+      'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+      'Accept-Ranges': 'bytes',
+      'Content-Length': end - start + 1,
+      'Content-Type': mime,
+    });
+    fs.createReadStream(filepath, { start, end }).pipe(res);
+  } else {
+    res.writeHead(200, {
+      'Content-Length': fileSize,
+      'Content-Type': mime,
+      'Accept-Ranges': 'bytes',
+    });
+    fs.createReadStream(filepath).pipe(res);
+  }
+});
 
 // Configurar multer para subida de archivos
 const storage = multer.diskStorage({
