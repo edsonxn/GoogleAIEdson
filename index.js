@@ -2785,74 +2785,14 @@ async function generateYouTubeMetadataForProject(projectState) {
     
     console.log(`🎨 Usando estilo de miniatura: ${thumbnailStyle}`);
     
-    // Generar prompt para metadatos
-    const prompt = `
-Basándote en el siguiente tema y guión completo del video, genera metadata optimizada para YouTube:
-
-**TEMA:** ${projectState.topic}
-
-**GUIÓN COMPLETO:**
-${fullScript}
-
-Por favor genera:
-
-1. **10 TÍTULOS CLICKBAIT** (cada uno en una línea, numerados):
-   - REGLA PRINCIPAL: Determina si el video habla de UN SOLO TEMA/OBJETO/EVENTO específico o si es una LISTA de cosas.
-   
-   **Si es UN SOLO TEMA** (la mayoría de los casos): Usa títulos estilo narrativo-provocador con palabras en MAYÚSCULAS para el gancho emocional:
-   - Estructura: "[Sujeto específico] [VERBO IMPACTANTE en mayúsculas] [consecuencia o complemento]"
-   - Ejemplos:
-     * "Como Nintendo hizo el PEOR ACCESORIO que EMPEORABA LOS JUEGOS"
-     * "La NES tenia un PUERTO SECRETO para APOSTAR"
-     * "¿Que paso con THX? El sistema de sonido que REVENTABA OIDOS"
-     * "Cómo UNA SOLA habilidad ROMPIÓ raids enteras en WoW"
-     * "¿Por qué los jugadores ODIAN estas razas jugables?"
-     * "Este objeto ARRUINÓ la economía de todo un servidor"
-   - Usa 2-4 palabras en MAYÚSCULAS por título (las más impactantes/emocionales).
-   - Sé ESPECÍFICO al tema real del video, no genérico.
-   
-   **Si es una LISTA de cosas**: Usa formato con número:
-   - Estructura: "Los/Las [Número] [Adjetivo IMPACTANTE] [Sujeto] que [ACCIÓN en mayúsculas]"
-   - Ejemplos: "Los 5 Glitches que DESTRUYERON speedruns enteros", "Las 3 Armas PROHIBIDAS que Nadie Debería Usar"
-   
-   - Máximo 15 palabras, mínimo 8.
-   - NUNCA hagas todos los títulos con formato de lista si el video no es una lista.
-
-2. **DESCRIPCIÓN PARA VIDEO** (optimizada para SEO):
-   - Entre 150-300 palabras
-   - Incluye palabras clave relevantes del tema
-   - Menciona el contenido principal del video
-   - Incluye call-to-action para suscribirse
-   - Formato atractivo con emojis
-
-3. **CAPÍTULOS / LÍNEA DE TIEMPO** (timestamps):
-   - Genera una lista de tiempos estimados y títulos para los capítulos del video.
-   - IMPORTANTE: Los títulos deben ser MUY CORTOS (máximo 6 palabras).
-   - Usa el formato "00:00 Título".
-
-4. **25 ETIQUETAS** (separadas por comas):
-   - Palabras clave relacionadas al tema
-   - Tags populares del nicho correspondiente
-   - Términos de búsqueda relevantes
-
-5. **5 PROMPTS PARA MINIATURAS DE YOUTUBE** (cada uno en una línea, numerados):
-   
-   FORMATO OBLIGATORIO - DEBES SEGUIR ESTA ESTRUCTURA EXACTA PARA CADA UNO DE LOS 5 PROMPTS:
-   
-   "Miniatura de YouTube 16:9 mostrando [descripción visual muy detallada del contenido relacionado al tema, mínimo 15 palabras] con texto superpuesto '[frase clickbait específica relacionada al contenido]' con el texto aplicando el siguiente estilo: ${thumbnailInstructions}"
-   
-   REGLAS ESTRICTAS - NO GENERAR PROMPTS CORTOS O INCOMPLETOS:
-   - CADA prompt debe tener mínimo 25 palabras de descripción visual
-   - CADA prompt debe incluir una frase clickbait específica entre comillas
-   - CADA prompt debe terminar con la frase completa del estilo
-   - NO generar prompts como "el texto con contorno negro" - ESO ESTÁ PROHIBIDO
-   - TODOS los prompts deben seguir el formato completo
-
-REGLAS ESTRICTAS:
-- EXACTAMENTE 5 prompts numerados del 1 al 5
-- Cada prompt debe incluir la frase completa del estilo al final
-- NO hacer referencias a estilos anteriores
-`;
+    // Generar prompt para metadatos (reutiliza el mismo prompt que el endpoint principal)
+    const prompt = buildYouTubeMetadataPrompt({
+      topic: projectState.topic,
+      fullScript,
+      thumbnailInstructions,
+      targetLanguage: 'es',
+      chaptersTimestamps: ''
+    });
 
     // Llamar a la IA para generar metadatos
     console.log(`🤖 Enviando request a Gemini para generar metadatos...`);
@@ -13808,27 +13748,44 @@ IMPORTANT:
 **FULL SCRIPT:**
 ${fullScript}
 
+━━━ SEO STRATEGY: TRIPLED KEYWORDS (CRITICAL FOR RANKING) ━━━
+Before generating anything, choose 2-3 "anchor phrases" — the EXACT multi-word phrases people type in YouTube search.
+Rules for anchor phrases:
+- Must be LONG-TAIL (3-6 words), conversational, not academic
+- Good: "why do fingers wrinkle in water", "how jet engines work", "what happens when you eat"
+- Bad: "physiology", "evolutionary adaptation", "thermodynamics"
+These anchor phrases MUST appear VERBATIM (exact string match, same words in same order) in:
+  1. The TITLE (at least 1 anchor phrase)
+  2. The FIRST 2 LINES of the description (all anchor phrases used naturally)
+  3. The TAGS list (each anchor phrase as its own tag, copied exactly)
+This is the #1 SEO factor: YouTube scores "tripled keywords" — same phrase in all 3 places.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 Please generate:
 
 1. **10 CLICKBAIT TITLES** (one per line, numbered):
   - Use curiosity driven phrases.
+  - At least one title must contain an anchor phrase VERBATIM.
   - If the content is a list (e.g. 5 items), the title MUST include the number.
   - Structure: "The [Number] [Adjective] [Subject] in [Topic/Game]". Example: "The 5 Hardest Weapons to Get in World of Warcraft".
   - Mention the specific game/topic explicitly.
   - Maximum 12 words, minimum 6.
 
-2. **VIDEO DESCRIPTION** (SEO optimised):
-  - Between 150-300 words
-  - Include relevant keywords from the topic
-  - Mention the main content of the video
-  - Add a call-to-action to subscribe
+2. **VIDEO DESCRIPTION** (SEO optimised, 150-300 words):
+  - FIRST LINE: Must contain anchor phrase 1 EXACTLY as written. Example: "Have you ever wondered [ANCHOR PHRASE 1]?"
+  - SECOND LINE: Must naturally include anchor phrase 2 (if any).
+  - Then: mention main video content, relevant keywords, call-to-action to subscribe.
   - Engaging format with emojis${chaptersTimestamps ? `
   - IMPORTANT: At the end of the description, add a blank line and then include the chapter timestamps. Use the provided times but REWRITE the titles to be VERY SHORT (max 6 words). Format: "MM:SS Short Title"` : ''}
 
-3. **25 TAGS** (comma-separated):
-  - Keywords related to the topic
-  - Popular tags for the niche
-  - Relevant search terms
+3. **TAGS** (comma-separated, max 25 tags, max 450 chars total):
+  MANDATORY STRUCTURE:
+  - The 2-3 ANCHOR PHRASES copied EXACTLY (verbatim, word-for-word)
+  - 4-5 broad channel/niche tags: "fun facts", "how it works", "explained", "did you know", "science facts"
+  - 8-10 long-tail search phrases (3-6 words, how people actually search)
+  - 5-6 specific topic terms for this exact video
+  - AVOID single-word academic terms with huge competition and low volume
+  - Every tag must be unique (no repetitions)
 
 4. **5 PROMPTS FOR YOUTUBE THUMBNAILS** (one per line, numbered):
 
@@ -13843,6 +13800,11 @@ Please generate:
   - ALL prompts must strictly follow the full format
 
 OUTPUT FORMAT (use these exact Spanish headings):
+**FRASES ANCLA:**
+1. [anchor phrase 1]
+2. [anchor phrase 2]
+3. [anchor phrase 3]
+
 **TÍTULOS CLICKBAIT:**
 1. [título]
 2. [título]
@@ -13875,11 +13837,25 @@ IMPORTANTE:
 **GUIÓN COMPLETO:**
 ${fullScript}
 
+━━━ ESTRATEGIA SEO: "TRIPLED KEYWORDS" (CRÍTICO PARA RANKING) ━━━
+Antes de generar cualquier otra cosa, elige 2-3 "frases ancla" — las frases EXACTAS de múltiples palabras que la gente realmente escribe en YouTube.
+Reglas para las frases ancla:
+- Deben ser LONG-TAIL (3-6 palabras), coloquiales y concretas, NO términos académicos
+- Buenas: "por qué se arrugan los dedos en el agua", "cómo funciona un motor a reacción", "qué pasa si comes"
+- Malas: "fisiología", "adaptación evolutiva", "termodinámica", "neurociencia"
+Estas frases ancla DEBEN aparecer IDÉNTICAS (string match exacto, mismas palabras en el mismo orden) en:
+  1. El TÍTULO (al menos 1 frase ancla)
+  2. Las PRIMERAS 2 LÍNEAS de la descripción (todas las frases ancla usadas de forma natural)
+  3. Las ETIQUETAS (cada frase ancla como etiqueta propia, copiada exactamente)
+Este es el factor SEO #1: YouTube puntúa las "palabras triplicadas" — misma frase en los 3 lugares.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 Por favor genera:
 
 1. **10 TÍTULOS CLICKBAIT** (cada uno en una línea, numerados):
+  - Al menos UN título debe contener una frase ancla VERBATIM (copiada exactamente).
   - REGLA PRINCIPAL: Determina si el video habla de UN SOLO TEMA/OBJETO/EVENTO específico o si es una LISTA de cosas.
-  
+
   **Si es UN SOLO TEMA** (la mayoría de los casos): Usa títulos estilo narrativo-provocador con palabras en MAYÚSCULAS para el gancho emocional:
   - Estructura: "[Sujeto específico] [VERBO IMPACTANTE en mayúsculas] [consecuencia o complemento]"
   - Ejemplos:
@@ -13890,39 +13866,42 @@ Por favor genera:
     * "¿Por qué los jugadores ODIAN estas razas jugables?"
   - Usa 2-4 palabras en MAYÚSCULAS por título (las más impactantes/emocionales).
   - Sé ESPECÍFICO al tema real del video, no genérico.
-  
+
   **Si es una LISTA de cosas**: Usa formato con número:
   - Estructura: "Los/Las [Número] [Adjetivo IMPACTANTE] [Sujeto] que [ACCIÓN en mayúsculas]"
   - Ejemplos: "Los 5 Glitches que DESTRUYERON speedruns enteros"
-  
+
   - Máximo 15 palabras, mínimo 8.
   - NUNCA hagas todos los títulos con formato de lista si el video no es explícitamente una lista.
 
-2. **DESCRIPCIÓN PARA VIDEO** (optimizada para SEO):
-  - Entre 150-300 palabras
-  - Incluye palabras clave relevantes del tema
-  - Menciona el contenido principal del video
-  - Incluye call-to-action para suscribirse
+2. **DESCRIPCIÓN PARA VIDEO** (optimizada para SEO, 150-300 palabras):
+  - PRIMERA LÍNEA: Debe contener la frase ancla #1 EXACTAMENTE tal como fue escrita. Ejemplo: "¿Alguna vez te preguntaste [FRASE ANCLA 1]?"
+  - SEGUNDA LÍNEA: Debe incluir la frase ancla #2 de forma natural (si existe).
+  - Luego: contenido principal del video, keywords relevantes, call-to-action para suscribirse.
   - Formato atractivo con emojis${chaptersTimestamps ? `
   - IMPORTANTE: Al final de la descripción, añade una línea en blanco y luego incluye los timestamps de capítulos. Usa los tiempos proporcionados pero REESCRIBE los títulos para que sean MUY CORTOS (máximo 6 palabras). Formato: "MM:SS Título Corto"` : ''}
 
-3. **25 ETIQUETAS** (separadas por comas):
-  - Palabras clave relacionadas al tema
-  - Tags populares del nicho correspondiente
-  - Términos de búsqueda relevantes
+3. **ETIQUETAS** (separadas por comas, máximo 25 etiquetas, máximo 450 caracteres en total):
+  ESTRUCTURA OBLIGATORIA:
+  - Las 2-3 FRASES ANCLA copiadas EXACTAMENTE (verbatim, palabra por palabra)
+  - 4-5 etiquetas amplias de nicho/canal: "datos curiosos", "cómo funciona", "explicado", "ciencia", "lo que no sabías"
+  - 8-10 frases long-tail de búsqueda (3-6 palabras, cómo la gente realmente busca)
+  - 5-6 términos específicos del tema concreto de este video
+  - EVITA términos académicos de una sola palabra con alta competencia y bajo volumen de búsqueda
+  - Cada etiqueta debe ser única (sin repeticiones)
 
 4. **5 PROMPTS PARA MINIATURAS DE YOUTUBE** (cada uno en una línea, numerados):
-   
+
   FORMATO OBLIGATORIO - DEBES SEGUIR ESTA ESTRUCTURA EXACTA PARA CADA UNO DE LOS 5 PROMPTS:
-   
+
   "Miniatura de YouTube 16:9 mostrando [descripción visual muy detallada del contenido relacionado al tema, mínimo 25 palabras]. Alta calidad, resolución 8k, iluminación cinematográfica. IMPORTANTE: La imagen NO debe contener ningún texto, letras ni palabras."
-   
+
   REGLAS ESTRICTAS - NO GENERAR PROMPTS CORTOS O INCOMPLETOS:
   - CADA prompt debe tener mínimo 25 palabras de descripción visual
   - NO incluyas instrucciones de texto superpuesto.
   - La imagen debe ser totalmente limpia de texto.
   - TODOS los prompts deben seguir el formato completo
-   
+
   EJEMPLO DE FORMATO CORRECTO (SEGUIR EXACTAMENTE ESTA ESTRUCTURA):
   1. Miniatura de YouTube 16:9 mostrando a Link adulto con expresión de shock mirando directamente a la cámara mientras sostiene la Master Sword brillante, con el Castillo de Hyrule destruido de fondo y llamas rojas. El rostro de Link debe mostrar sorpresa extrema con ojos muy abiertos con texto superpuesto "¡ZELDA ESTÁ MUERTA!" con el texto aplicando el siguiente estilo: ${thumbnailInstructions}
 
@@ -13931,7 +13910,7 @@ REGLAS ESTRICTAS:
 - Cada prompt debe incluir la frase completa del estilo al final
 - NO hacer referencias a estilos anteriores
 - Descripción visual específica y detallada en cada uno
-IMPORTANTE: 
+IMPORTANTE:
 - Genera EXACTAMENTE 5 prompts completos, numerados del 1 al 5
 - Cada prompt debe ser una oración completa y detallada (mínimo 25 palabras)
 - SIEMPRE incluye la frase completa del estilo al final de cada prompt
@@ -13941,6 +13920,11 @@ IMPORTANTE:
 - Si un prompt sale corto, reescríbelo completo
 
 Formato de respuesta:
+**FRASES ANCLA:**
+1. [frase ancla 1]
+2. [frase ancla 2]
+3. [frase ancla 3]
+
 **TÍTULOS CLICKBAIT:**
 1. [título]
 2. [título]
@@ -13954,7 +13938,7 @@ tag1, tag2, tag3, ...
 
 **PROMPTS PARA MINIATURAS:**
 1. [prompt completo para miniatura]
-2. [prompt completo para miniatura]  
+2. [prompt completo para miniatura]
 3. [prompt completo para miniatura]
 4. [prompt completo para miniatura]
 5. [prompt completo para miniatura]

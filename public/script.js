@@ -9177,6 +9177,12 @@ function showYouTubeMetadataResults(metadata, topic) {
       </div>
       
       <div class="youtube-metadata-content">
+        ${sections.anchorPhrases && sections.anchorPhrases.length > 0 ? `
+        <div class="anchor-phrases-bar">
+          <span class="anchor-phrases-label"><i class="fas fa-key"></i> Frases ancla:</span>
+          ${sections.anchorPhrases.map(p => `<span class="anchor-phrase-chip">${p}</span>`).join('')}
+        </div>
+        ` : ''}
         <div class="metadata-section collapsible">
           <div class="section-header" onclick="toggleMetadataSection(this)">
             <h3><i class="fas fa-fire"></i> Titulos Clickbait</h3>
@@ -9408,22 +9414,28 @@ function copyDescTranslation(langCode) {
 function parseMetadata(metadata) {
   const lines = metadata.split('\n');
   let currentSection = '';
+  let anchorPhrases = [];
   let titles = [];
   let description = '';
   let tags = [];
   let thumbnailPrompts = [];
-  
-  // Helper to normalize text for comparison (remove accents)
+
   const normalize = (text) => {
-    return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
+    return text.normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase();
   };
 
   for (let line of lines) {
     line = line.trim();
     const upperLine = line.toUpperCase();
     const normalizedLine = normalize(line);
-    
+
     if (
+      normalizedLine.includes('FRASES ANCLA') ||
+      upperLine.includes('ANCHOR PHRASE')
+    ) {
+      currentSection = 'anchors';
+      continue;
+    } else if (
       normalizedLine.includes('TITULOS CLICKBAIT') ||
       upperLine.includes('CLICKBAIT TITLES')
     ) {
@@ -9450,36 +9462,33 @@ function parseMetadata(metadata) {
       currentSection = 'thumbnails';
       continue;
     }
-    
-    if (currentSection === 'titles' && line && !line.startsWith('**')) {
-      // Remover numeración al inicio (1., 2., etc.)
-      const cleanTitle = line.replace(/^\d+\.\s*/, '');
-      if (cleanTitle) {
-        titles.push(cleanTitle);
-      }
+
+    if (currentSection === 'anchors' && line && !line.startsWith('**')) {
+      const clean = line.replace(/^\d+\.\s*/, '').replace(/^\*+/, '').trim();
+      if (clean) anchorPhrases.push(clean);
+    } else if (currentSection === 'titles' && line && !line.startsWith('**')) {
+      const cleanTitle = line.replace(/^d+.s*/, '');
+      if (cleanTitle) titles.push(cleanTitle);
     } else if (currentSection === 'description' && line && !line.startsWith('**')) {
       description += line + '\n';
     } else if (currentSection === 'tags' && line && !line.startsWith('**')) {
-      // Separar por comas y limpiar
       const lineTags = line.split(',').map(tag => tag.trim()).filter(tag => tag);
       tags.push(...lineTags);
     } else if (currentSection === 'thumbnails' && line && !line.startsWith('**')) {
-      // Remover numeración al inicio (1., 2., etc.)
-      const cleanPrompt = line.replace(/^\d+\.\s*/, '');
-      if (cleanPrompt) {
-        thumbnailPrompts.push(cleanPrompt);
-      }
+      const cleanPrompt = line.replace(/^d+.s*/, '');
+      if (cleanPrompt) thumbnailPrompts.push(cleanPrompt);
     }
   }
-  
+
   const tagsString = tags.join(', ');
-  
+
   return {
-    titles: titles.slice(0, 10), // Máximo 10 títulos
+    anchorPhrases: anchorPhrases.slice(0, 3),
+    titles: titles.slice(0, 10),
     description: description.trim(),
-    tags: tags.slice(0, 25), // Máximo 25 etiquetas
+    tags: tags.slice(0, 25),
     tagsString: tagsString,
-    thumbnailPrompts: thumbnailPrompts.slice(0, 5) // Máximo 5 prompts
+    thumbnailPrompts: thumbnailPrompts.slice(0, 5)
   };
 }
 

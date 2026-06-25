@@ -12745,3 +12745,36 @@ body.prompts-panel-active .container {
   flex-shrink: 0;
   margin: 0 4px;
 }
+
+/* ── Anchor Phrases Bar (tripled keywords) ──────────────────────────────────── */
+.anchor-phrases-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 14px;
+  margin-bottom: 10px;
+  background: rgba(167,139,250,0.07);
+  border: 1px solid rgba(167,139,250,0.25);
+  border-radius: 8px;
+}
+
+.anchor-phrases-label {
+  font-size: 0.75rem;
+  color: #a78bfa;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.anchor-phrase-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  background: rgba(167,139,250,0.15);
+  border: 1px solid rgba(167,139,250,0.4);
+  border-radius: 20px;
+  font-size: 0.76rem;
+  color: #c4b5fd;
+  font-weight: 500;
+}
