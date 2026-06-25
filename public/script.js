@@ -2810,7 +2810,7 @@ async function runAutoGeneration() {
   clearAllProjectProgressContainers();
   
   // Determinar si incluir barra de progreso de audio
-  const includeAudioProgress = generateAudio || generateApplioAudio || generateQwenAudio;
+  const includeAudioProgress = generateAudio || generateApplioAudio || generateQwenAudio || generateChatterboxAudio;
   
   // Determinar si incluir barra de progreso de imágenes
   const includeImagesProgress = !skipImages && (googleImages || localAIImages);
