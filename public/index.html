@@ -1575,9 +1575,6 @@
               </div>
             </div>
             <div class="tl-topbar-right">
-              <button id="tlAutoMusicBtn" onclick="autoAssignSectionMusic()" class="tl-btn tl-btn-outline" title="Asignar música automáticamente a cada sección según su tono">
-                <i class="fas fa-magic"></i> Auto-música
-              </button>
               <button id="tlRegenerateAllBtn" onclick="regenerateAllBrollClips()" class="tl-btn tl-btn-outline">
                 <i class="fas fa-sync-alt"></i> Regenerar Todo
               </button>
@@ -1669,10 +1666,13 @@
               <span id="tlMusicVolumeLabel">13%</span>
             </div>
           </div>
-          <!-- Section Music Volume -->
+          <!-- Section Music Volume + Auto-assign -->
           <div class="tl-sec-music-vol-bar" id="tlSecMusicVolBar">
             <i class="fas fa-headphones" style="color:#fbbf24; font-size:0.8rem; flex-shrink:0;"></i>
             <span class="tl-sec-music-vol-label">Música por sección:</span>
+            <button id="tlAutoMusicBtn" onclick="autoAssignSectionMusic()" class="tl-sec-auto-music-btn" title="Asignar música automáticamente a cada sección según su tono">
+              <i class="fas fa-magic"></i> Auto-asignar
+            </button>
             <span id="tlSecMusicCurrentLabel" class="tl-sec-music-current">—</span>
             <div class="tl-music-volume">
               <i class="fas fa-volume-down"></i>

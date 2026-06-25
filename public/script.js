@@ -19086,11 +19086,16 @@ function renderBrollTimeline() {
       </button>
       <div class="tl-sec-divider-line"></div>
     </div>
-    <div class="tl-sec-music-badge ${_secMusic ? 'has-music' : ''}" data-sec="${sec.secNum}"
-      onclick="openSectionMusicPicker(${sec.secNum}, this)">
-      <i class="fas fa-${_secMusic ? 'music' : 'plus-circle'}"></i>
-      <span>${_secMusic ? _secMusic.label : 'Asignar música'}</span>
-      ${_secMusic ? `<button class="tl-sec-music-remove" onclick="event.stopPropagation(); assignSectionMusic(${sec.secNum}, null, null)" title="Quitar música"><i class="fas fa-times"></i></button>` : ''}
+    <div class="tl-sec-music-row">
+      <div class="tl-sec-music-badge ${_secMusic ? 'has-music' : ''}" data-sec="${sec.secNum}"
+        onclick="openSectionMusicPicker(${sec.secNum}, this)">
+        <i class="fas fa-${_secMusic ? 'music' : 'plus-circle'}"></i>
+        <span>${_secMusic ? _secMusic.label : 'Asignar música'}</span>
+        ${_secMusic ? `<button class="tl-sec-music-remove" onclick="event.stopPropagation(); assignSectionMusic(${sec.secNum}, null, null)" title="Quitar música"><i class="fas fa-times"></i></button>` : ''}
+      </div>
+      <button class="tl-sec-auto-btn" onclick="autoAssignSectionMusic()" title="Auto-asignar música a TODAS las secciones con IA">
+        <i class="fas fa-magic"></i> Auto-asignar todo
+      </button>
     </div>`;
 
     // Clips for this section

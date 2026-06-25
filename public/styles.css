@@ -13014,6 +13014,57 @@ body.prompts-panel-active .container {
 .music-lib-delete:hover { color: #f87171; background: rgba(248,113,113,0.1); }
 
 /* ═══════════════════════════════════════════════════════
+   TIMELINE – per-section music row (badge + auto-btn)
+   ═══════════════════════════════════════════════════════ */
+.tl-sec-music-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 3px 0 5px 4px;
+  flex-wrap: wrap;
+}
+.tl-sec-auto-btn {
+  background: rgba(251,191,36,0.1);
+  border: 1px dashed rgba(251,191,36,0.35);
+  border-radius: 20px;
+  color: #a16207;
+  font-size: 0.67rem;
+  padding: 3px 9px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  transition: all 0.2s;
+  line-height: 1.4;
+}
+.tl-sec-auto-btn:hover {
+  background: rgba(251,191,36,0.22);
+  border-color: #fbbf24;
+  color: #fbbf24;
+}
+.tl-sec-auto-btn i { font-size: 0.6rem; }
+
+/* tl-sec-music-vol-bar auto-assign button variant */
+.tl-sec-auto-music-btn {
+  background: rgba(251,191,36,0.15);
+  border: 1px solid rgba(251,191,36,0.4);
+  border-radius: 6px;
+  color: #fbbf24;
+  font-size: 0.75rem;
+  padding: 4px 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+.tl-sec-auto-music-btn:hover { background: rgba(251,191,36,0.3); }
+.tl-sec-auto-music-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ═══════════════════════════════════════════════════════
    TIMELINE – per-section music badge
    ═══════════════════════════════════════════════════════ */
 .tl-sec-music-badge {
@@ -13026,9 +13077,8 @@ body.prompts-panel-active .container {
   border: 1px dashed rgba(100,116,139,0.3);
   border-radius: 20px;
   cursor: pointer;
-  margin: 4px 0 6px 4px;
   transition: all 0.2s;
-  max-width: 280px;
+  max-width: 220px;
   background: transparent;
   user-select: none;
 }
