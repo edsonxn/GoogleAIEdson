@@ -17901,7 +17901,8 @@ let _brollPreviewId = null;
 let _brollPreviewSections = null;
 let _brollPreviewFolderName = null;
 let _brollShortsMode = false; // single source of truth for shorts mode
-let _brollFlatClips = []; // Flattened list: { sectionIndex, clipIndex, secNum, clip, audioOffset }
+let _brollFlatClips = []; // Flattened list: { sectionIndex, clipIndex, secNum, clip, audioOffset, masterAudioOffset }
+let _brollMasterAudioOffsets = {}; // { [secNum]: absolute start seconds in master audio }
 let _brollCurrentFlatIdx = -1;
 let _brollImageTimer = null;
 let _brollIsAutoAdvancing = false; // true when advancing within same section (don't touch audio)
@@ -18494,6 +18495,7 @@ async function autoAssignSectionMusic() {
   } finally {
     if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-magic"></i> Auto-música'; }
     renderBrollTimeline();
+    _saveSectionMusicAssignments();
   }
 }
 
@@ -18508,6 +18510,7 @@ function _localMusicAutoAssign() {
     }
   }
   showNotification(`🎵 Música asignada a ${assigned} sección${assigned !== 1 ? 'es' : ''}`, 'success');
+  _saveSectionMusicAssignments();
 }
 
 function openSectionMusicPicker(secNum, anchorEl) {
@@ -18586,6 +18589,22 @@ function assignSectionMusic(secNum, filename, label) {
   document.getElementById('sectionMusicPicker')?.remove();
   if (_musicLibPreviewAudio) { _musicLibPreviewAudio.pause(); _musicLibPreviewAudio = null; _musicLibPreviewFilename = null; }
   renderBrollTimeline();
+  _saveSectionMusicAssignments();
+}
+
+let _saveMusicDebounceTimer = null;
+function _saveSectionMusicAssignments() {
+  if (!_brollPreviewFolderName) return;
+  clearTimeout(_saveMusicDebounceTimer);
+  _saveMusicDebounceTimer = setTimeout(async () => {
+    try {
+      await fetch(`/api/broll-preview/${encodeURIComponent(_brollPreviewFolderName)}/music`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sectionMusicAssignments: _sectionMusicAssignments })
+      });
+    } catch (e) { console.warn('[MusicSave] Error guardando asignaciones:', e.message); }
+  }, 500);
 }
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -18613,18 +18632,21 @@ function buildFlatClipList(sections) {
   const flat = [];
   for (let si = 0; si < sections.length; si++) {
     const sec = sections[si];
+    const secAbsStart = _brollMasterAudioOffsets[sec.secNum] ?? null;
     let offset = 0;
     for (let ci = 0; ci < sec.clips.length; ci++) {
       const clip = sec.clips[ci];
       // Use Whisper audioStart directly when available — it reflects the real TTS position
       // including inter-phrase silences. Fall back to accumulated sum if not present.
       const audioOffset = typeof clip.audioStart === 'number' ? clip.audioStart : offset;
+      const masterAudioOffset = secAbsStart !== null ? secAbsStart + audioOffset : null;
       flat.push({
         sectionIndex: si,
         clipIndex: ci,
         secNum: sec.secNum,
         clip,
-        audioOffset
+        audioOffset,
+        masterAudioOffset
       });
       offset += clip.duration;
     }
@@ -18637,12 +18659,36 @@ function buildFlatClipList(sections) {
           secNum: sec.secNum,
           clip: sec.pauseClips[pi],
           audioOffset: 0,
+          masterAudioOffset: null,
           isPause: true
         });
       }
     }
   }
   return flat;
+}
+
+async function loadMasterPreviewAudio(folderName) {
+  try {
+    const res = await fetch(`/api/broll-master-audio-meta/${encodeURIComponent(folderName)}`);
+    if (!res.ok) return; // silently fall back to per-section audio
+    const data = await res.json();
+    _brollMasterAudioOffsets = data.sectionOffsets || {};
+    // Rebuild flat clip list now that we have absolute offsets
+    if (_brollPreviewSections) {
+      _brollFlatClips = buildFlatClipList(_brollPreviewSections);
+    }
+    // Point the preview audio element to the master track
+    const audio = document.getElementById('tlPreviewAudio');
+    if (audio) {
+      audio.src = data.audioUrl;
+      audio.dataset.currentSec = 'master';
+      audio.load();
+    }
+    console.log(`🎵 [MasterAudio] Listo: ${Object.keys(_brollMasterAudioOffsets).length} secciones`);
+  } catch (e) {
+    console.warn('[MasterAudio] Falló carga, usando audio por sección:', e.message);
+  }
 }
 
 async function regenerateSectionByPhrases(sectionIndex) {
@@ -18754,9 +18800,11 @@ async function generateBrollPreview() {
         _brollPreviewId = data.previewId;
         _brollPreviewSections = data.sections;
         _brollPreviewFolderName = folderName;
+        _sectionMusicAssignments = data.sectionMusicAssignments || {};
         _brollFlatClips = buildFlatClipList(data.sections);
         renderBrollTimeline();
         showBrollTimelinePanel();
+        loadMasterPreviewAudio(folderName);
         return;
       }
     }
@@ -18778,6 +18826,7 @@ async function generateBrollPreview() {
 
     renderBrollTimeline();
     showBrollTimelinePanel();
+    loadMasterPreviewAudio(folderName);
     _autoQueueRemotionClips();
 
   } catch (error) {
@@ -18801,9 +18850,11 @@ async function loadExistingBrollTimeline(folderName) {
         _brollPreviewId = data.previewId;
         _brollPreviewSections = data.sections;
         _brollPreviewFolderName = folderName;
+        _sectionMusicAssignments = data.sectionMusicAssignments || {};
         _brollFlatClips = buildFlatClipList(data.sections);
         renderBrollTimeline();
         showBrollTimelinePanel();
+        loadMasterPreviewAudio(folderName);
         console.log(`ðŸŽ¬ Timeline de B-Roll cargada desde preview existente (${data.sections.length} secciones)`);
         return;
       }
@@ -19931,9 +19982,12 @@ function advanceToNextClip() {
     const nxt = _brollFlatClips[next];
     const sameSection = cur && nxt && cur.secNum === nxt.secNum;
 
-    // If switching sections AND TTS audio is still playing, wait for it to finish
-    if (!sameSection && !cur?.isPause) {
-      const audio = document.getElementById('tlPreviewAudio');
+    // If switching sections AND TTS audio is still playing, wait for it to finish.
+    // Skip this when using master audio — it flows continuously across sections.
+    const _audioEl = document.getElementById('tlPreviewAudio');
+    const _usingMaster = _audioEl?.dataset.currentSec === 'master';
+    if (!sameSection && !cur?.isPause && !_usingMaster) {
+      const audio = _audioEl;
       if (audio && !audio.paused && audio.currentTime < audio.duration - 0.3) {
         // Keep last clip's video frame visible while audio finishes
         // Loop the video or freeze last frame
@@ -20029,12 +20083,15 @@ function getActiveVideo() {
   return document.querySelector('.tl-vid-active');
 }
 
-function bindVideoHandlers(video, audio, audioOffset, loading, isContinuous) {
+function bindVideoHandlers(video, audio, audioOffset, loading, isContinuous, masterAudioOffset) {
+  const usingMaster = audio?.dataset.currentSec === 'master';
   video.oncanplay = () => {
     if (loading) loading.classList.remove('active');
     video.play().catch(() => {});
     if (audio) {
-      if (!isContinuous) audio.currentTime = audioOffset;
+      if (!isContinuous) {
+        audio.currentTime = usingMaster && masterAudioOffset !== null ? masterAudioOffset : audioOffset;
+      }
       audio.play().catch(() => {});
     }
     preloadNextClip(_brollCurrentFlatIdx);
@@ -20050,7 +20107,11 @@ function bindVideoHandlers(video, audio, audioOffset, loading, isContinuous) {
   };
   video.onplay = () => {
     if (audio) {
-      if (!isContinuous) audio.currentTime = audioOffset + video.currentTime;
+      if (!isContinuous) {
+        audio.currentTime = usingMaster && masterAudioOffset !== null
+          ? masterAudioOffset + video.currentTime
+          : audioOffset + video.currentTime;
+      }
       audio.play().catch(() => {});
     }
     if (_tlBgMusicAudio && _tlBgMusicUrl) _tlBgMusicAudio.play().catch(() => {});
@@ -20091,7 +20152,7 @@ function playBrollClipPreview(item) {
 
   // Pause clips: mute TTS, swell background music
   if (isPause) {
-    if (audio) { audio.pause(); audio.currentTime = 0; }
+    if (audio) { audio.pause(); if (audio.dataset.currentSec !== 'master') audio.currentTime = 0; }
     // Swell music to 70% of max
     if (_tlBgMusicAudio && _tlBgMusicUrl) {
       const baseVol = (parseInt(document.getElementById('tlMusicVolume')?.value) || 20) / 100;
@@ -20107,17 +20168,26 @@ function playBrollClipPreview(item) {
     }
   }
 
-  // Audio: always reload on section change, let it run continuously within a section.
-  const isSameSection = audio && audio.dataset.currentSec === String(secNum);
-  const isContinuous = sameSectionAutoAdvance && isSameSection;
+  // Audio: use master audio track when available (seamless across sections), else per-section fallback.
+  const masterLoaded = audio?.dataset.currentSec === 'master';
+  const isContinuous = sameSectionAutoAdvance && (masterLoaded || audio?.dataset.currentSec === String(secNum));
   if (!isPause && !isContinuous) {
     if (audio) {
-      const audioSrc = `/api/broll-section-audio/${_brollPreviewFolderName}/${secNum}`;
-      if (!isSameSection) {
-        audio.src = audioSrc;
-        audio.dataset.currentSec = String(secNum);
+      if (masterLoaded) {
+        // Master audio is loaded — only seek if we have the absolute offset for this clip.
+        // If offset is unknown, leave currentTime alone (audio keeps playing forward).
+        if (item.masterAudioOffset !== null) {
+          audio.currentTime = item.masterAudioOffset;
+        }
+      } else {
+        // Fallback: per-section audio (master not loaded yet)
+        const audioSrc = `/api/broll-section-audio/${_brollPreviewFolderName}/${secNum}`;
+        if (audio.dataset.currentSec !== String(secNum)) {
+          audio.src = audioSrc;
+          audio.dataset.currentSec = String(secNum);
+        }
+        audio.currentTime = audioOffset;
       }
-      audio.currentTime = audioOffset;
     }
   }
 
@@ -20146,7 +20216,7 @@ function playBrollClipPreview(item) {
     if (!video) return;
 
     // Bind fresh handlers on the current active video
-    bindVideoHandlers(video, isPause ? null : audio, audioOffset, loading, isContinuous);
+    bindVideoHandlers(video, isPause ? null : audio, audioOffset, loading, isContinuous, item.masterAudioOffset);
 
     if (swapped) {
       if (loading) loading.classList.remove('active');
@@ -20503,6 +20573,9 @@ async function confirmBrollRender() {
       bgMusicPath = uploadData.bgMusicPath || null;
     }
 
+    const secMusicVol = (parseInt(document.getElementById('tlSecMusicVolume')?.value) || 10) / 100;
+    const secMusicData = Object.keys(_sectionMusicAssignments).length > 0 ? _sectionMusicAssignments : null;
+
     const response = await fetch('/api/render-broll-video', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -20512,7 +20585,9 @@ async function confirmBrollRender() {
         videoConfig: getVideoConfig(),
         endScreenPath,
         bgMusicPath,
-        bgMusicVolume: musicVolume / 100
+        bgMusicVolume: musicVolume / 100,
+        sectionMusicAssignments: secMusicData,
+        sectionMusicVolume: secMusicVol
       })
     });
     const data = await response.json();
@@ -21435,7 +21510,9 @@ function _ytPrefillMetadata() {
     document.getElementById('ytDescription').value = parsed.description;
 
     // Tags
-    document.getElementById('ytTags').value = parsed.tags.join(', ');
+    const ytTagsEl = document.getElementById('ytTags');
+    ytTagsEl.value = parsed.tags.join(', ');
+    updateYtTagsCounter(ytTagsEl);
   } else {
     titleOptions.innerHTML = '<p style="color:#64748b; font-size:0.8rem; padding:6px 0;">Genera los metadatos de YouTube primero para ver títulos sugeridos.</p>';
   }
@@ -21468,6 +21545,14 @@ function _ytParseMetadata(metadata) {
 
 function _ytEscape(s) {
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function updateYtTagsCounter(textarea) {
+  const counter = document.getElementById('ytTagsCounter');
+  if (!counter) return;
+  const len = textarea.value.length;
+  counter.textContent = `${len} / 500`;
+  counter.style.color = len > 500 ? '#ef4444' : '#64748b';
 }
 
 function ytDeselectAllTitles() {

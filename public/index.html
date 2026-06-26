@@ -1480,7 +1480,11 @@
               </div>
               <textarea id="ytTags" rows="3"
                 style="width:100%; box-sizing:border-box; background:#1e293b; border:1px solid rgba(255,255,255,0.1); border-radius:8px; color:#e2e8f0; font-size:0.8rem; padding:8px 12px; outline:none; resize:vertical; line-height:1.5;"
-                placeholder="tag1, tag2, tag3..."></textarea>
+                placeholder="tag1, tag2, tag3..."
+                oninput="updateYtTagsCounter(this)"></textarea>
+              <div style="text-align:right; margin-top:3px; font-size:0.7rem;">
+                <span id="ytTagsCounter" style="color:#64748b;">0 / 500</span>
+              </div>
             </div>
 
             <!-- Privacidad + Fecha programada -->

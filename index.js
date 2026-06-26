@@ -46,7 +46,7 @@ function calcGeminiCostMXN(model, inputTok, outputTok) {
   return (inputTok * p.input + outputTok * p.output) / 1_000_000 * MXN_PER_USD_CLIP;
 }
 
-const GEMINI_TEXT_MODEL = process.env.GEMINI_TEXT_MODEL || 'gemini-3.1-pro-preview';
+const GEMINI_TEXT_MODEL = process.env.GEMINI_TEXT_MODEL || 'gemini-3.1-flash-lite';
 const GEMINI_IMAGE_MODEL = process.env.GEMINI_IMAGE_MODEL || 'gemini-2.5-flash-image';
 const GEMINI_TTS_MODEL_FLASH = process.env.GEMINI_TTS_MODEL_FLASH || 'gemini-2.5-flash-preview-tts';
 const GEMINI_TTS_MODEL_PRO = process.env.GEMINI_TTS_MODEL_PRO || 'gemini-2.5-pro-preview-tts';
@@ -16739,10 +16739,35 @@ app.get('/api/broll-preview/:folderName', (req, res) => {
       setTimeout(() => brollPreviewData.delete(preview.previewId), 1800000);
     }
 
-    res.json({ success: true, exists: true, previewId: preview.previewId, sections: preview.sections });
+    res.json({ success: true, exists: true, previewId: preview.previewId, sections: preview.sections, sectionMusicAssignments: preview.sectionMusicAssignments || {} });
   } catch (error) {
     console.error('Error loading broll-preview:', error);
     res.status(500).json({ error: error.message });
+  }
+});
+
+// PATCH /api/broll-preview/:folderName/music — persist section music assignments
+app.patch('/api/broll-preview/:folderName/music', (req, res) => {
+  const { folderName } = req.params;
+  const { sectionMusicAssignments } = req.body;
+  if (!sectionMusicAssignments) return res.status(400).json({ error: 'sectionMusicAssignments requerido' });
+
+  const projectPath = resolveProjectPath(folderName);
+  if (!projectPath) return res.status(404).json({ error: 'Proyecto no encontrado' });
+
+  const previewJsonPath = path.join(projectPath, 'broll_preview.json');
+  if (!fs.existsSync(previewJsonPath)) return res.status(404).json({ error: 'Preview no encontrado' });
+
+  try {
+    const preview = JSON.parse(fs.readFileSync(previewJsonPath, 'utf8'));
+    preview.sectionMusicAssignments = sectionMusicAssignments;
+    fs.writeFileSync(previewJsonPath, JSON.stringify(preview, null, 2), 'utf8');
+    if (brollPreviewData.has(preview.previewId)) {
+      brollPreviewData.get(preview.previewId).sectionMusicAssignments = sectionMusicAssignments;
+    }
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -18231,7 +18256,8 @@ app.delete('/api/broll-remove-interstitial', (req, res) => {
 // POST /api/render-broll-video — Render from confirmed preview sequence
 app.post('/api/render-broll-video', async (req, res) => {
   try {
-    const { previewId, folderName, videoConfig = {}, endScreenPath = null, bgMusicPath = null, bgMusicVolume = 0.13 } = req.body;
+    const { previewId, folderName, videoConfig = {}, endScreenPath = null, bgMusicPath = null, bgMusicVolume = 0.13,
+            sectionMusicAssignments = null, sectionMusicVolume = 0.10 } = req.body;
     if (!folderName) return res.status(400).json({ error: 'Nombre de carpeta requerido' });
 
     const projectPath = resolveProjectPath(folderName);
@@ -18259,7 +18285,7 @@ app.post('/api/render-broll-video', async (req, res) => {
     res.json({ success: true, sessionId });
 
     // Render in background using the confirmed sequence
-    renderFromPreview(preview, projectPath, folderName, sessionId, cfg, { endScreenPath, bgMusicPath, bgMusicVolume }).catch(err => {
+    renderFromPreview(preview, projectPath, folderName, sessionId, cfg, { endScreenPath, bgMusicPath, bgMusicVolume, sectionMusicAssignments, sectionMusicVolume }).catch(err => {
       console.error('Error renderFromPreview:', err);
       const prog = brollVideoProgress.get(sessionId);
       if (prog) { prog.status = 'error'; prog.error = err.message; prog.message = 'Error: ' + err.message; }
@@ -18272,7 +18298,8 @@ app.post('/api/render-broll-video', async (req, res) => {
 });
 
 async function renderFromPreview(preview, projectPath, projectName, sessionId, cfg, extras = {}) {
-  const { endScreenPath = null, bgMusicPath = null, bgMusicVolume = 0.13 } = extras;
+  const { endScreenPath = null, bgMusicPath = null, bgMusicVolume = 0.13,
+          sectionMusicAssignments = null, sectionMusicVolume = 0.10 } = extras;
   // Usar el mismo disco que el proyecto para evitar quedarse sin espacio en C:
   const tempDir = path.join(projectPath, `_broll_render_temp`);
   if (fs.existsSync(tempDir)) fs.rmSync(tempDir, { recursive: true, force: true });
@@ -18743,14 +18770,17 @@ async function renderFromPreview(preview, projectPath, projectName, sessionId, c
 
     let finalAudioPath = syncedAudioMasterPath;
 
-    // Calculate pause time ranges for music swell
+    // Calculate pause time ranges for music swell, and section timestamps for per-section music
     const pauseRanges = [];
+    const secTimestamps = {}; // { [secNum]: { start, end } } in global audio timeline
     {
       let accTime = 0;
       for (const sv of sectionVideos) {
         const svDur = await getMediaDuration(sv.videoPath);
         if (sv.isPause) {
           pauseRanges.push({ start: accTime, end: accTime + svDur });
+        } else if (!sv.isInterstitial && Number.isInteger(sv.numero)) {
+          secTimestamps[sv.numero] = { start: accTime, end: accTime + svDur };
         }
         accTime += svDur;
       }
@@ -18846,6 +18876,71 @@ async function renderFromPreview(preview, projectPath, projectName, sessionId, c
       const combinedAudioPath = path.join(tempDir, 'audio_combined.wav');
       await concatenarAudiosBroll([paddedAudioPath, endScreenAudioPath], combinedAudioPath);
       finalAudioPath = combinedAudioPath;
+    }
+
+    // === SECTION MUSIC MIX: per-section music with fade-out at end of each section ===
+    if (sectionMusicAssignments && Object.keys(sectionMusicAssignments).length > 0) {
+      const FADE_DUR = 2.5; // seconds of fade-out at end of each section
+      const secMusicVol = (typeof sectionMusicVolume === 'number' ? sectionMusicVolume : 0.10).toFixed(2);
+
+      const ffmpegInputs = ['-y', '-i', finalAudioPath]; // input 0: TTS + optional bgMusic
+      const filterParts = [];
+      const streamLabels = [];
+      const musicFileToIdx = {};
+      let nextInputIdx = 1;
+
+      for (const [secNumStr, assignment] of Object.entries(sectionMusicAssignments)) {
+        const secNum = parseInt(secNumStr);
+        const ts = secTimestamps[secNum];
+        if (!ts) { console.warn(`[SecMusic] Sin timestamp para sección ${secNum}, omitiendo`); continue; }
+
+        const musicFilePath = path.join(MUSIC_LIBRARY_DIR, assignment.filename);
+        if (!fs.existsSync(musicFilePath)) { console.warn(`[SecMusic] Archivo no encontrado: ${assignment.filename}`); continue; }
+
+        let fileIdx = musicFileToIdx[assignment.filename];
+        if (fileIdx === undefined) {
+          fileIdx = nextInputIdx++;
+          musicFileToIdx[assignment.filename] = fileIdx;
+          ffmpegInputs.push('-stream_loop', '-1', '-i', musicFilePath);
+        }
+
+        const secDur = ts.end - ts.start;
+        if (secDur < 0.5) continue;
+
+        const fadeDur = Math.min(FADE_DUR, secDur * 0.4);
+        const fadeStart = Math.max(0, secDur - fadeDur);
+        const delayMs = Math.round(ts.start * 1000);
+        const label = `[sm${secNum}]`;
+
+        filterParts.push(
+          `[${fileIdx}:a]volume=${secMusicVol},atrim=0:${secDur.toFixed(3)},afade=t=out:st=${fadeStart.toFixed(3)}:d=${fadeDur.toFixed(3)},adelay=${delayMs}|${delayMs}${label}`
+        );
+        streamLabels.push(label);
+      }
+
+      if (streamLabels.length > 0) {
+        const totalInputs = streamLabels.length + 1;
+        filterParts.push(`[0:a]${streamLabels.join('')}amix=inputs=${totalInputs}:duration=first:dropout_transition=0:normalize=0[secmix_out]`);
+
+        const secMusicAudioPath = path.join(tempDir, 'audio_with_secmusic.wav');
+        await new Promise((resolve, reject) => {
+          const args = [
+            ...ffmpegInputs,
+            '-filter_complex', filterParts.join(';'),
+            '-map', '[secmix_out]',
+            '-c:a', 'pcm_s16le', '-ar', '44100', '-ac', '2',
+            secMusicAudioPath
+          ];
+          const proc = spawn('ffmpeg', args);
+          let stderr = '';
+          proc.stderr.on('data', d => stderr += d.toString());
+          proc.on('close', code => code === 0 ? resolve() : reject(new Error(`Section music mix failed: ${stderr.slice(-500)}`)));
+          proc.on('error', reject);
+        });
+
+        finalAudioPath = secMusicAudioPath;
+        console.log(`🎵 [SecMusic] Música de sección mezclada: ${streamLabels.length} secciones con fade-out`);
+      }
     }
 
     updateProgress(96, 'Generando video final...');
@@ -20020,8 +20115,7 @@ app.post('/api/generate-ai-clip', async (req, res) => {
         execSync(
           `ffmpeg -y -stream_loop -1 -t ${duration + 0.5} -i "${brollVideoForComposite.absPath}" -i "${outputPath}" ` +
           `-filter_complex "[0:v]${styleFilters}[bg];` +
-          `[1:v]colorkey=color=0x000000:similarity=0.25:blend=0.08[fg];` +
-          `[bg][fg]overlay=format=auto[out]" ` +
+          `[bg][1:v]blend=all_mode=screen[out]" ` +
           `-map [out] -t ${duration} -c:v libx264 -preset fast -crf 20 -movflags +faststart "${compositedPath}"`,
           { stdio: 'ignore', timeout: 120000 }
         );
@@ -20355,6 +20449,86 @@ app.get('/api/broll-section-audio/:folderName/:secNum', (req, res) => {
     res.sendFile(section.audioPath);
   } catch (e) {
     res.status(500).send('Error: ' + e.message);
+  }
+});
+
+// GET /api/broll-master-audio-meta/:folderName — concat all section TTS into one WAV (cached)
+app.get('/api/broll-master-audio-meta/:folderName', async (req, res) => {
+  const { folderName } = req.params;
+  const projectPath = resolveProjectPath(folderName);
+  if (!projectPath) return res.status(404).json({ error: 'Proyecto no encontrado' });
+
+  const previewJsonPath = path.join(projectPath, 'broll_preview.json');
+  if (!fs.existsSync(previewJsonPath)) return res.status(404).json({ error: 'Preview no encontrado' });
+
+  try {
+    const preview = JSON.parse(fs.readFileSync(previewJsonPath, 'utf8'));
+    const sections = preview.sections.filter(s => s.audioPath && fs.existsSync(s.audioPath));
+    if (sections.length === 0) return res.status(404).json({ error: 'Sin audio de secciones' });
+
+    const masterPath = path.join(projectPath, '_preview_master_audio.wav');
+    const previewMtime = fs.statSync(previewJsonPath).mtimeMs;
+    const masterExists = fs.existsSync(masterPath) && fs.statSync(masterPath).mtimeMs > previewMtime;
+
+    // Compute section offsets (always needed for the response)
+    const sectionOffsets = {};
+    let acc = 0;
+    for (const sec of sections) {
+      sectionOffsets[sec.secNum] = acc;
+      acc += await getMediaDuration(sec.audioPath);
+    }
+
+    if (!masterExists) {
+      // Build concat list and generate master WAV
+      const concatListPath = path.join(projectPath, '_preview_concat.txt');
+      const lines = sections.map(s => `file '${s.audioPath.replace(/\\/g, '/').replace(/'/g, '')}'`);
+      fs.writeFileSync(concatListPath, lines.join('\n'), 'utf8');
+
+      await new Promise((resolve, reject) => {
+        const args = ['-y', '-f', 'concat', '-safe', '0', '-i', concatListPath,
+          '-c:a', 'pcm_s16le', '-ar', '44100', '-ac', '2', masterPath];
+        const proc = spawn('ffmpeg', args);
+        let stderr = '';
+        proc.stderr.on('data', d => stderr += d.toString());
+        proc.on('close', code => code === 0 ? resolve() : reject(new Error(stderr.slice(-300))));
+        proc.on('error', reject);
+      });
+      try { fs.unlinkSync(concatListPath); } catch {}
+      console.log(`🎵 [MasterAudio] Generado: ${sections.length} secciones, ${acc.toFixed(1)}s`);
+    }
+
+    res.json({ audioUrl: `/api/broll-master-audio/${folderName}`, sectionOffsets });
+  } catch (e) {
+    console.error('[MasterAudio] Error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/broll-master-audio/:folderName — serve master preview audio with range support
+app.get('/api/broll-master-audio/:folderName', (req, res) => {
+  const { folderName } = req.params;
+  const projectPath = resolveProjectPath(folderName);
+  if (!projectPath) return res.status(404).send('Not found');
+
+  const masterPath = path.join(projectPath, '_preview_master_audio.wav');
+  if (!fs.existsSync(masterPath)) return res.status(404).send('Master audio not generated');
+
+  const fileSize = fs.statSync(masterPath).size;
+  const range = req.headers['range'];
+  if (range) {
+    const [startStr, endStr] = range.replace(/bytes=/, '').split('-');
+    const start = parseInt(startStr, 10);
+    const end = endStr ? Math.min(parseInt(endStr, 10), fileSize - 1) : fileSize - 1;
+    res.writeHead(206, {
+      'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+      'Accept-Ranges': 'bytes',
+      'Content-Length': end - start + 1,
+      'Content-Type': 'audio/wav',
+    });
+    fs.createReadStream(masterPath, { start, end }).pipe(res);
+  } else {
+    res.writeHead(200, { 'Content-Length': fileSize, 'Content-Type': 'audio/wav', 'Accept-Ranges': 'bytes' });
+    fs.createReadStream(masterPath).pipe(res);
   }
 });
 
@@ -25914,7 +26088,7 @@ async function transcribeWithWhisperLocal(audioPath, language = null, modelSize 
 // GEMINI TRANSCRIPTION (from Traductor)
 // ==============================
 
-const GEMINI_TRANSCRIPTION_MODEL = 'gemini-3.1-pro-preview';
+const GEMINI_TRANSCRIPTION_MODEL = 'gemini-3.1-flash-lite';
 
 async function transcribeAudioWithGemini(audioPath) {
     const freeKeys = getFreeGoogleAPIKeys();
@@ -28110,7 +28284,7 @@ INSTRUCCIONES:
 Usa exactamente los nombres de archivo que aparecen en la lista.`;
 
     console.log(`🎵 [MusicLib] Auto-asignando con LLM para ${sections.length} secciones, ${tracks.length} pistas`);
-    const llmReply = await generateTextWithLLM(prompt, { context: 'llm', retries: 2 });
+    const llmReply = await generateTextWithLLM(prompt, { model: 'gemini-3.1-flash-lite', context: 'llm', retries: 2 });
     const jsonStr = llmReply.replace(/```json\n?|```\n?/g, '').trim();
     const parsed = JSON.parse(jsonStr);
 
