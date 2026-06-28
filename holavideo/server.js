@@ -65547,6 +65547,11 @@ ${styleContext.slice(0, 2e3)}` : "";
     return { success: false, error: "Todas las API keys y modelos fallaron" };
   }
   code = code.replace(/^```(?:tsx?|javascript|jsx)?\n?/gm, "").replace(/```$/gm, "").trim();
+  // Replace Unicode arrows that esbuild can't parse when they land outside string literals
+  if (code.includes('\u2192') || code.includes('\u2190') || code.includes('\u21d2')) {
+    code = code.replace(/\u2192/g, '->').replace(/\u2190/g, '<-').replace(/\u21d2/g, '=>');
+    console.log("\u{1F527} Auto-fix: flechas Unicode (\u2192\u2190\u21d2) reemplazadas por equivalentes ASCII");
+  }
   if (/<Video[\s/>]/.test(code)) {
     code = code.replace(/<Video(\s)/g, "<OffthreadVideo$1").replace(/<Video\/>/g, "<OffthreadVideo />").replace(/<\/Video>/g, "</OffthreadVideo>").replace(/\bVideo\s*,/g, "OffthreadVideo,").replace(/,\s*Video\b/g, ", OffthreadVideo").replace(/\bVideo\b(?=\s*from\s*['"]remotion['"])/g, "OffthreadVideo");
     console.log("\u{1F527} Auto-fix: <Video> \u2192 <OffthreadVideo> para evitar timeout en render");

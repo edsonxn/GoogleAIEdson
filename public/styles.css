@@ -10486,6 +10486,14 @@ body.prompts-panel-active .container {
 .tl-clip-type-badge.video { background: rgba(16,185,129,0.85); color: #fff; }
 .tl-clip-type-badge.image { background: rgba(245,158,11,0.85); color: #fff; }
 
+.tl-clip-ai-badge {
+  position: absolute; top: 22px; left: 3px;
+  padding: 1px 4px; border-radius: 3px; font-size: 0.48rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.02em; white-space: nowrap;
+}
+.tl-clip-ai-badge.gratis { background: rgba(34,197,94,0.85); color: #fff; }
+.tl-clip-ai-badge.pago { background: rgba(251,146,60,0.85); color: #fff; }
+
 .tl-clip-btns {
   position: absolute; top: 3px; right: 3px;
   display: flex; flex-direction: row-reverse; flex-wrap: wrap;
@@ -12505,6 +12513,37 @@ body.prompts-panel-active .container {
   background: rgba(255,255,255,0.1);
   border-color: rgba(255,255,255,0.4);
   color: rgba(255,255,255,0.7);
+}
+
+/* ─── Split section group ────────────────────────────────────────────────── */
+.tl-split-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  align-self: center;
+}
+.tl-split-btn {
+  opacity: 0;
+  background: rgba(251,146,60,0.12);
+  border: 1px solid rgba(251,146,60,0.35);
+  border-radius: 8px;
+  color: #fb923c;
+  font-size: 0.6rem;
+  height: 18px;
+  padding: 0 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity 0.15s, background 0.15s, border-color 0.15s;
+  letter-spacing: 0.03em;
+}
+.tl-split-group:hover .tl-split-btn {
+  opacity: 1;
+}
+.tl-split-btn:hover {
+  background: rgba(251,146,60,0.28);
+  border-color: #fb923c;
 }
 
 /* ─── Transition picker popup ───────────────────────────────────────────── */

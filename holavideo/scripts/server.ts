@@ -9,7 +9,7 @@ const PROJECT_ROOT = path.join(__dirname, "..");
 // ── Render slot pool ──────────────────────────────────────────────────────────
 // Each slot has its own Composition_sN / Root_sN / index_sN files so that
 // multiple renders can run concurrently without overwriting shared source files.
-const MAX_SLOTS: number = parseInt(process.env.HV_SLOTS || "3");
+const MAX_SLOTS: number = parseInt(process.env.HV_SLOTS || "6");
 const _freeSlots = new Set<number>(Array.from({ length: MAX_SLOTS }, (_, i) => i));
 const _slotWaiters: Array<(slot: number) => void> = [];
 
@@ -69,7 +69,7 @@ REGLAS ESTRICTAS:
 - Usa Easing.bezier() para movimientos suaves.
 - PROHIBIDO usar Img, staticFile, o cualquier imagen/archivo externo. No existen imágenes en el proyecto.
 - Dibuja TODO con divs, CSS (bordes, degradados, border-radius, box-shadow), SVG inline o emojis.
-- Para representar objetos, animales o personas usa emojis grandes, formas geométricas o SVG paths simples.
+- Para representar objetos usa emojis grandes o SVG paths complejos con curvas bézier (M/C/Q/L/Z). NUNCA uses <circle>, <rect>, <ellipse> ni <polygon> para dibujar personajes o figuras orgánicas — usa solo <path>.
 - CRÍTICO: NUNCA uses interpolate() directamente. Usa siempre el helper si() que defines al inicio del componente — ordena y deduplica el inputRange automáticamente para evitar errores fatales de render.
 
 PATRONES DE ANIMACIÓN — úsalos según lo que pida el prompt:
@@ -168,86 +168,247 @@ PATRONES DE ANIMACIÓN — úsalos según lo que pida el prompt:
   // Las animaciones internas de cada acto TAMBIÉN usan si() en lugar de interpolate() para evitar el error.
   // NUNCA uses interpolate() directamente — siempre si() que garantiza inputRange creciente.
 
-TEXTOS — REGLA OBLIGATORIA:
-- Todos los textos visibles en la animación DEBEN estar en ESPAÑOL
-- Labels, títulos, subtítulos y fechas siempre en español (ej: "ALIANZA ROTA", "MUERTA EN 24 HORAS", no "ALLIANCE DISSOLVED")
-- Si el prompt dice un texto en inglés, tradúcelo al español en el código
+TEXTOS — SOLO si el prompt los pide explícitamente:
+- NO añadas texto por defecto. Las animaciones pueden (y deben) funcionar sin texto.
+- SOLO añade texto visible si el prompt menciona palabras, títulos, letreros, nombres, etc.
+- Si añades texto, escríbelo en ESPAÑOL y en MAYÚSCULAS cuando sea un título o label.
 
-EJEMPLOS COMPLETOS — modela tu código según estos:
+ESTILO — REGLA CRÍTICA:
+- El estilo visual (colores, paleta, estética) lo DICTA el prompt, NO los ejemplos.
+- Los ejemplos solo muestran mecánicas de animación. Ignora sus colores y estética.
+- Si el prompt pide cartoon: usa colores saturados, bordes gruesos, formas redondeadas, movimientos con bounce.
+- Si el prompt pide oscuro/noir: usa fondos oscuros, contrastes fuertes.
+- Si el prompt pide minimalista: usa pocos elementos, mucho espacio, colores neutros.
+- NUNCA copies la paleta cyan+oscuro de los ejemplos a menos que el prompt lo pida.
 
-EJEMPLO 1 (escena de acción — hombre en callejón):
+PERSONAJES — BIBLIOTECA DE PLANTILLAS BASE:
+Cuando el prompt incluya personas, animales o criaturas, DEBES partir de estas plantillas.
+NO dibujes personajes desde cero con círculos/rectángulos. Modifica colores, proporciones y poses de estas bases.
+Anima el personaje usando transform en el <g> principal (translate, rotate, scale).
+
+▸ HUMANO CARTOON (cabeza grande, todo con <path> curvas bézier — cambia fillColor según personaje):
+<g transform={\`translate(640, \${360 + si(frame,[0,8,16],[6,0,6])})\`}>
+  {/* Cabeza — blob orgánico */}
+  <path d="M 0,-148 C -60,-150 -78,-112 -72,-75 C -66,-38 -40,-18 0,-16 C 40,-18 66,-38 72,-75 C 78,-112 60,-150 0,-148 Z" fill="#F9C784" stroke="#2a1500" strokeWidth={3}/>
+  {/* Pelo (opcional — quitar si calvo) */}
+  <path d="M -58,-118 C -55,-155 -20,-168 0,-168 C 20,-168 55,-155 58,-118 C 42,-128 20,-135 0,-138 C -20,-135 -42,-128 -58,-118 Z" fill="#3D2000"/>
+  {/* Oreja izq */}
+  <path d="M -72,-88 C -90,-85 -96,-68 -88,-56 C -80,-44 -68,-48 -66,-60 C -64,-72 -66,-84 -72,-88 Z" fill="#F9C784" stroke="#2a1500" strokeWidth={2}/>
+  {/* Oreja der */}
+  <path d="M 72,-88 C 90,-85 96,-68 88,-56 C 80,-44 68,-48 66,-60 C 64,-72 66,-84 72,-88 Z" fill="#F9C784" stroke="#2a1500" strokeWidth={2}/>
+  {/* Ojo izq — blanco */}
+  <path d="M -25,-95 C -44,-106 -56,-84 -42,-74 C -28,-64 -14,-84 -25,-95 Z" fill="white" stroke="#2a1500" strokeWidth={1.5}/>
+  {/* Pupila izq */}
+  <path d="M -31,-88 C -38,-93 -42,-84 -36,-80 C -30,-76 -25,-84 -31,-88 Z" fill="#1a1a1a"/>
+  {/* Ojo der — blanco */}
+  <path d="M 25,-95 C 44,-106 56,-84 42,-74 C 28,-64 14,-84 25,-95 Z" fill="white" stroke="#2a1500" strokeWidth={1.5}/>
+  {/* Pupila der */}
+  <path d="M 31,-88 C 38,-93 42,-84 36,-80 C 30,-76 25,-84 31,-88 Z" fill="#1a1a1a"/>
+  {/* Nariz */}
+  <path d="M -6,-60 C -10,-52 10,-52 6,-60" fill="none" stroke="#2a1500" strokeWidth={2}/>
+  {/* Boca — cerrada */}
+  <path d="M -18,-44 C -6,-34 6,-34 18,-44" fill="none" stroke="#2a1500" strokeWidth={2.5}/>
+  {/* Cuello */}
+  <path d="M -13,-16 C -15,-4 -15,6 -13,12 L 13,12 C 15,6 15,-4 13,-16 Z" fill="#F9C784"/>
+  {/* Cuerpo/camisa */}
+  <path d="M -50,12 C -62,18 -66,58 -56,108 C -46,132 46,132 56,108 C 66,58 62,18 50,12 Z" fill="#4A90D9" stroke="#2a1500" strokeWidth={2.5}/>
+  {/* Brazo izq — animable con rotate en subgrupo */}
+  <path d="M -50,20 C -76,28 -90,62 -78,96 C -70,116 -56,120 -48,108" fill="#F9C784" stroke="#2a1500" strokeWidth={2}/>
+  {/* Mano izq */}
+  <path d="M -48,108 C -58,114 -64,128 -54,134 C -44,140 -34,128 -38,116 Z" fill="#F9C784" stroke="#2a1500" strokeWidth={1.5}/>
+  {/* Brazo der */}
+  <path d="M 50,20 C 76,28 90,62 78,96 C 70,116 56,120 48,108" fill="#F9C784" stroke="#2a1500" strokeWidth={2}/>
+  {/* Mano der */}
+  <path d="M 48,108 C 58,114 64,128 54,134 C 44,140 34,128 38,116 Z" fill="#F9C784" stroke="#2a1500" strokeWidth={1.5}/>
+  {/* Pierna izq */}
+  <path d="M -26,108 C -32,136 -36,160 -30,182 C -24,196 -10,200 -6,188" fill="#2D4A8C" stroke="#2a1500" strokeWidth={2}/>
+  {/* Zapato izq */}
+  <path d="M -6,188 C -20,194 -40,192 -44,200 C -48,210 -36,214 -14,212 C 0,210 0,198 -6,188 Z" fill="#1a1a1a"/>
+  {/* Pierna der */}
+  <path d="M 26,108 C 32,136 36,160 30,182 C 24,196 10,200 6,188" fill="#2D4A8C" stroke="#2a1500" strokeWidth={2}/>
+  {/* Zapato der */}
+  <path d="M 6,188 C 20,194 40,192 44,200 C 48,210 36,214 14,212 C 0,210 0,198 6,188 Z" fill="#1a1a1a"/>
+</g>
+
+▸ PERRO/ANIMAL CARTOON (estilo Coraje el perro cobarde — adapta color del pelaje):
+<g transform={\`translate(640, \${380 + si(frame,[0,10,20],[0,-8,0])})\`}>
+  {/* Cuerpo oval irregular */}
+  <path d="M 0,20 C -72,12 -98,52 -92,96 C -86,136 -46,156 0,158 C 46,156 86,136 92,96 C 98,52 72,12 0,20 Z" fill="#E888CB" stroke="#2a1500" strokeWidth={3}/>
+  {/* Cabeza grande */}
+  <path d="M 0,20 C -60,16 -86,-26 -72,-74 C -58,-120 58,-120 72,-74 C 86,-26 60,16 0,20 Z" fill="#E888CB" stroke="#2a1500" strokeWidth={3}/>
+  {/* Oreja izq — caída */}
+  <path d="M -60,-72 C -80,-56 -94,-28 -90,-2 C -86,16 -68,18 -60,-2 C -52,-20 -52,-52 -60,-72 Z" fill="#C055A0" stroke="#2a1500" strokeWidth={2}/>
+  {/* Oreja der — caída */}
+  <path d="M 60,-72 C 80,-56 94,-28 90,-2 C 86,16 68,18 60,-2 C 52,-20 52,-52 60,-72 Z" fill="#C055A0" stroke="#2a1500" strokeWidth={2}/>
+  {/* Ojo izq — grande asustado */}
+  <path d="M -24,-52 C -46,-66 -60,-40 -42,-28 C -24,-16 -8,-38 -24,-52 Z" fill="white" stroke="#2a1500" strokeWidth={2}/>
+  <path d="M -30,-44 C -38,-50 -44,-38 -36,-34 C -28,-30 -22,-40 -30,-44 Z" fill="#1a1a1a"/>
+  <path d="M -26,-48 C -28,-50 -30,-47 -28,-45 C -26,-43 -24,-46 -26,-48 Z" fill="white"/>
+  {/* Ojo der — grande asustado */}
+  <path d="M 24,-52 C 46,-66 60,-40 42,-28 C 24,-16 8,-38 24,-52 Z" fill="white" stroke="#2a1500" strokeWidth={2}/>
+  <path d="M 30,-44 C 38,-50 44,-38 36,-34 C 28,-30 22,-40 30,-44 Z" fill="#1a1a1a"/>
+  <path d="M 26,-48 C 28,-50 30,-47 28,-45 C 26,-43 24,-46 26,-48 Z" fill="white"/>
+  {/* Hocico */}
+  <path d="M -24,-8 C -24,12 24,12 24,-8 C 24,-28 -24,-28 -24,-8 Z" fill="#D070B0" stroke="#2a1500" strokeWidth={1.5}/>
+  {/* Nariz */}
+  <path d="M -9,-18 C -14,-8 14,-8 9,-18 C 5,-28 -5,-28 -9,-18 Z" fill="#1a1a1a"/>
+  {/* Línea boca */}
+  <path d="M -14,2 C -5,12 5,12 14,2" fill="none" stroke="#2a1500" strokeWidth={2}/>
+  {/* Cola */}
+  <path d="M 92,96 C 115,80 126,52 114,32 C 104,16 86,16 82,30" fill="none" stroke="#C055A0" strokeWidth={12} strokeLinecap="round"/>
+  {/* Pata delantera izq */}
+  <path d="M -58,128 C -72,142 -76,162 -68,178 C -60,192 -44,194 -38,182" fill="#E888CB" stroke="#2a1500" strokeWidth={2}/>
+  <path d="M -38,182 C -50,188 -64,186 -68,196 C -72,206 -58,210 -40,208 C -26,206 -26,194 -38,182 Z" fill="#E888CB" stroke="#2a1500" strokeWidth={1.5}/>
+  {/* Pata delantera der */}
+  <path d="M 58,128 C 72,142 76,162 68,178 C 60,192 44,194 38,182" fill="#E888CB" stroke="#2a1500" strokeWidth={2}/>
+  <path d="M 38,182 C 50,188 64,186 68,196 C 72,206 58,210 40,208 C 26,206 26,194 38,182 Z" fill="#E888CB" stroke="#2a1500" strokeWidth={1.5}/>
+  {/* Pata trasera izq */}
+  <path d="M -30,156 C -36,174 -32,192 -20,196 C -8,200 0,190 -2,178" fill="#E888CB" stroke="#2a1500" strokeWidth={2}/>
+  {/* Pata trasera der */}
+  <path d="M 30,156 C 36,174 32,192 20,196 C 8,200 0,190 2,178" fill="#E888CB" stroke="#2a1500" strokeWidth={2}/>
+</g>
+
+▸ CRIATURA ABSTRACTA CN (monstruo, villano o personaje raro — estilo Billy y Mandy / Aku):
+<g transform={\`translate(640, 340) scale(\${si(frame,[0,6],[0.92,1])})\`}>
+  {/* Cuerpo asimétrico — más alto que ancho */}
+  <path d="M 0,-60 C -55,-65 -80,-30 -78,20 C -76,65 -50,95 0,100 C 50,95 76,65 78,20 C 80,-30 55,-65 0,-60 Z" fill="#6B21A8" stroke="#1a0030" strokeWidth={3}/>
+  {/* Cabeza rara — cráneo puntiagudo */}
+  <path d="M 0,-60 C -45,-62 -62,-100 -48,-138 C -35,-170 -10,-178 0,-178 C 10,-178 35,-170 48,-138 C 62,-100 45,-62 0,-60 Z" fill="#6B21A8" stroke="#1a0030" strokeWidth={3}/>
+  {/* Cuerno izq */}
+  <path d="M -38,-138 C -55,-148 -70,-165 -60,-182 C -50,-196 -30,-185 -28,-162 C -26,-148 -32,-140 -38,-138 Z" fill="#4A0080" stroke="#1a0030" strokeWidth={2}/>
+  {/* Cuerno der */}
+  <path d="M 38,-138 C 55,-148 70,-165 60,-182 C 50,-196 30,-185 28,-162 C 26,-148 32,-140 38,-138 Z" fill="#4A0080" stroke="#1a0030" strokeWidth={2}/>
+  {/* Ojo izq — único grande brillante */}
+  <path d="M -22,-105 C -42,-118 -56,-92 -38,-80 C -20,-68 -6,-90 -22,-105 Z" fill="#FF0000" stroke="#1a0030" strokeWidth={2}/>
+  <path d="M -28,-96 C -36,-102 -40,-92 -33,-87 C -26,-82 -21,-92 -28,-96 Z" fill="#1a1a1a"/>
+  <path d="M -24,-100 C -26,-102 -28,-99 -26,-97 C -24,-95 -22,-98 -24,-100 Z" fill="white"/>
+  {/* Ojo der */}
+  <path d="M 22,-105 C 42,-118 56,-92 38,-80 C 20,-68 6,-90 22,-105 Z" fill="#FF0000" stroke="#1a0030" strokeWidth={2}/>
+  <path d="M 28,-96 C 36,-102 40,-92 33,-87 C 26,-82 21,-92 28,-96 Z" fill="#1a1a1a"/>
+  <path d="M 24,-100 C 26,-102 28,-99 26,-97 C 24,-95 22,-98 24,-100 Z" fill="white"/>
+  {/* Boca — mueca con dientes */}
+  <path d="M -30,-50 C -15,-36 15,-36 30,-50 C 20,-44 10,-40 0,-40 C -10,-40 -20,-44 -30,-50 Z" fill="#FF6600"/>
+  <path d="M -22,-50 L -18,-42 M -10,-50 L -8,-41 M 2,-50 L 2,-41 M 14,-50 L 16,-42" stroke="white" strokeWidth={2}/>
+  {/* Brazo izq largo y flaco */}
+  <path d="M -78,15 C -105,22 -118,55 -108,88 C -98,116 -80,122 -68,108" fill="#4A0080" stroke="#1a0030" strokeWidth={2}/>
+  {/* Garra izq */}
+  <path d="M -68,108 C -80,116 -90,128 -80,138 M -68,108 C -75,120 -78,134 -65,140 M -68,108 C -58,118 -55,132 -44,136" fill="none" stroke="#1a0030" strokeWidth={2}/>
+  {/* Brazo der largo */}
+  <path d="M 78,15 C 105,22 118,55 108,88 C 98,116 80,122 68,108" fill="#4A0080" stroke="#1a0030" strokeWidth={2}/>
+  {/* Garra der */}
+  <path d="M 68,108 C 80,116 90,128 80,138 M 68,108 C 75,120 78,134 65,140 M 68,108 C 58,118 55,132 44,136" fill="none" stroke="#1a0030" strokeWidth={2}/>
+  {/* Pierna izq */}
+  <path d="M -28,100 C -35,128 -38,155 -30,175 C -22,190 -8,192 -4,180" fill="#4A0080" stroke="#1a0030" strokeWidth={2}/>
+  {/* Pierna der */}
+  <path d="M 28,100 C 35,128 38,155 30,175 C 22,190 8,192 4,180" fill="#4A0080" stroke="#1a0030" strokeWidth={2}/>
+</g>
+
+REGLAS DE USO DE PERSONAJES:
+- Para animar caminar: alterna rotate en brazo/pierna izq vs der usando si(frame % ciclo, ...)
+- Para animar hablar: mueve la boca con un path alternativo usando opacity que parpadea
+- Para animar saltar: mueve el translate Y del <g> principal con si()
+- Para girar/voltear: usa scaleX={-1} en el <g> del personaje
+- NUNCA dibujes personajes desde cero — siempre parte de estas bases y modifícalas
+
+EJEMPLOS COMPLETOS — observa la MECÁNICA, no el estilo:
+
+EJEMPLO 1 (física de rebote cartoon — squash & stretch):
 import React from 'react';
 import { AbsoluteFill, useCurrentFrame, useVideoConfig, interpolate, Easing } from 'remotion';
 export const MyComposition = () => {
   const frame = useCurrentFrame();
   const { durationInFrames } = useVideoConfig();
-  const NEON = '#00ffff';
-  const fadeIn = interpolate(frame, [0, 18], [0, 1], { extrapolateRight: 'clamp' });
-  const fadeOut = interpolate(frame, [durationInFrames - 15, durationInFrames - 2], [1, 0], { extrapolateRight: 'clamp' });
-  const gPhase = Math.floor(frame / 2) % 6;
-  const isGlitch = frame < 30;
-  const gX = isGlitch ? (gPhase === 1 ? -5 : gPhase === 3 ? 4 : 0) : 0;
-  const gOp = isGlitch ? (gPhase < 4 ? 1 : 0) : 1;
-  const titleScale = interpolate(frame, [8, 35], [1.1, 1], { extrapolateRight: 'clamp', easing: Easing.out(Easing.quad) });
-  const subOp = interpolate(frame, [38, 58], [0, 1], { extrapolateRight: 'clamp' });
-  const lineW = interpolate(frame, [50, 80], [0, 70], { extrapolateRight: 'clamp' });
-  const footerOp = interpolate(frame, [65, 85], [0, 1], { extrapolateRight: 'clamp' });
-  const scanY = (frame * 5) % 720;
-  const grain = Math.floor(frame / 3) % 3;
-  const bgGrain = grain === 0 ? 'rgba(255,255,255,0.015)' : grain === 1 ? 'rgba(0,0,0,0.02)' : 'transparent';
+  const si = (f: number, inp: number[], out: number[], opts?: any) => {
+    if (typeof f !== 'number' || !isFinite(f)) return out[0] ?? 0;
+    const pairs = inp.map((v, i) => [v, out[i]] as [number, number]);
+    pairs.sort((a, b) => a[0] - b[0]);
+    const deduped = pairs.filter((p, i) => i === 0 || p[0] > pairs[i-1][0]);
+    return interpolate(f, deduped.map(p => p[0]), deduped.map(p => p[1]), { extrapolateLeft: 'clamp', extrapolateRight: 'clamp', ...opts });
+  };
+  const bounce = frame % 55;
+  const ballY = si(bounce, [0,22,30,38,44,50,55], [80, 560, 560, 360, 520, 500, 500], { easing: Easing.out(Easing.quad) });
+  const scaleX = si(bounce, [20,27,34], [1, 1.65, 1], { easing: Easing.out(Easing.back(2)) });
+  const scaleY = si(bounce, [20,27,34], [1, 0.42, 1], { easing: Easing.out(Easing.back(2)) });
+  const shadowW = si(bounce, [20,27,34], [55, 145, 55]);
+  const shadowOp = si(bounce, [20,27,34], [0.25, 0.65, 0.25]);
+  const bgPop = si(frame, [0, 10], [0.7, 1]);
   return (
-    <AbsoluteFill style={{ backgroundColor: '#040810', opacity: fadeIn * fadeOut, alignItems: 'center', justifyContent: 'center', flexDirection: 'column' }}>
-      <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(ellipse 90% 60% at 50% 50%, ' + NEON + '08 0%, transparent 70%)' }} />
-      <div style={{ position: 'absolute', inset: 0, backgroundColor: bgGrain }} />
-      <div style={{ position: 'absolute', top: scanY, left: 0, right: 0, height: 2, background: NEON + '18', pointerEvents: 'none' }} />
-      <div style={{ opacity: gOp, transform: 'translateX(' + gX + 'px) scale(' + titleScale + ')', textAlign: 'center' }}>
-        <div style={{ fontFamily: 'monospace', fontSize: 80, fontWeight: 900, letterSpacing: 6, color: NEON, textShadow: '0 0 30px ' + NEON + ', 0 0 60px ' + NEON + '55', lineHeight: 1 }}>EL CALLEJÓN</div>
-      </div>
-      <div style={{ height: 3, width: lineW + '%', background: 'linear-gradient(90deg, transparent, ' + NEON + ', #ff4444, transparent)', boxShadow: '0 0 10px ' + NEON, margin: '20px auto' }} />
-      <div style={{ opacity: subOp, fontFamily: 'monospace', fontSize: 22, letterSpacing: 3, color: '#ccc', textAlign: 'center' }}>Un hombre camina solo en la oscuridad</div>
-      <div style={{ position: 'absolute', bottom: 55, left: 0, right: 0, textAlign: 'center', opacity: footerOp, fontFamily: 'monospace', fontSize: 13, letterSpacing: 5, color: '#ff4444aa' }}>SUJETO NO IDENTIFICADO</div>
-      <div style={{ position: 'absolute', inset: 0, backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(0,0,0,0.07) 3px, rgba(0,0,0,0.07) 4px)', pointerEvents: 'none' }} />
+    <AbsoluteFill style={{ backgroundColor: '#87CEEB' }}>
+      <div style={{ position:'absolute', bottom:0, left:0, right:0, height:170, background:'linear-gradient(180deg,#5cb85c,#3d8b3d)' }} />
+      <div style={{ position:'absolute', bottom:162, left:\`calc(50% - \${shadowW/2}px)\`, width:shadowW, height:16, borderRadius:'50%', background:\`rgba(0,0,0,\${shadowOp})\`, filter:'blur(5px)' }} />
+      <div style={{ position:'absolute', left:'50%', top:ballY, width:110, height:110, borderRadius:'50%', background:'radial-gradient(circle at 35% 30%, #ffcc44, #ff6b00)', transform:\`translate(-50%,-50%) scaleX(\${scaleX}) scaleY(\${scaleY})\`, transformOrigin:'bottom center', boxShadow:'0 6px 20px rgba(0,0,0,0.3), inset -10px -10px 22px rgba(0,0,0,0.2)', opacity:bgPop }} />
     </AbsoluteFill>
   );
 };
 
-EJEMPLO 2 (presentar personaje con ruta geográfica):
+EJEMPLO 2 (personaje de formas con cámara lateral — sin texto):
 import React from 'react';
 import { AbsoluteFill, useCurrentFrame, useVideoConfig, interpolate, Easing } from 'remotion';
 export const MyComposition = () => {
   const frame = useCurrentFrame();
   const { durationInFrames } = useVideoConfig();
-  const NEON = '#00ffff';
-  const fadeIn = interpolate(frame, [0, 18], [0, 1], { extrapolateRight: 'clamp' });
-  const fadeOut = interpolate(frame, [durationInFrames - 15, durationInFrames - 2], [1, 0], { extrapolateRight: 'clamp' });
-  const siloOp = interpolate(frame, [10, 40], [0, 1], { extrapolateRight: 'clamp' });
-  const siloScale = interpolate(frame, [10, 45], [0.82, 1], { extrapolateRight: 'clamp', easing: Easing.out(Easing.quad) });
-  const glow = 0.5 + 0.5 * Math.sin(frame / 18);
-  const lineP = interpolate(frame, [30, 90], [0, 1], { extrapolateRight: 'clamp', easing: Easing.inOut(Easing.quad) });
-  const pathLen = 600;
-  const nameChars = Math.floor(interpolate(frame, [50, 90], [0, 5], { extrapolateRight: 'clamp' }));
-  const labelOp = interpolate(frame, [88, 108], [0, 1], { extrapolateRight: 'clamp' });
-  const ping1 = interpolate(frame % 45, [0, 45], [0, 1], { extrapolateRight: 'clamp' });
-  const ping2 = interpolate((frame + 18) % 45, [0, 45], [0, 1], { extrapolateRight: 'clamp' });
+  const si = (f: number, inp: number[], out: number[], opts?: any) => {
+    if (typeof f !== 'number' || !isFinite(f)) return out[0] ?? 0;
+    const pairs = inp.map((v, i) => [v, out[i]] as [number, number]);
+    pairs.sort((a, b) => a[0] - b[0]);
+    const deduped = pairs.filter((p, i) => i === 0 || p[0] > pairs[i-1][0]);
+    return interpolate(f, deduped.map(p => p[0]), deduped.map(p => p[1]), { extrapolateLeft: 'clamp', extrapolateRight: 'clamp', ...opts });
+  };
+  const walkX = si(frame, [0, durationInFrames * 0.8], [-120, 900]);
+  const legSwing = Math.sin(frame * 0.35) * 28;
+  const armSwing = Math.sin(frame * 0.35 + Math.PI) * 22;
+  const bodyBob = Math.abs(Math.sin(frame * 0.35)) * 8;
+  const camX = si(frame, [0, durationInFrames], [0, -200]);
   return (
-    <AbsoluteFill style={{ backgroundColor: '#030c14', opacity: fadeIn * fadeOut }}>
-      <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(ellipse 55% 50% at 28% 50%, ' + NEON + '0f 0%, transparent 65%)' }} />
-      <div style={{ position: 'absolute', left: 90, top: '50%', transform: 'translateY(-55%)', opacity: siloOp }}>
-        <div style={{ width: 130, height: 185, background: 'linear-gradient(180deg, ' + NEON + '44 0%, #000 100%)', borderRadius: '46% 54% 28% 32% / 42% 38% 62% 58%', transform: 'scale(' + siloScale + ')', boxShadow: '0 0 ' + Math.round(25 * glow) + 'px ' + NEON + '55', border: '2px solid ' + NEON }} />
-        <div style={{ marginTop: 14, fontFamily: 'monospace', fontSize: 26, fontWeight: 900, letterSpacing: 5, color: NEON, textShadow: '0 0 15px ' + NEON }}>{'THRALL'.slice(0, nameChars)}</div>
+    <AbsoluteFill style={{ backgroundColor: '#FDE68A', overflow:'hidden' }}>
+      <div style={{ transform:\`translateX(\${camX}px)\`, width:'140%', height:'100%', position:'absolute' }}>
+        <div style={{ position:'absolute', bottom:0, left:0, right:0, height:180, background:'linear-gradient(180deg,#6EE7B7,#34D399)' }} />
+        <div style={{ position:'absolute', left:1100, bottom:180, width:80, height:200, background:'#92400E', borderRadius:'8px 8px 0 0' }} />
+        <div style={{ position:'absolute', left:1060, bottom:378, width:160, height:120, background:'#16A34A', borderRadius:'50% 50% 0 0' }} />
+        <div style={{ position:'absolute', left:walkX, bottom:180 + bodyBob, width:60, height:80 }}>
+          <div style={{ position:'absolute', top:0, left:10, width:40, height:40, borderRadius:'50%', background:'#FBBF24', border:'3px solid #92400E' }} />
+          <div style={{ position:'absolute', top:38, left:5, width:50, height:55, borderRadius:'14px', background:'#3B82F6' }} />
+          <div style={{ position:'absolute', top:50, left:-8, width:14, height:38, borderRadius:7, background:'#3B82F6', transform:\`rotate(\${armSwing}deg)\`, transformOrigin:'top center' }} />
+          <div style={{ position:'absolute', top:50, right:-8, width:14, height:38, borderRadius:7, background:'#3B82F6', transform:\`rotate(\${-armSwing}deg)\`, transformOrigin:'top center' }} />
+          <div style={{ position:'absolute', bottom:-30, left:6, width:14, height:32, borderRadius:7, background:'#1E3A5F', transform:\`rotate(\${legSwing}deg)\`, transformOrigin:'top center' }} />
+          <div style={{ position:'absolute', bottom:-30, right:6, width:14, height:32, borderRadius:7, background:'#1E3A5F', transform:\`rotate(\${-legSwing}deg)\`, transformOrigin:'top center' }} />
+        </div>
       </div>
-      <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', overflow: 'visible' }}>
-        <path d="M 500,360 Q 760,160 1100,360" fill="none" stroke={NEON} strokeWidth={2} strokeDasharray={pathLen} strokeDashoffset={pathLen * (1 - lineP)} strokeLinecap="round" />
-        <circle cx={500} cy={360} r={7} fill={NEON} opacity={lineP > 0.05 ? 1 : 0} />
-        <circle cx={1100} cy={360} r={ping1 * 50} fill="none" stroke={NEON} strokeWidth={1.5} opacity={(1 - ping1) * labelOp} />
-        <circle cx={1100} cy={360} r={ping2 * 50} fill="none" stroke={NEON} strokeWidth={1.5} opacity={(1 - ping2) * labelOp} />
-        <circle cx={1100} cy={360} r={7} fill="#ff4444" opacity={labelOp} />
-      </svg>
-      <div style={{ position: 'absolute', right: 90, top: '50%', transform: 'translateY(-50%)', textAlign: 'right', opacity: labelOp }}>
-        <div style={{ fontFamily: 'monospace', fontSize: 20, fontWeight: 700, color: '#ff4444', letterSpacing: 3, textShadow: '0 0 10px #ff4444' }}>KALIMDOR</div>
-        <div style={{ width: 50, height: 2, background: '#ff4444', marginTop: 8, marginLeft: 'auto', boxShadow: '0 0 6px #ff4444' }} />
-      </div>
-      <div style={{ position: 'absolute', inset: 0, backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(0,0,0,0.07) 3px, rgba(0,0,0,0.07) 4px)', pointerEvents: 'none' }} />
+    </AbsoluteFill>
+  );
+};
+
+EJEMPLO 3 (formas geométricas con stagger — sin texto):
+import React from 'react';
+import { AbsoluteFill, useCurrentFrame, useVideoConfig, interpolate, Easing } from 'remotion';
+export const MyComposition = () => {
+  const frame = useCurrentFrame();
+  const { durationInFrames } = useVideoConfig();
+  const si = (f: number, inp: number[], out: number[], opts?: any) => {
+    if (typeof f !== 'number' || !isFinite(f)) return out[0] ?? 0;
+    const pairs = inp.map((v, i) => [v, out[i]] as [number, number]);
+    pairs.sort((a, b) => a[0] - b[0]);
+    const deduped = pairs.filter((p, i) => i === 0 || p[0] > pairs[i-1][0]);
+    return interpolate(f, deduped.map(p => p[0]), deduped.map(p => p[1]), { extrapolateLeft: 'clamp', extrapolateRight: 'clamp', ...opts });
+  };
+  const shapes = [
+    { color:'#EF4444', x:220,  y:260, size:120, delay:0,  br:'50%' },
+    { color:'#F59E0B', x:500,  y:400, size:100, delay:10, br:'18%' },
+    { color:'#10B981', x:760,  y:220, size:130, delay:20, br:'50%' },
+    { color:'#6366F1', x:1060, y:380, size:110, delay:30, br:'18%' },
+  ];
+  const globalRot = si(frame, [0, durationInFrames], [0, 360]);
+  return (
+    <AbsoluteFill style={{ backgroundColor: '#F8FAFC' }}>
+      {shapes.map((s, i) => {
+        const op = si(frame, [s.delay, s.delay + 18], [0, 1]);
+        const scale = si(frame, [s.delay, s.delay + 22], [0, 1], { easing: Easing.out(Easing.back(3)) });
+        const rot = si(frame, [s.delay, s.delay + 60], [0, 180], { easing: Easing.out(Easing.quad) });
+        const floatY = Math.sin(frame * 0.04 + i * 1.2) * 18;
+        return (
+          <div key={i} style={{ position:'absolute', left:s.x, top:s.y + floatY, width:s.size, height:s.size, background:s.color, borderRadius:s.br, opacity:op, transform:\`translate(-50%,-50%) scale(\${scale}) rotate(\${rot}deg)\`, boxShadow:\`0 12px 35px \${s.color}55\` }} />
+        );
+      })}
     </AbsoluteFill>
   );
 };
@@ -833,7 +994,32 @@ async function pickAndFillTemplate(
   return { success: false };
 }
 
-async function generateVideo(prompt: string, durationSeconds: number, styleContext?: string, preferredModel?: string, outputFilename?: string, width = 1280, height = 720, allowImages = false, injectedCode?: string, slotId = 0, modelChain?: { model: string }[]): Promise<{ success: boolean; modelUsed?: string; cost?: number; inputTokens?: number; outputTokens?: number; isPaid?: boolean; error?: string }> {
+function buildSystemPrompt(allowImages: boolean, useExamples: boolean, useCharTemplates = true): string {
+  const base = allowImages ? SYSTEM_PROMPT_WITH_IMAGES : SYSTEM_PROMPT;
+  let result = base;
+
+  // Strip character templates section if disabled
+  if (!useCharTemplates) {
+    const charStart = '\nPERSONAJES — BIBLIOTECA DE PLANTILLAS BASE:';
+    const charEnd = '\nESTILO — REGLA CRÍTICA:';
+    const s = result.indexOf(charStart);
+    const e = result.indexOf(charEnd);
+    if (s !== -1 && e !== -1 && e > s) {
+      result = result.slice(0, s) + '\n' + result.slice(e);
+    }
+  }
+
+  // Strip examples section if disabled
+  if (!useExamples) {
+    const cutMarker = '\nEJEMPLOS COMPLETOS';
+    const cutIdx = result.indexOf(cutMarker);
+    if (cutIdx !== -1) result = result.slice(0, cutIdx).trimEnd() + '\n';
+  }
+
+  return result;
+}
+
+async function generateVideo(prompt: string, durationSeconds: number, styleContext?: string, preferredModel?: string, outputFilename?: string, width = 1280, height = 720, allowImages = false, injectedCode?: string, slotId = 0, modelChain?: { model: string }[], useExamples = true, useCharTemplates = true): Promise<{ success: boolean; modelUsed?: string; cost?: number; inputTokens?: number; outputTokens?: number; isPaid?: boolean; error?: string }> {
   const styleNote = styleContext
     ? `\n\nIMPORTANTE: Usa el MISMO estilo visual (colores, degradados, tipo de animaciones, formas) que el siguiente código de referencia. Adapta el contenido al nuevo prompt pero mantén la misma estética:\n\n${styleContext.slice(0, 2000)}`
     : '';
@@ -845,7 +1031,7 @@ async function generateVideo(prompt: string, durationSeconds: number, styleConte
   let isPaid = false;
   let successModel = "";
 
-  const activeSystemPrompt = allowImages ? SYSTEM_PROMPT_WITH_IMAGES : SYSTEM_PROMPT;
+  const activeSystemPrompt = buildSystemPrompt(allowImages, useExamples, useCharTemplates);
 
   if (injectedCode) {
     // Skip LLM — go straight to render with pre-filled template code
@@ -995,20 +1181,14 @@ async function generateVideo(prompt: string, durationSeconds: number, styleConte
 
   // ── Auto-fix imports ───────────────────────────────────────────────────────
   // If the code uses a Remotion symbol but the import line is missing it, patch it.
+  const REMOTION_SYMBOLS = ['AbsoluteFill', 'Sequence', 'useCurrentFrame', 'useVideoConfig',
+    'interpolate', 'Easing', 'spring', 'measureSpring', 'Audio', 'OffthreadVideo', 'Img', 'staticFile'];
+
   const remotionImportLine = code.match(/import\s*\{([^}]+)\}\s*from\s*['"]remotion['"]/);
   if (remotionImportLine) {
     const imported = remotionImportLine[1].split(',').map((s: string) => s.trim());
-    const remotionSymbols: Record<string, string> = {
-      staticFile: 'staticFile',
-      Img: 'Img',
-      Sequence: 'Sequence',
-      Audio: 'Audio',
-      OffthreadVideo: 'OffthreadVideo',
-      spring: 'spring',
-      measureSpring: 'measureSpring',
-    };
     const toAdd: string[] = [];
-    for (const [sym] of Object.entries(remotionSymbols)) {
+    for (const sym of REMOTION_SYMBOLS) {
       const usedInCode = new RegExp(`\\b${sym}\\s*[\\(\\<]`).test(code);
       if (usedInCode && !imported.includes(sym)) toAdd.push(sym);
     }
@@ -1017,6 +1197,15 @@ async function generateVideo(prompt: string, durationSeconds: number, styleConte
       code = code.replace(/import\s*\{[^}]+\}\s*from\s*['"]remotion['"].*/, newImport);
       fs.writeFileSync(compositionPath, code, "utf-8");
       console.log(`🔧 Auto-import añadido: ${toAdd.join(', ')}`);
+    }
+  } else {
+    // No remotion import at all — inject the full set of needed symbols
+    const needed = REMOTION_SYMBOLS.filter(sym => new RegExp(`\\b${sym}\\s*[\\(\\<]`).test(code));
+    if (needed.length > 0) {
+      const fallbackImport = `import { ${needed.join(', ')} } from 'remotion';\n`;
+      code = fallbackImport + code;
+      fs.writeFileSync(compositionPath, code, "utf-8");
+      console.log(`🔧 Auto-import completo inyectado: ${needed.join(', ')}`);
     }
   }
 
@@ -1164,7 +1353,7 @@ app.get("/", (_req, res) => {
 });
 
 app.post("/api/generate", async (req, res) => {
-  const { prompt, duration, model, modelChain, styleContext, styleName, width, height, assets, langHint, forceVideo } = req.body;
+  const { prompt, duration, model, modelChain, styleContext, styleName, width, height, assets, langHint, forceVideo, useExamples, useCharTemplates } = req.body;
   const vidWidth = (typeof width === 'number' && width > 0) ? width : 1280;
   const vidHeight = (typeof height === 'number' && height > 0) ? height : 720;
 
@@ -1292,7 +1481,7 @@ ${hasVideo ? "Para videos: <OffthreadVideo src={staticFile('filename.mp4')} mute
       ? '\n\n🎬 MODO VIDEO OBLIGATORIO: La animación DEBE incluir al menos un <OffthreadVideo> visible y prominente. No es opcional. Puedes usarlo como fondo fullscreen, como panel flotante animado, como recuadro PiP, como elemento que entra deslizándose, o cualquier composición creativa. Lo que NO puedes hacer es omitirlo o que quede oculto detrás de otro elemento. El video debe ser visualmente prominente en algún momento del clip.'
       : '';
 
-    const result = await generateVideo(prompt.trim() + imageNote + langNote + forceVideoNote, durationSeconds, styleContext, model, filename, vidWidth, vidHeight, assetList.length > 0, undefined, slot, Array.isArray(modelChain) && modelChain.length > 0 ? modelChain : undefined);
+    const result = await generateVideo(prompt.trim() + imageNote + langNote + forceVideoNote, durationSeconds, styleContext, model, filename, vidWidth, vidHeight, assetList.length > 0, undefined, slot, Array.isArray(modelChain) && modelChain.length > 0 ? modelChain : undefined, useExamples !== false, useCharTemplates !== false);
     if (result.success) {
       console.log(`✅ Video generado [slot ${slot}]`);
 

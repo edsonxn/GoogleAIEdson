@@ -3159,6 +3159,13 @@ async function runAutoGeneration() {
     startSectionImageProgressPolling(window.currentProject);
     updateYouTubeMetadataButtonState();
 
+    // Arrancar live preview polling si el usuario lo activó (tan pronto como phase1 termina)
+    {
+      const _lvEnabled = document.getElementById('livePreviewMode')?.checked;
+      const _lvFolder = window.currentProject?.folderName;
+      if (_lvEnabled && _lvFolder) startLivePreviewPolling(_lvFolder);
+    }
+
     // =============================================================== 
     // VERIFICACIÃ“N DE GUIONES ANTES DE GENERAR AUDIOS
     // =============================================================== 
@@ -3712,7 +3719,7 @@ async function runAutoGeneration() {
       
       // Esperar un momento para asegurar que el sistema de archivos se actualice
       await new Promise(resolve => setTimeout(resolve, 2000));
-      
+
       try {
         // Verificar audios para el proyecto principal
         await regenerateAllAudios();
@@ -3743,6 +3750,7 @@ async function runAutoGeneration() {
       }
     }
     
+    stopLivePreviewPolling();
     console.log('\n' + 'ðŸŽ‰'.repeat(50));
     console.log('ðŸŽ‰ GENERACIÃ“N AUTOMÃƒÆ’Ã‚ÂTICA POR LOTES COMPLETADA');
     console.log('ðŸŽ‰'.repeat(50));
@@ -16269,8 +16277,8 @@ document.addEventListener('DOMContentLoaded', function() {
       const minVal = parseInt(minWordsInput.value) || 0;
       const maxVal = parseInt(maxWordsInput.value) || 0;
 
-      if (maxVal < minVal + 100) {
-        maxWordsInput.value = minVal + 100;
+      if (maxVal < minVal + 10) {
+        maxWordsInput.value = minVal + 10;
       }
     }
 
@@ -17900,6 +17908,7 @@ if (downloadProjectZipBtn) {
 let _brollPreviewId = null;
 let _brollPreviewSections = null;
 let _brollPreviewFolderName = null;
+let _livePreviewPoller = null; // setInterval handle for live preview polling
 let _brollShortsMode = false; // single source of truth for shorts mode
 let _brollFlatClips = []; // Flattened list: { sectionIndex, clipIndex, secNum, clip, audioOffset, masterAudioOffset }
 let _brollMasterAudioOffsets = {}; // { [secNum]: absolute start seconds in master audio }
@@ -17910,7 +17919,7 @@ let _brollAIStyleInstructions = ''; // User instructions for AI clip style
 let _lastAIClipCode = '';           // TSX code of last generated AI clip (for styleContext)
 
 // ─── AI Clip Queue System (parallel) ──────────────────────────────────────────
-const AI_MAX_PARALLEL = 3;          // must match HV_SLOTS in server.ts
+const AI_MAX_PARALLEL = 6;          // must match HV_SLOTS in server.ts
 let _aiClipQueue = [];              // [{ sectionIndex, clipIndex }] — pending
 const _aiClipsActive = new Set();   // Set<"si_ci"> — currently generating
 const _aiProgressTimers = {};       // timers por clip para las fases de texto
@@ -18184,7 +18193,9 @@ async function _runAIClipGeneration(sectionIndex, clipIndex, forceWebImages = nu
         useStockVideo: webImagesOn && (document.getElementById('clipTypeStockVideo')?.checked || false),
         useBrollVideo: webImagesOn && (document.getElementById('clipTypeBrollVideo')?.checked || false),
         useAssets: false,
-        isVertical: _brollShortsMode
+        isVertical: _brollShortsMode,
+        useExamples: document.getElementById('useExamplesToggle')?.checked !== false,
+        useCharTemplates: document.getElementById('useCharTemplatesToggle')?.checked !== false
       })
     });
     const data = await response.json();
@@ -18484,7 +18495,7 @@ async function autoAssignSectionMusic() {
 
     let assigned = 0;
     for (const [secNumStr, track] of Object.entries(data.assignments)) {
-      _sectionMusicAssignments[parseInt(secNumStr)] = track;
+      _sectionMusicAssignments[parseFloat(secNumStr)] = track;
       assigned++;
     }
 
@@ -18666,6 +18677,74 @@ function buildFlatClipList(sections) {
     }
   }
   return flat;
+}
+
+// ── Live Preview: poll server for new sections as audio+media become ready ────
+function startLivePreviewPolling(folderName) {
+  if (_livePreviewPoller) return; // already running
+  console.log(`🎬 [LivePreview] Iniciando polling para: ${folderName}`);
+  // Reset preview state so isFirstOpen=true for this run
+  _brollPreviewId = null;
+  _brollPreviewSections = null;
+
+  let _firstTick = true;
+  const tick = async () => {
+    try {
+      const res = await fetch(`/api/broll-preview-live/${encodeURIComponent(folderName)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ videoConfig: getVideoConfig(), fresh: _firstTick })
+      });
+      _firstTick = false;
+      if (!res.ok) return;
+      const data = await res.json();
+
+      if (!data.added || data.added.length === 0) return; // nothing new
+
+      console.log(`🎬 [LivePreview] Nuevas secciones: ${data.added.join(', ')}`);
+
+      const isFirstOpen = !_brollPreviewId;
+
+      // Update local state
+      _brollPreviewId = data.previewId;
+      _brollPreviewSections = data.sections;
+      _brollPreviewFolderName = folderName;
+      _sectionMusicAssignments = { ..._sectionMusicAssignments };
+
+      try {
+        _brollFlatClips = buildFlatClipList(data.sections);
+      } catch (e2) {
+        console.error('[LivePreview] buildFlatClipList error:', e2);
+      }
+
+      // Always render + show panel (safe to call when already visible)
+      try { renderBrollTimeline(); } catch (e2) { console.error('[LivePreview] renderBrollTimeline error:', e2); }
+
+      console.log(`[LivePreview] Abriendo panel — brollTimelinePanel existe: ${!!document.getElementById('brollTimelinePanel')}`);
+      try { showBrollTimelinePanel(); } catch (e2) { console.error('[LivePreview] showBrollTimelinePanel error:', e2); }
+      try { loadMasterPreviewAudio(folderName); } catch (e2) { console.error('[LivePreview] loadMasterPreviewAudio error:', e2); }
+      try { _autoQueueRemotionClips(); } catch (e2) { console.error('[LivePreview] _autoQueueRemotionClips error:', e2); }
+
+      if (isFirstOpen) {
+        showNotification(`🎬 Vista previa en vivo abierta — sección ${data.added[0]} lista`, 'success');
+      } else {
+        showNotification(`🎬 Sección${data.added.length > 1 ? 'es' : ''} ${data.added.join(', ')} añadida${data.added.length > 1 ? 's' : ''} al preview`, 'info');
+      }
+    } catch (e) {
+      console.error('[LivePreview] Error en tick:', e.message, e.stack);
+    }
+  };
+
+  tick(); // Run immediately
+  _livePreviewPoller = setInterval(tick, 10000); // Then every 10s
+}
+
+function stopLivePreviewPolling() {
+  if (_livePreviewPoller) {
+    clearInterval(_livePreviewPoller);
+    _livePreviewPoller = null;
+    console.log('🎬 [LivePreview] Polling detenido');
+  }
 }
 
 async function loadMasterPreviewAudio(folderName) {
@@ -19089,6 +19168,18 @@ function stopBrollAudio() {
   stopMusicPreview();
 }
 
+function _clipModelShort(model) {
+  if (!model) return '';
+  if (model.startsWith('ollama')) return 'local';
+  if (model.includes('3.1-pro') || model.includes('3.1-pro-preview')) return '3.1P';
+  if (model.includes('2.5-pro')) return '2.5P';
+  if (model.includes('2.5-flash')) return '2.5F';
+  if (model.includes('3-flash') || model.includes('3-flash-preview')) return '3F';
+  if (model === 'flash' || model.includes('3.5-flash')) return '3.5F';
+  if (model.includes('lite') || model === '') return 'lite';
+  return model.replace('gemini-', '').slice(0, 6);
+}
+
 function renderBrollTimeline() {
   const container = document.getElementById('brollTimelineContainer');
   if (!container || !_brollPreviewSections) return;
@@ -19161,8 +19252,13 @@ function renderBrollTimeline() {
         ? `<img class="tl-clip-thumb" src="${thumbSrc}" alt="clip" loading="lazy">`
         : `<div class="tl-clip-thumb-placeholder"><i class="fas fa-image"></i></div>`;
 
+      const _aiModelShort = _clipModelShort(clip.aiModel);
+      const _aiBadge = clip.aiGenerated && _aiModelShort
+        ? `<span class="tl-clip-ai-badge ${clip.aiIsPaid ? 'pago' : 'gratis'}" title="${clip.aiIsPaid ? 'API pago' : 'API gratis'} · ${clip.aiModel || ''}">${_aiModelShort}</span>`
+        : '';
       html += `<div class="tl-clip" data-flat="${flatIdx}" data-section="${si}" data-clip="${ci}" style="width: ${clipWidth}px;" onclick="selectBrollClip(${flatIdx})">
         <span class="tl-clip-type-badge ${clip.type}">${clip.type === 'video' ? 'VID' : 'IMG'}</span>
+        ${_aiBadge}
         <div class="tl-clip-btns">
           <button class="tl-clip-regen-btn" onclick="event.stopPropagation(); regenerateBrollClip(${si}, ${ci}, this)" title="Regenerar clip (misma secci&oacute;n)">
             <i class="fas fa-sync-alt"></i>
@@ -19192,12 +19288,15 @@ function renderBrollTimeline() {
         </div>
       </div>`;
 
-      // Transition badge between consecutive clips (not after last clip)
+      // Transition badge + split button between consecutive clips
       if (ci < sec.clips.length - 1) {
         const tr = clip.transitionOut || null;
         const trLabel = tr ? _transitionLabel(tr) : '✂';
         const trClass = tr ? 'tl-transition-badge' : 'tl-transition-badge tl-transition-cut';
-        html += `<button class="${trClass}" data-section="${si}" data-clip="${ci}" onclick="event.stopPropagation(); openTransitionPicker(${si}, ${ci}, this)" title="${tr ? `Transición: ${tr}` : 'Corte directo'}">${trLabel}</button>`;
+        html += `<div class="tl-split-group">
+          <button class="${trClass}" data-section="${si}" data-clip="${ci}" onclick="event.stopPropagation(); openTransitionPicker(${si}, ${ci}, this)" title="${tr ? `Transición: ${tr}` : 'Corte directo'}">${trLabel}</button>
+          <button class="tl-split-btn" onclick="event.stopPropagation(); splitSectionAtClip(${si}, ${ci})" title="Dividir sección aquí — crea 2 secciones con música independiente">✂ dividir</button>
+        </div>`;
       }
 
       flatIdx++;
@@ -19869,6 +19968,44 @@ const _ALL_TRANSITIONS = Object.keys(_TRANSITION_LABELS);
 
 function _transitionLabel(t) {
   return _TRANSITION_LABELS[t] || t;
+}
+
+function splitSectionAtClip(si, afterClipIdx) {
+  const sec = _brollPreviewSections[si];
+  if (!sec || sec.clips.length < 2) {
+    showNotification('La sección necesita al menos 2 clips para dividir', 'warning');
+    return;
+  }
+  if (afterClipIdx < 0 || afterClipIdx >= sec.clips.length - 1) return;
+
+  const clipsA = sec.clips.slice(0, afterClipIdx + 1);
+  const clipsB = sec.clips.slice(afterClipIdx + 1);
+
+  // Unique secNum for the new section (avoid collision with existing)
+  let newSecNum = Math.round((sec.secNum + 0.5) * 10) / 10;
+  while (_brollPreviewSections.some(s => Math.abs(s.secNum - newSecNum) < 0.05)) newSecNum = Math.round((newSecNum + 0.1) * 10) / 10;
+
+  // Keep first half in original section
+  _brollPreviewSections[si] = { ...sec, clips: clipsA };
+
+  // Insert second half as new section right after
+  _brollPreviewSections.splice(si + 1, 0, {
+    secNum: newSecNum,
+    audioDuration: 0,
+    clips: clipsB,
+    pauseClips: [],
+  });
+
+  _brollFlatClips = buildFlatClipList(_brollPreviewSections);
+  renderBrollTimeline();
+  showNotification(`Sección ${sec.secNum} dividida — asigna música a SEC ${newSecNum}`, 'success');
+
+  // Sync updated sections to disk so clip preview/audio endpoints work correctly
+  fetch('/api/broll-preview-sync-sections', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ folderName: _brollPreviewFolderName, sections: _brollPreviewSections })
+  }).catch(e => console.warn('[split] sync error:', e.message));
 }
 
 function openTransitionPicker(sectionIndex, clipIndex, badgeEl) {
@@ -20885,6 +21022,16 @@ function restoreBrollTranslatePrefs() {
         if (match) match.selected = true;
       }
     }
+    // Chatterbox sliders
+    const cbPrefs = (JSON.parse(localStorage.getItem('chatterbox_voice_prefs') || '{}'))['_global_translate'];
+    if (cbPrefs) {
+      const exEl  = document.getElementById('translateChatterboxExag');
+      const cfgEl = document.getElementById('translateChatterboxCfg');
+      const tmpEl = document.getElementById('translateChatterboxTemp');
+      if (exEl  && cbPrefs.exaggeration != null) { exEl.value  = cbPrefs.exaggeration; const l = document.getElementById('tlCbExagLabel'); if (l) l.textContent = parseFloat(cbPrefs.exaggeration).toFixed(2); }
+      if (cfgEl && cbPrefs.cfgWeight    != null) { cfgEl.value = cbPrefs.cfgWeight;    const l = document.getElementById('tlCbCfgLabel');  if (l) l.textContent = parseFloat(cbPrefs.cfgWeight).toFixed(2); }
+      if (tmpEl && cbPrefs.temperature  != null) { tmpEl.value = cbPrefs.temperature;  const l = document.getElementById('tlCbTempLabel'); if (l) l.textContent = parseFloat(cbPrefs.temperature).toFixed(2); }
+    }
     // Trigger LLM change to show/hide local model selector
     onBrollLlmChange();
   } catch (e) { console.error('Error restoring translate prefs:', e); }
@@ -21844,6 +21991,9 @@ async function ytStartUpload() {
     return;
   }
 
+  const isShort = document.getElementById('ytIsShort')?.checked;
+  const finalTitle = isShort && !title.toLowerCase().includes('#shorts') ? title + ' #Shorts' : title;
+
   const description = document.getElementById('ytDescription').value;
   const tagsRaw = document.getElementById('ytTags').value;
   const tags = tagsRaw.split(',').map(t => t.trim()).filter(Boolean);
@@ -21878,7 +22028,7 @@ async function ytStartUpload() {
     const res = await fetch('/youtube/upload', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ videoPath: _ytVideoPath, folderName: _ytFolderName, channelId: _ytSelectedChannel?.id, title, description, tags, privacyStatus, publishAt: publishAtISO }),
+      body: JSON.stringify({ videoPath: _ytVideoPath, folderName: _ytFolderName, channelId: _ytSelectedChannel?.id, title: finalTitle, description, tags, privacyStatus, publishAt: publishAtISO }),
     });
     const data = await res.json();
 
@@ -21966,6 +22116,9 @@ function _cfgCaptureAll() {
     voiceSelect: v('voiceSelect'),
     autoGenerateApplioAudio: c('autoGenerateApplioAudio'),
     applioVoiceSelect: v('applioVoiceSelect'),
+    applioModelSelect: v('applioModelSelect'),
+    applioPitch: v('applioPitch'),
+    applioSpeed: v('applioSpeed'),
     autoGenerateQwenAudio: c('autoGenerateQwenAudio'),
     qwenVoiceSelect: v('qwenVoiceSelect'),
     autoGenerateChatterboxAudio: c('autoGenerateChatterboxAudio'),
@@ -21984,6 +22137,8 @@ function _cfgCaptureAll() {
     brollUseTransitionsToggle: c('brollUseTransitionsToggle'),
     videoMinClipDuration: v('videoMinClipDuration'),
     tlStyleContextToggle: c('tlStyleContextToggle'),
+    useExamplesToggle: c('useExamplesToggle'),
+    useCharTemplatesToggle: c('useCharTemplatesToggle'),
     brollAIStyleInput: v('brollAIStyleInput'),
     clipMixWeights,
     modelChain,
@@ -22003,7 +22158,34 @@ function _cfgApplyAll(cfg) {
   check('autoGenerateAudio', cfg.autoGenerateAudio);
   set('voiceSelect', cfg.voiceSelect);
   check('autoGenerateApplioAudio', cfg.autoGenerateApplioAudio);
-  set('applioVoiceSelect', cfg.applioVoiceSelect);
+  set('applioModelSelect', cfg.applioModelSelect);
+  if (cfg.applioPitch != null) {
+    set('applioPitch', cfg.applioPitch);
+    const lbl = document.getElementById('pitchValue');
+    if (lbl) lbl.textContent = cfg.applioPitch;
+  }
+  if (cfg.applioSpeed != null) {
+    set('applioSpeed', cfg.applioSpeed);
+    const lbl = document.getElementById('speedValue');
+    if (lbl) lbl.textContent = cfg.applioSpeed;
+  }
+  // Applio voice loads async — poll until options are available (same pattern as Chatterbox)
+  if (cfg.applioVoiceSelect != null) {
+    const applyApplioVoice = () => {
+      const sel = document.getElementById('applioVoiceSelect');
+      if (sel && sel.options.length > 1) sel.value = cfg.applioVoiceSelect;
+    };
+    const sel = document.getElementById('applioVoiceSelect');
+    if (sel && sel.options.length > 1) {
+      applyApplioVoice();
+    } else {
+      const interval = setInterval(() => {
+        const s = document.getElementById('applioVoiceSelect');
+        if (s && s.options.length > 1) { clearInterval(interval); applyApplioVoice(); }
+      }, 100);
+      setTimeout(() => clearInterval(interval), 5000);
+    }
+  }
   check('autoGenerateQwenAudio', cfg.autoGenerateQwenAudio);
   set('qwenVoiceSelect', cfg.qwenVoiceSelect);
   check('autoGenerateChatterboxAudio', cfg.autoGenerateChatterboxAudio);
@@ -22060,6 +22242,8 @@ function _cfgApplyAll(cfg) {
     localStorage.setItem('hv_videoMinClipDuration', cfg.videoMinClipDuration);
   }
   check('tlStyleContextToggle', cfg.tlStyleContextToggle);
+  check('useExamplesToggle', cfg.useExamplesToggle);
+  check('useCharTemplatesToggle', cfg.useCharTemplatesToggle);
   set('brollAIStyleInput', cfg.brollAIStyleInput);
 
   if (cfg.clipMixWeights) {

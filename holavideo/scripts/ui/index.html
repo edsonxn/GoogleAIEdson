@@ -228,9 +228,37 @@
 
     .meta-badge.model-flash { color: #f0a500; border-color: #3a2e00; background: #1a1500; }
     .meta-badge.model-lite { color: #667eea; border-color: #2a2f5a; background: #141828; }
+    .meta-badge.model-25flash { color: #34d399; border-color: #0a3322; background: #061a10; }
+    .meta-badge.model-25pro { color: #f472b6; border-color: #3a0a25; background: #1a0612; }
+    .meta-badge.model-31pro { color: #fb923c; border-color: #3a1500; background: #1a0800; }
+    .meta-badge.model-3flash { color: #38bdf8; border-color: #0a2a3a; background: #061218; }
     .meta-badge.model-ollama { color: #ff6b6b; border-color: #3a1515; background: #1f0d0d; }
     .meta-badge.cost-paid { color: #4dff88; border-color: #1a3a25; background: #0d1f14; }
     .meta-badge.cost-free { color: #555; border-color: #2a2a2a; background: #1a1a1a; }
+    .meta-badge.api-free { color: #6ee7b7; border-color: #064e3b; background: #022c22; }
+    .meta-badge.api-paid { color: #fbbf24; border-color: #78350f; background: #1c0a00; }
+
+    .hist-date-nav { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0 0.7rem; margin-bottom: 0.4rem; }
+    .hist-nav-btn { background: #1a1a1a; border: 1px solid #333; border-radius: 6px; color: #aaa; font-size: 1rem; width: 30px; height: 30px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: border-color 0.15s; flex-shrink: 0; }
+    .hist-nav-btn:hover:not(:disabled) { border-color: #667eea; color: #fff; }
+    .hist-nav-btn:disabled { opacity: 0.25; cursor: default; }
+    .hist-date-label { flex: 1; text-align: center; font-size: 0.82rem; font-weight: 600; color: #ddd; }
+    .hist-date-sub { font-size: 0.68rem; color: #555; font-weight: 400; margin-left: 0.4rem; }
+    .hist-count { font-size: 0.68rem; color: #555; white-space: nowrap; }
+    .hist-empty { text-align: center; padding: 2rem; color: #444; font-size: 0.85rem; }
+
+    .price-panel { margin: 0.8rem 0; background: #111; border: 1px solid #2a2a2a; border-radius: 8px; overflow: hidden; }
+    .price-panel-header { display: flex; align-items: center; justify-content: space-between; padding: 0.55rem 0.9rem; cursor: pointer; color: #888; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; user-select: none; }
+    .price-panel-header:hover { color: #aaa; }
+    .price-panel-body { display: none; padding: 0 0.9rem 0.8rem; }
+    .price-panel-body.open { display: block; }
+    .price-table { width: 100%; border-collapse: collapse; font-size: 0.72rem; }
+    .price-table th { color: #555; text-align: left; padding: 0.3rem 0.4rem; border-bottom: 1px solid #222; }
+    .price-table td { color: #aaa; padding: 0.28rem 0.4rem; border-bottom: 1px solid #1a1a1a; }
+    .price-table tr:last-child td { border-bottom: none; }
+    .price-table td:first-child { color: #ddd; font-weight: 600; }
+    .price-table td.td-free { color: #6ee7b7; }
+    .price-table td.td-paid { color: #fbbf24; }
 
     .download-btn {
       display: none;
@@ -308,6 +336,16 @@
     }
 
     .save-style-btn:hover { background: #1f2f1f; }
+
+    .toggle-row { display: flex; align-items: center; gap: 0.5rem; }
+    .toggle-label { font-size: 0.75rem; color: #666; user-select: none; cursor: pointer; }
+    .toggle-label b { color: #999; }
+    .toggle-switch { position: relative; width: 34px; height: 18px; flex-shrink: 0; cursor: pointer; }
+    .toggle-switch input { opacity: 0; width: 0; height: 0; }
+    .toggle-track { position: absolute; inset: 0; background: #2a2a2a; border-radius: 18px; border: 1px solid #444; transition: background 0.2s; }
+    .toggle-switch input:checked + .toggle-track { background: #667eea; border-color: #667eea; }
+    .toggle-knob { position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; background: #666; border-radius: 50%; transition: transform 0.2s, background 0.2s; pointer-events: none; }
+    .toggle-switch input:checked ~ .toggle-knob { transform: translateX(16px); background: #fff; }
 
     .saved-styles {
       display: none;
@@ -538,6 +576,14 @@
           <option value="ollama">Ollama (local)</option>
         </optgroup>
       </select>
+      <div class="toggle-row">
+        <label class="toggle-switch" for="useExamples" title="Con ejemplos: el AI tiene código de referencia. Sin ejemplos: inventa el estilo desde cero.">
+          <input type="checkbox" id="useExamples" checked>
+          <span class="toggle-track"></span>
+          <span class="toggle-knob"></span>
+        </label>
+        <label class="toggle-label" for="useExamples"><b>Ejemplos</b></label>
+      </div>
     </div>
 
     <div class="saved-styles" id="savedStylesSection">
@@ -572,6 +618,32 @@
     </div>
 
     <div class="video-history" id="videoHistory" style="display:none">
+      <!-- Panel de precios por modelo -->
+      <div class="price-panel">
+        <div class="price-panel-header" onclick="this.nextElementSibling.classList.toggle('open'); this.querySelector('.pp-arrow').textContent = this.nextElementSibling.classList.contains('open') ? '▲' : '▼'">
+          💲 Precios por modelo (USD por 1M tokens × 17 MXN/USD) <span class="pp-arrow">▼</span>
+        </div>
+        <div class="price-panel-body">
+          <table class="price-table">
+            <thead><tr><th>Modelo</th><th>Input /1M</th><th>Output /1M</th><th>API</th><th>Notas</th></tr></thead>
+            <tbody>
+              <tr><td>Ollama (Local)</td><td>—</td><td>—</td><td class="td-free">gratis</td><td>Sin costo, requiere GPU</td></tr>
+              <tr><td>Gemini 3.1 Flash Lite</td><td>$0.25</td><td>$1.50</td><td class="td-free">gratis</td><td>Más rápido y económico</td></tr>
+              <tr><td>Gemini 2.5 Flash</td><td>$0.30</td><td>$2.50</td><td class="td-paid">pago</td><td>Alta calidad</td></tr>
+              <tr><td>Gemini 3 Flash Preview</td><td>$0.50</td><td>$3.00</td><td class="td-paid">pago</td><td>Intermedio</td></tr>
+              <tr><td>Gemini 2.5 Pro</td><td>$1.25</td><td>$10.00</td><td class="td-paid">pago</td><td>Premium</td></tr>
+              <tr><td>Gemini 3.5 Flash</td><td>$1.50</td><td>$9.00</td><td class="td-paid">pago</td><td>Equilibrio calidad/costo</td></tr>
+              <tr><td>Gemini 3.1 Pro Preview</td><td>$2.00</td><td>$12.00</td><td class="td-paid">pago</td><td>Máxima calidad</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="hist-date-nav">
+        <button class="hist-nav-btn" id="histPrevBtn" onclick="histNavDay(-1)" title="Día anterior">‹</button>
+        <div class="hist-date-label" id="histDateLabel">—</div>
+        <span class="hist-count" id="histCountLabel"></span>
+        <button class="hist-nav-btn" id="histNextBtn" onclick="histNavDay(1)" title="Día siguiente">›</button>
+      </div>
       <div id="videoHistoryList" class="video-history-list"></div>
     </div>
 
@@ -666,7 +738,7 @@
         const res = await fetch('/api/generate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt, duration, model, styleContext, styleName }),
+          body: JSON.stringify({ prompt, duration, model, styleContext, styleName, useExamples: document.getElementById('useExamples').checked }),
         });
 
         const data = await res.json();
@@ -705,51 +777,131 @@
       }
     }
 
+    let _historyAllItems = [];
+    let _historySelectedDate = '';   // "YYYY-MM-DD"
+
+    function itemDateKey(item) {
+      return new Date(item.timestamp).toLocaleDateString('sv-SE'); // "YYYY-MM-DD"
+    }
+
+    function histUniqueDays() {
+      const days = [...new Set(_historyAllItems.map(itemDateKey))];
+      return days.sort((a, b) => b.localeCompare(a)); // desc
+    }
+
+    function histNavDay(delta) {
+      const days = histUniqueDays();
+      const idx = days.indexOf(_historySelectedDate);
+      const newIdx = idx + delta;
+      if (newIdx < 0 || newIdx >= days.length) return;
+      _historySelectedDate = days[newIdx];
+      renderHistoryForSelectedDay();
+    }
+
+    function renderHistoryForSelectedDay() {
+      const section = document.getElementById('videoHistory');
+      const list = document.getElementById('videoHistoryList');
+      const days = histUniqueDays();
+
+      if (!days.length) { section.style.display = 'none'; return; }
+      section.style.display = 'block';
+
+      // Default to today or most recent day
+      if (!days.includes(_historySelectedDate)) _historySelectedDate = days[0];
+
+      const idx = days.indexOf(_historySelectedDate);
+      document.getElementById('histPrevBtn').disabled = idx >= days.length - 1;
+      document.getElementById('histNextBtn').disabled = idx <= 0;
+
+      // Format date label
+      const d = new Date(_historySelectedDate + 'T12:00:00');
+      const today = new Date().toLocaleDateString('sv-SE');
+      const yesterday = new Date(Date.now() - 86400000).toLocaleDateString('sv-SE');
+      let label = d.toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+      label = label.charAt(0).toUpperCase() + label.slice(1);
+      let sub = '';
+      if (_historySelectedDate === today) sub = ' · hoy';
+      else if (_historySelectedDate === yesterday) sub = ' · ayer';
+      document.getElementById('histDateLabel').innerHTML = label + `<span class="hist-date-sub">${sub}</span>`;
+
+      const dayItems = _historyAllItems.filter(it => itemDateKey(it) === _historySelectedDate);
+      document.getElementById('histCountLabel').textContent = `${dayItems.length} clip${dayItems.length !== 1 ? 's' : ''}`;
+
+      if (!dayItems.length) { list.innerHTML = '<div class="hist-empty">Sin clips este día</div>'; return; }
+      list.innerHTML = dayItems.map(renderHistoryCard).join('');
+      list.querySelectorAll('.history-card-thumb video').forEach(v => {
+        v.addEventListener('loadedmetadata', () => { v.currentTime = v.duration / 3; }, { once: true });
+      });
+    }
+
     async function loadVideoHistory() {
       try {
         const res = await fetch('/api/history');
-        const items = await res.json();
-        renderVideoHistory(items);
-        renderStats(items);
+        _historyAllItems = await res.json();
+        renderHistoryForSelectedDay();
+        renderStats(_historyAllItems);
       } catch { /* silently fail */ }
     }
 
-    function renderVideoHistory(items) {
-      const section = document.getElementById('videoHistory');
-      const list = document.getElementById('videoHistoryList');
-      if (!items || items.length === 0) {
-        section.style.display = 'none';
-        return;
+    const MODEL_FULL = {
+      'lite': 'Gemini 3.1 Lite', '': 'Gemini 3.1 Lite',
+      'flash': 'Gemini 3.5 Flash',
+      '3-flash': 'Gemini 3 Flash', '3-flash-preview': 'Gemini 3 Flash',
+      '2.5-flash': 'Gemini 2.5 Flash',
+      '2.5-pro': 'Gemini 2.5 Pro',
+      '3.1-pro': 'Gemini 3.1 Pro', '3.1-pro-preview': 'Gemini 3.1 Pro',
+    };
+    const MODEL_CLASS = {
+      'lite': 'model-lite', '': 'model-lite',
+      'flash': 'model-flash',
+      '3-flash': 'model-3flash', '3-flash-preview': 'model-3flash',
+      '2.5-flash': 'model-25flash',
+      '2.5-pro': 'model-25pro',
+      '3.1-pro': 'model-31pro', '3.1-pro-preview': 'model-31pro',
+    };
+
+    function renderHistoryCard(item) {
+      const mu = item.modelUsed || '';
+      let apiType = item.isPaid ? 'pago' : 'gratis';
+      let modelKey = item.model || 'lite';
+      if (mu.startsWith('ollama')) {
+        apiType = 'gratis'; modelKey = 'ollama';
+      } else if (mu.includes(' + ')) {
+        const parts = mu.split(' + ');
+        apiType = parts[0].trim();
+        modelKey = parts.slice(1).join(' + ').trim();
       }
-      section.style.display = 'block';
-      list.innerHTML = items.map(item => {
-        const modelClass = item.model === 'flash' ? 'model-flash' : item.model === 'ollama' ? 'model-ollama' : 'model-lite';
-        const modelLabel = item.modelUsed || (item.model === 'flash' ? '3.5 flash' : item.model === 'ollama' ? 'gemma4 local' : '3.1 lite');
-        const promptEsc = item.prompt.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-        const costBadge = item.isPaid
-          ? `<span class="meta-badge cost-paid">$${item.cost.toFixed(4)} MXN</span>`
-          : `<span class="meta-badge cost-free">gratis</span>`;
-        const styleBadge = item.styleName
-          ? `<span class="meta-badge" style="color:#38ef7d;border-color:#38ef7d33;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="Estilo: ${item.styleName.replace(/"/g, '&quot;')}">🎨 ${item.styleName}</span>`
-          : '';
-        return `
-          <div class="history-card" onclick="playHistoryVideo('/out/${item.filename}', '${promptEsc}')">
-            <div class="history-card-thumb">
-              <video src="/out/${item.filename}" muted preload="metadata"></video>
-              <div class="history-card-play">▶</div>
+      const isOllama = modelKey === 'ollama';
+      const fullModelName = isOllama ? (mu.replace('ollama', 'Ollama') || 'Ollama Local') : (MODEL_FULL[modelKey] || modelKey);
+      const modelClass = isOllama ? 'model-ollama' : (MODEL_CLASS[modelKey] || 'model-lite');
+      const apiClass = apiType === 'pago' ? 'api-paid' : 'api-free';
+      const apiLabel = apiType === 'pago' ? '💰 pago' : '🆓 gratis';
+      const timeStr = new Date(item.timestamp).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
+      const promptEsc = item.prompt.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+      const costBadge = item.isPaid
+        ? `<span class="meta-badge cost-paid">$${item.cost.toFixed(4)} MXN</span>`
+        : `<span class="meta-badge cost-free">gratis</span>`;
+      const styleBadge = item.styleName
+        ? `<span class="meta-badge" style="color:#38ef7d;border-color:#38ef7d33;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="Estilo: ${item.styleName.replace(/"/g, '&quot;')}">🎨 ${item.styleName}</span>`
+        : '';
+      return `
+        <div class="history-card" onclick="playHistoryVideo('/out/${item.filename}', '${promptEsc}')">
+          <div class="history-card-thumb">
+            <video src="/out/${item.filename}" muted preload="metadata"></video>
+            <div class="history-card-play">▶</div>
+          </div>
+          <div class="history-card-info">
+            <div class="history-card-prompt" title="${item.prompt.replace(/"/g, '&quot;')}">${item.prompt}</div>
+            <div class="history-card-meta">
+              <span class="meta-badge ${modelClass}" title="Modelo usado">${fullModelName}</span>
+              <span class="meta-badge ${apiClass}" title="Tipo de API">${apiLabel}</span>
+              <span class="meta-badge">${item.duration}s</span>
+              ${costBadge}
+              ${styleBadge}
+              <span class="meta-badge">${timeStr}</span>
             </div>
-            <div class="history-card-info">
-              <div class="history-card-prompt" title="${item.prompt.replace(/"/g, '&quot;')}">${item.prompt}</div>
-              <div class="history-card-meta">
-                <span class="meta-badge ${modelClass}">${modelLabel}</span>
-                <span class="meta-badge">${item.duration}s</span>
-                ${costBadge}
-                ${styleBadge}
-                <span class="meta-badge">${formatRelTime(new Date(item.timestamp))}</span>
-              </div>
-            </div>
-          </div>`;
-      }).join('');
+          </div>
+        </div>`;
     }
 
     function playHistoryVideo(url, prompt) {

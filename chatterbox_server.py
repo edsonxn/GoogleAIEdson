@@ -131,6 +131,13 @@ class Handler(BaseHTTPRequestHandler):
                 if cur:
                     chunks.append(cur)
 
+                # Ensure every chunk ends with terminal punctuation so the model
+                # produces a closed prosodic contour (avoids cut-off-sounding audio)
+                chunks = [
+                    c if c and c[-1] in '.!?…' else c + '.'
+                    for c in chunks if c
+                ]
+
                 print(f'[Chatterbox] lang={language} prompt={audio_prompt} chunks={len(chunks)}', flush=True)
                 silence = np.zeros(int(m.sr * 0.3), dtype=np.float32)
                 wavs = []

@@ -983,13 +983,25 @@
             </label>
             <!-- Model fallback chain -->
             <div id="modelChainList" style="display:flex; flex-direction:column; gap:5px; margin-bottom:6px;"></div>
-            <div style="display:flex; gap:6px; align-items:center; margin-bottom:4px;">
-              <button type="button" id="addModelChainBtn" onclick="addModelChainRow()" style="font-size:0.72rem; padding:3px 10px; background:#1a2535; border:1px solid #334155; border-radius:4px; color:#94a3b8; cursor:pointer;">+ Agregar fallback</button>
-              <label class="tl-style-toggle" style="flex-shrink:0; margin-left:auto;" title="Mantener el mismo estilo visual entre clips IA consecutivos">
-                <input type="checkbox" id="tlStyleContextToggle">
-                <span class="tl-style-toggle-track"><span class="tl-style-toggle-thumb"></span></span>
-                <span class="tl-style-toggle-label">Estilo fijo</span>
-              </label>
+            <div style="display:flex; gap:6px; align-items:flex-start; margin-bottom:4px;">
+              <button type="button" id="addModelChainBtn" onclick="addModelChainRow()" style="font-size:0.72rem; padding:3px 10px; background:#1a2535; border:1px solid #334155; border-radius:4px; color:#94a3b8; cursor:pointer; flex-shrink:0; align-self:flex-start;">+ Agregar fallback</button>
+              <div style="display:flex; flex-direction:column; gap:3px; margin-left:auto;">
+                <label class="tl-style-toggle" style="flex-shrink:0;" title="Mantener el mismo estilo visual entre clips IA consecutivos">
+                  <input type="checkbox" id="tlStyleContextToggle">
+                  <span class="tl-style-toggle-track"><span class="tl-style-toggle-thumb"></span></span>
+                  <span class="tl-style-toggle-label">Estilo fijo</span>
+                </label>
+                <label class="tl-style-toggle" style="flex-shrink:0;" title="Incluir ejemplos de código en el prompt del sistema de Remotion">
+                  <input type="checkbox" id="useExamplesToggle" checked>
+                  <span class="tl-style-toggle-track"><span class="tl-style-toggle-thumb"></span></span>
+                  <span class="tl-style-toggle-label">Ejemplos</span>
+                </label>
+                <label class="tl-style-toggle" style="flex-shrink:0;" title="Incluir plantillas SVG de personajes CN en el prompt (humano, perro, criatura)">
+                  <input type="checkbox" id="useCharTemplatesToggle" checked>
+                  <span class="tl-style-toggle-track"><span class="tl-style-toggle-thumb"></span></span>
+                  <span class="tl-style-toggle-label">Personajes</span>
+                </label>
+              </div>
             </div>
             <p style="font-size:0.68rem; color:var(--text-muted); margin:0 0 2px;">Se intenta cada modelo en orden con todas las keys gratis. Al agotar todas, pasa al siguiente.</p>
             <!-- Hidden legacy select kept for settings persistence compatibility -->
@@ -1042,6 +1054,15 @@
         <input type="checkbox" id="googleImages" class="checkbox-input">
         <input type="checkbox" id="localAIImages" class="checkbox-input">
         <input type="checkbox" id="generateVideo" class="checkbox-input">
+      </div>
+
+      <!-- Opción vista previa en vivo -->
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px; padding:8px 12px; background:rgba(99,102,241,0.08); border:1px solid rgba(99,102,241,0.2); border-radius:8px;">
+        <input type="checkbox" id="livePreviewMode" style="width:16px;height:16px;accent-color:#6366f1;cursor:pointer;">
+        <label for="livePreviewMode" style="font-size:0.8rem;color:#a5b4fc;cursor:pointer;user-select:none;">
+          <i class="fas fa-bolt" style="color:#6366f1;margin-right:4px;"></i>
+          Vista previa en vivo — abrir timeline al terminar la primera sección
+        </label>
       </div>
 
       <!-- Botones de acción -->
@@ -1485,6 +1506,15 @@
               <div style="text-align:right; margin-top:3px; font-size:0.7rem;">
                 <span id="ytTagsCounter" style="color:#64748b;">0 / 500</span>
               </div>
+            </div>
+
+            <!-- Short toggle -->
+            <div style="display:flex; align-items:center; gap:8px; padding:4px 0;">
+              <input type="checkbox" id="ytIsShort" style="accent-color:#ff4444; width:14px; height:14px; cursor:pointer;">
+              <label for="ytIsShort" style="font-size:0.82rem; color:#94a3b8; cursor:pointer; user-select:none;">
+                <i class="fas fa-mobile-alt" style="color:#ff4444; font-size:0.75rem;"></i>
+                Subir como <b style="color:#e2e8f0;">Short</b> <span style="font-size:0.7rem; color:#64748b;">(añade #Shorts al título)</span>
+              </label>
             </div>
 
             <!-- Privacidad + Fecha programada -->
