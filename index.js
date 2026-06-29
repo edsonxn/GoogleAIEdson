@@ -6594,6 +6594,13 @@ app.post('/generate-batch-automatic', async (req, res) => {
     }
     console.log(`🔑 PROJECT KEY GENERADO: "${projectKey}" (de: "${shortTopic(folderName || topic)}")`);
 
+    // Reset audio progress counters so a re-run of the same project doesn't start
+    // with stale completed counts from the previous run (would jump to 100% immediately)
+    if (projectProgressTracker[projectKey]) {
+      projectProgressTracker[projectKey].phases.audio = { total: sections, completed: 0, timePerItem: 0 };
+      projectProgressTracker[projectKey].audioProgress = { percentage: 0, currentTask: 'Iniciando...', currentStep: 0, totalSteps: sections };
+    }
+
     // Función interna para procesar audio asíncronamente
     const processSectionAudioAsync = async (
       section,
@@ -17224,6 +17231,16 @@ app.post('/api/broll-preview-live/:folderName', async (req, res) => {
     const cfg = parseBrollVideoConfig(videoConfig);
     const thumbsDir = path.join(projectPath, 'broll_thumbs');
     if (!fs.existsSync(thumbsDir)) fs.mkdirSync(thumbsDir, { recursive: true });
+
+    // Wait for background audio still generating so we don't miss the last section
+    const _bgPrefixLive = `${folderName}:`;
+    const _hasBgLive = () => [..._bgAudioInProgress].some(k => k.startsWith(_bgPrefixLive));
+    if (_hasBgLive()) {
+      const _waitStartLive = Date.now();
+      while (_hasBgLive() && Date.now() - _waitStartLive < 300000) {
+        await new Promise(r => setTimeout(r, 1000));
+      }
+    }
 
     // Load existing preview
     const previewJsonPath = path.join(projectPath, 'broll_preview.json');
